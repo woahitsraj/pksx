@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { PokemonActionKind } from '$lib/engine';
 	import type { PokemonActionState } from '$lib/pksx/pokemon-actions';
+	import DelayedSpinner from './DelayedSpinner.svelte';
 
 	interface Props {
 		state: Exclude<PokemonActionState, { status: 'idle' }>;
@@ -37,23 +38,22 @@
 	<div class="action-scroll">
 		<section class="subject" aria-label="Evolution source">
 			<strong>{state.pokemonLabel}</strong>
-			<span>
-				{state.status === 'loading'
-					? 'Loading engine-backed evolutions...'
-					: state.status === 'error'
+			{#if state.status !== 'loading'}
+				<span>
+					{state.status === 'error'
 						? 'Evolution unavailable'
 						: 'Choose a direct evolution to preview.'}
-			</span>
+				</span>
+			{/if}
 		</section>
 
 		{#if state.status === 'loading'}
-			<p class="message">Asking the PKHeX Engine for direct evolutions...</p>
+			<div class="message"><DelayedSpinner active label="Loading evolutions" /></div>
 		{:else if state.status === 'error'}
 			<p class="message error" role="alert">{state.message}</p>
 		{:else if state.selection}
 			<section class="preview" aria-label="Evolution preview">
 				<div>
-					<p>Preview</p>
 					<h3>
 						Evolve to {state.selection.choice?.speciesName ?? 'selected evolution'}
 					</h3>
@@ -70,17 +70,13 @@
 						{/each}
 					</ul>
 				{:else}
-					<p class="message">The engine did not report any visible projection changes.</p>
+					<p class="message">No visible changes.</p>
 				{/if}
-				<p class="warning">
-					Apply writes the previewed Pokemon Entity bytes. Cancel leaves them unchanged.
-				</p>
 			</section>
 		{:else}
 			<div class="action-list">
 				<section>
 					<div>
-						<p>Evolution</p>
 						<h3>Evolve</h3>
 					</div>
 					{#if evolve?.available}
@@ -121,8 +117,9 @@
 				disabled={state.status === 'applying'}
 				onclick={onApply}
 			>
-				{state.status === 'applying' ? 'Applying...' : 'Apply evolution'}
+				Apply evolution
 			</button>
+			<DelayedSpinner active={state.status === 'applying'} label="Applying evolution" />
 		{:else}
 			<button data-pokemon-action-control class="primary" type="button" onclick={onClose}>
 				Close
@@ -175,9 +172,7 @@
 		margin: 0;
 	}
 
-	header p,
-	.action-list section > div p,
-	.preview > div p {
+	header p {
 		color: var(--rust);
 		font:
 			700 var(--pksx-type-caption) var(--pksx-font-mono),
@@ -240,8 +235,7 @@
 
 	.subject span,
 	.action-list section > p,
-	.message,
-	.warning {
+	.message {
 		color: var(--ink-mute);
 		font-size: var(--pksx-type-body);
 		line-height: 1.25;
@@ -303,11 +297,6 @@
 	.preview li span {
 		overflow-wrap: anywhere;
 		color: var(--ink-mute);
-	}
-
-	.warning {
-		padding-left: 9px;
-		border-left: 3px solid var(--rust);
 	}
 
 	footer {

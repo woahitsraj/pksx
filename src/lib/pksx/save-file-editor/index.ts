@@ -164,12 +164,10 @@ export function createSaveFileProjection(
 			trainerName: summary.trainerName ?? null,
 			trainerNameSupported: false,
 			trainerNameMaxLength: 0,
-			trainerNameUnsupportedReason:
-				'Trainer name projection is not available from the PKHeX Engine yet.',
+			trainerNameUnsupportedReason: 'Trainer name editing is not available for this Save File.',
 			gender: null,
 			genderSupported: false,
-			genderUnsupportedReason:
-				'Trainer gender projection is not available from the PKHeX Engine yet.',
+			genderUnsupportedReason: 'Trainer gender editing is not available for this Save File.',
 			trainerId: summary.trainerId,
 			gameVersion: summary.gameVersion,
 			generation: summary.generation
@@ -179,11 +177,11 @@ export function createSaveFileProjection(
 			min: 0,
 			max: 0,
 			supported: false,
-			unsupportedReason: 'Money projection is not available from the PKHeX Engine yet.'
+			unsupportedReason: 'Money editing is not available for this Save File.'
 		},
 		inventory: {
 			supported: false,
-			unsupportedReason: 'Inventory projection is not available from the PKHeX Engine yet.',
+			unsupportedReason: 'Inventory editing is not available for this Save File.',
 			pockets: []
 		}
 	};

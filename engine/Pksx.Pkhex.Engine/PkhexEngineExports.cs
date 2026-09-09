@@ -34,7 +34,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -60,7 +60,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -95,7 +95,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -128,7 +128,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -156,7 +156,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -208,7 +208,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -273,7 +273,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -325,7 +325,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -374,7 +374,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -437,7 +437,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -489,7 +489,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -541,7 +541,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -560,7 +560,7 @@ public static partial class PkhexEngineExports
             if (pokemon.Species == 0)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("empty-source-slot", "Pokemon Actions need an occupied Slot."),
+                    EngineResult.Fail("empty-source-slot", "Quick Actions need an occupied Slot."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -585,7 +585,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -611,7 +611,7 @@ public static partial class PkhexEngineExports
             if (pokemon.Species == 0)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("empty-source-slot", "Pokemon Actions need an occupied Slot."),
+                    EngineResult.Fail("empty-source-slot", "Quick Actions need an occupied Slot."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -739,7 +739,7 @@ public static partial class PkhexEngineExports
             if (save is null)
             {
                 return EngineJson.Serialize(
-                    EngineResult.Fail("unsupported-save", "PKHeX.Core could not recognize this save file."),
+                    EngineResult.Fail("unsupported-save", "This file is not a supported Save File."),
                     EngineJsonContext.Default.EngineResultObject);
             }
 
@@ -974,7 +974,7 @@ public static partial class PkhexEngineExports
             if (option is null)
                 return SlotMutationResult.Fail(
                     "unsupported-pokemon-edit",
-                    $"Item {heldItemId} is not available for this Save File and Pokemon Entity format.");
+                    $"Item {heldItemId} is not available for this Pokemon in the current Save File.");
 
             if (!option.Available)
                 return SlotMutationResult.Fail(
@@ -1381,7 +1381,7 @@ public static partial class PkhexEngineExports
         if (!constraints.Supported)
             return SlotMutationResult.Fail(
                 "unsupported-pokemon-edit",
-                constraints.UnsupportedReason ?? "Original Trainer Data Editing is not supported for this Pokemon Entity format.");
+                constraints.UnsupportedReason ?? "Original Trainer Data Editing is not supported for this Pokemon.");
 
         if (string.IsNullOrWhiteSpace(edit.Name))
             return SlotMutationResult.Fail("invalid-pokemon-edit", "Original Trainer name is required.");
@@ -1399,21 +1399,21 @@ public static partial class PkhexEngineExports
                 constraints.SupportsSecretId ? "invalid-pokemon-edit" : "unsupported-pokemon-edit",
                 constraints.SupportsSecretId
                     ? $"Secret ID must be between {constraints.MinTrainerId} and {constraints.MaxTrainerId}."
-                    : "Secret ID editing is not supported by this Pokemon Entity format.");
+                    : "Secret ID editing is not supported for this Pokemon.");
         if (edit.GenderId is int genderId &&
             (!constraints.SupportsGender || constraints.Genders.All(option => option.Id != genderId)))
             return SlotMutationResult.Fail(
                 constraints.SupportsGender ? "invalid-pokemon-edit" : "unsupported-pokemon-edit",
                 constraints.SupportsGender
                     ? "Original Trainer gender choice is invalid."
-                    : "Original Trainer gender editing is not supported by this Pokemon Entity format.");
+                    : "Original Trainer gender editing is not supported for this Pokemon.");
         if (edit.LanguageId is int languageId &&
             (!constraints.SupportsLanguage || constraints.Languages.All(option => option.Id != languageId)))
             return SlotMutationResult.Fail(
                 constraints.SupportsLanguage ? "invalid-pokemon-edit" : "unsupported-pokemon-edit",
                 constraints.SupportsLanguage
                     ? "Pokemon language choice is invalid."
-                    : "Pokemon language editing is not supported by this Pokemon Entity format.");
+                    : "Pokemon language editing is not supported for this Pokemon.");
 
         if (edit.LanguageId is int nextLanguage)
             pokemon.Language = nextLanguage;
@@ -1492,7 +1492,7 @@ public static partial class PkhexEngineExports
             .SequenceEqual(SlotDetailProjection.Stats(preview).Select(stat => stat.Value)))
             consequences.Add("Projected stats update for the selected species and form.");
         if (SlotDetailProjection.Moves(source).Count > 0)
-            consequences.Add("Move Set is retained and re-evaluated by the PKHeX legality engine.");
+            consequences.Add("Move Set is retained and rechecked for legality.");
 
         consequences.Add("Evolution identity and Sprite Identity update; Met Data and Original Trainer Data remain unchanged.");
         consequences.Add(legality.Summary);
@@ -1513,11 +1513,11 @@ public static partial class PkhexEngineExports
         if (!constraints.Supported)
             return SlotMutationResult.Fail(
                 "unsupported-pokemon-edit",
-                constraints.UnsupportedReason ?? "Met Data Editing is not supported for this Pokemon Entity format.");
+                constraints.UnsupportedReason ?? "Met Data Editing is not supported for this Pokemon.");
 
         var originGameId = edit.OriginGameId ?? constraints.CurrentOriginGameId;
         if (constraints.SupportsOriginGame && constraints.OriginGames.All(option => option.Id != originGameId))
-            return SlotMutationResult.Fail("invalid-pokemon-edit", $"Origin game {originGameId} is not supported by this Pokemon Entity format.");
+            return SlotMutationResult.Fail("invalid-pokemon-edit", $"Origin game {originGameId} is not supported for this Pokemon.");
 
         var locationGroup = constraints.LocationGroups.Find(group => group.OriginGameId == originGameId);
         if (locationGroup is null || locationGroup.Options.All(option => option.Id != edit.LocationId))
@@ -1533,19 +1533,19 @@ public static partial class PkhexEngineExports
         if (edit.OriginGameId is int requestedOriginGameId)
         {
             if (!constraints.SupportsOriginGame)
-                return SlotMutationResult.Fail("unsupported-pokemon-edit", "Origin game editing is not supported by this Pokemon Entity format.");
+                return SlotMutationResult.Fail("unsupported-pokemon-edit", "Origin game editing is not supported for this Pokemon.");
             pokemon.Version = (GameVersion)requestedOriginGameId;
         }
 
         if (edit.BallId is int ballId)
         {
             if (!constraints.SupportsBall)
-                return SlotMutationResult.Fail("unsupported-pokemon-edit", "Ball editing is not supported by this Pokemon Entity format.");
+                return SlotMutationResult.Fail("unsupported-pokemon-edit", "Ball editing is not supported for this Pokemon.");
             if (constraints.Balls.All(option => option.Id != ballId))
-                return SlotMutationResult.Fail("invalid-pokemon-edit", $"Ball {ballId} is not supported by this Pokemon Entity format.");
+                return SlotMutationResult.Fail("invalid-pokemon-edit", $"Ball {ballId} is not supported for this Pokemon.");
             pokemon.Ball = (byte)ballId;
             if (pokemon.Ball != ballId)
-                return SlotMutationResult.Fail("unsupported-pokemon-edit", $"Ball {ballId} cannot be stored by this Pokemon Entity format.");
+                return SlotMutationResult.Fail("unsupported-pokemon-edit", $"Ball {ballId} cannot be stored for this Pokemon.");
         }
 
         if (constraints.SupportsMetDate)
@@ -1558,7 +1558,7 @@ public static partial class PkhexEngineExports
         }
         else if (edit.MetDate is not null)
         {
-            return SlotMutationResult.Fail("unsupported-pokemon-edit", "Met date editing is not supported by this Pokemon Entity format.");
+            return SlotMutationResult.Fail("unsupported-pokemon-edit", "Met date editing is not supported for this Pokemon.");
         }
 
         pokemon.MetLocation = (ushort)edit.LocationId;
@@ -1744,7 +1744,7 @@ public static partial class PkhexEngineExports
         if (details.Count == 0)
         {
             var editedMoves = string.Join(", ", edits.Select(edit => $"Move {edit.Slot + 1} {MoveName(edit.Move)}"));
-            return "Move Set edit makes this Pokemon illegal for its current format. PKHeX did not return a more specific legality reason."
+            return "Move Set edit makes this Pokemon illegal for its current format."
                 + (string.IsNullOrWhiteSpace(editedMoves) ? "" : $" Edited moves: {editedMoves}.");
         }
 
@@ -1850,8 +1850,8 @@ public static partial class PkhexEngineExports
         var legal = analysis.Valid;
         var judgement = legal ? "Legal" : "Illegal";
         var summary = legal
-            ? "PKHeX judged this Pokemon legal."
-            : "PKHeX found legality issues for this Pokemon.";
+            ? "This Pokemon is legal."
+            : "This Pokemon has legality issues.";
 
         return new LegalityReport(
             legal,

@@ -456,7 +456,7 @@ export function createMockEngine(overrides: Partial<EngineApi> = {}): EngineApi 
 						displaySex: 'default'
 					},
 					legal: true,
-					legalitySummary: 'PKHeX judged this Pokemon legal.',
+					legalitySummary: 'This Pokemon is legal.',
 					consequences: []
 				}
 			}),
@@ -465,7 +465,7 @@ export function createMockEngine(overrides: Partial<EngineApi> = {}): EngineApi 
 			value: null,
 			error: {
 				code: 'unsupported-save-file-edit',
-				message: 'Save File field editing is not available for the mock engine.'
+				message: 'Save File editing is not available in this version.'
 			}
 		}),
 		getSaveFileInventoryCatalogue: async () => ({
@@ -473,7 +473,7 @@ export function createMockEngine(overrides: Partial<EngineApi> = {}): EngineApi 
 			value: null,
 			error: {
 				code: 'unsupported-save-file-edit',
-				message: 'Save File field editing is not available for the mock engine.'
+				message: 'Save File editing is not available in this version.'
 			}
 		}),
 		importStoredPokemon: async (bytes, fileName, _operation, activeBox) =>
@@ -490,7 +490,7 @@ export function createMockEngine(overrides: Partial<EngineApi> = {}): EngineApi 
 			success<LegalityReport>({
 				legal: true,
 				judgement: 'Legal',
-				summary: 'PKHeX judged this Pokemon legal.',
+				summary: 'This Pokemon is legal.',
 				fixableProblems: [],
 				warnings: [],
 				messages: [{ severity: 'Valid', identifier: 'Encounter', message: 'Encounter is valid.' }]
@@ -530,7 +530,7 @@ function mockPokemonActionPreview(): PokemonActionPreview {
 		legalityReport: {
 			legal: true,
 			judgement: 'Legal',
-			summary: 'PKHeX judged this Pokemon legal.',
+			summary: 'This Pokemon is legal.',
 			fixableProblems: [],
 			warnings: [],
 			messages: []

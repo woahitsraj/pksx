@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import DelayedSpinner from './DelayedSpinner.svelte';
 
 	let updateWorker = $state<ServiceWorker | null>(null);
 	let installing = $state(false);
@@ -66,9 +67,8 @@
 			<strong>Update ready</strong>
 			<span>Install the latest PKSX build and refresh cached app files.</span>
 		</div>
-		<button type="button" disabled={installing} onclick={installUpdate}>
-			{installing ? 'Installing...' : 'Install update'}
-		</button>
+		<button type="button" disabled={installing} onclick={installUpdate}>Install update</button>
+		<DelayedSpinner active={installing} label="Installing update" />
 	</section>
 {/if}
 

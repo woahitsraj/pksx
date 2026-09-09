@@ -1,5 +1,6 @@
 <script lang="ts">
 	import EdgeMenu from './EdgeMenu.svelte';
+	import DelayedSpinner from './DelayedSpinner.svelte';
 
 	interface Props {
 		mode: 'commands' | 'delete';
@@ -34,9 +35,8 @@
 	label={mode === 'commands' ? 'Save File Menu' : 'Delete ' + fileName + '?'}
 	onDismiss={onClose}
 >
-	<div class="save-file-menu" class:confirmation={mode === 'delete'}>
+	<div class="save-file-menu" class:confirmation={mode === 'delete'} aria-busy={busy}>
 		<header>
-			<p>{mode === 'commands' ? 'Save File Menu' : 'Confirm deletion'}</p>
 			<h2>{mode === 'commands' ? fileName : 'Delete ' + fileName + '?'}</h2>
 			{#if description}<span>{description}</span>{/if}
 		</header>
@@ -91,8 +91,9 @@
 					onfocus={() => onFocusCommand(1)}
 					onclick={onDelete}
 				>
-					<strong>{busy ? 'Deleting...' : 'Delete'}</strong>
+					<strong>Delete</strong>
 				</button>
+				<DelayedSpinner active={busy} label="Deleting Save File" />
 			{/if}
 		</div>
 	</div>
@@ -114,17 +115,9 @@
 		border-bottom: var(--pksx-border-width) solid var(--rule);
 	}
 
-	header p,
 	header h2,
 	header span {
 		margin: 0;
-	}
-
-	header p {
-		color: var(--rust);
-		font: 750 var(--pksx-type-caption) / 1 var(--pksx-font-mono);
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
 	}
 
 	header h2 {

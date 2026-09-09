@@ -21,6 +21,7 @@
 		setCachedActiveWorkspace
 	} from '$lib/pksx/saves-cache';
 	import { getSummonedWorkflowHost } from '$lib/pksx/summoned-workflow/host.svelte';
+	import DelayedSpinner from './DelayedSpinner.svelte';
 	import TakeoverFrame from './TakeoverFrame.svelte';
 
 	type BrowserState =
@@ -341,30 +342,32 @@
 <TakeoverFrame
 	labelledby="backup-browser-title"
 	describedby="backup-browser-description"
-	{busy}
+	busy={browserState.kind === 'loading' || busy}
 	onBack={guardedBack}
 >
 	<div class="backup-browser">
 		<header>
 			<div>
-				<p>Active Save File</p>
 				<h2 id="backup-browser-title">Backup Browser</h2>
 				<span id="backup-browser-description">
 					{owner?.originalFileName ?? 'Create and restore snapshots of the active Workspace.'}
 				</span>
 			</div>
-			<button
-				id="backup-browser-close"
-				data-backup-browser-control
-				type="button"
-				aria-label="Close Backup Browser"
-				disabled={busy}
-				onclick={guardedBack}>×</button
-			>
+			<div class="header-controls">
+				<DelayedSpinner active={busy} label="Updating Backups" />
+				<button
+					id="backup-browser-close"
+					data-backup-browser-control
+					type="button"
+					aria-label="Close Backup Browser"
+					disabled={busy}
+					onclick={guardedBack}>×</button
+				>
+			</div>
 		</header>
 
 		{#if browserState.kind === 'loading'}
-			<div class="empty-state" aria-live="polite">Loading Backups...</div>
+			<div class="empty-state"><DelayedSpinner active label="Loading Backups" /></div>
 		{:else if browserState.kind === 'no-active'}
 			<div class="empty-state">
 				<strong>No active Save File</strong>
@@ -381,12 +384,8 @@
 					data-backup-browser-control
 					type="button"
 					disabled={busy || confirming || !workspace}
-					onclick={() => void createBackup()}
+					onclick={() => void createBackup()}>Create Backup</button
 				>
-					{browserState.kind === 'working' && browserState.action === 'create'
-						? 'Creating...'
-						: 'Create Backup'}
-				</button>
 			</div>
 
 			{#if errorMessage}<p class="error" role="alert">{errorMessage}</p>{/if}
@@ -532,7 +531,6 @@
 		margin: 0;
 	}
 
-	header p,
 	.backup-toolbar span,
 	article span {
 		color: var(--pksx-color-text-muted);
@@ -543,6 +541,12 @@
 	h2 {
 		font-size: var(--pksx-type-display);
 		line-height: 1;
+	}
+
+	.header-controls {
+		display: flex;
+		align-items: center;
+		gap: var(--pksx-space-2);
 	}
 
 	header span,

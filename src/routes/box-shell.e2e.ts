@@ -1038,7 +1038,7 @@ test('Box Menu exports and backs up the captured secondary Save File Workspace',
 	await secondarySlotMenu.getByRole('button', { name: 'Move' }).click();
 	await page.locator('#box-0-slot-3').click();
 	await expect(page.getByRole('alert')).toContainText(
-		'Moving Pokemon between Save Files needs engine transfer support.'
+		'Moving Pokemon between Save Files is not available yet.'
 	);
 	await expect(page.locator('#box-0-slot-2')).toContainText('ARON');
 	await expect(page.locator('#box-0-slot-3')).toContainText('Empty');
@@ -1181,6 +1181,10 @@ test('Box Menu allows duplicate Save File panes and keeps Open another collectio
 	const fixedPane = page.locator('.box-pane').first();
 	const duplicatePane = page.locator('.box-pane').nth(1);
 	await expect(duplicatePane).not.toHaveAttribute('aria-busy', 'true');
+	const now = Date.now();
+	await page.clock.setFixedTime(now);
+	await page.clock.pauseAt(now);
+	await page.clock.setSystemTime(now);
 	await duplicatePane.evaluate((pane) => {
 		pane.setAttribute('data-observed-busy', 'false');
 		const observer = new MutationObserver(() => {
@@ -1195,6 +1199,9 @@ test('Box Menu allows duplicate Save File panes and keeps Open another collectio
 	await expect(duplicatePane).toHaveAttribute('data-observed-busy', 'true');
 	await expect(duplicatePane.getByRole('heading', { name: 'Box 02' })).toBeVisible();
 	await expect(duplicatePane).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
+	await page.clock.runFor(500);
+	await expect(duplicatePane.getByRole('status').filter({ hasText: /Loading/ })).toHaveCount(0);
+	await page.clock.resume();
 	await fixedPane.getByRole('button', { name: 'Next Location' }).click();
 	await expect(fixedPane.getByRole('heading', { name: 'Box 02' })).toBeVisible();
 	await expect(fixedPane).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
@@ -1252,10 +1259,19 @@ test('duplicate Save panes order workspace loads with mutation publication', asy
 	const firstPane = panes.nth(0);
 	const duplicatePane = panes.nth(1);
 	await expect(duplicatePane).not.toHaveAttribute('aria-busy', 'true');
+	const now = Date.now();
+	await page.clock.setFixedTime(now);
+	await page.clock.pauseAt(now);
+	await page.clock.setSystemTime(now);
 	await holdWorkspaceResponses(page, 1);
 	await duplicatePane.getByRole('button', { name: 'Next Location' }).click();
 	await waitForHeldWorkspaceResponses(page);
 	await expect(duplicatePane).toHaveAttribute('aria-busy', 'true');
+	await page.clock.runFor(499);
+	await expect(duplicatePane.getByRole('status').filter({ hasText: /Loading/ })).toHaveCount(0);
+	await page.clock.runFor(1);
+	await expect(duplicatePane.getByRole('status').filter({ hasText: /Loading/ })).toBeVisible();
+	await page.clock.resume();
 
 	await firstPane.locator('[id$="box-0-slot-0"]').click();
 	await page.getByLabel('Transfer controls').getByRole('button', { name: 'Copy' }).click();
@@ -1270,6 +1286,7 @@ test('duplicate Save panes order workspace loads with mutation publication', asy
 
 	await releaseWorkspaceResponses(page);
 	await expect(duplicatePane).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
+	await expect(duplicatePane.getByRole('status').filter({ hasText: /Loading/ })).toHaveCount(0);
 	await expect(duplicatePane.locator('[id$="box-1-slot-0"]')).toContainText('ARON');
 	await duplicatePane.getByRole('button', { name: 'Previous Location' }).click();
 	await expect(duplicatePane.getByRole('heading', { name: 'Box 01' })).toBeVisible({
@@ -1840,7 +1857,7 @@ test('confirm opens slot actions and back restores the grid focus', async ({ pag
 
 	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toBeVisible();
 	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toContainText('Box 1, slot 2');
-	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toContainText('Slot Menu');
+	await expect(page.getByRole('dialog', { name: 'Slot actions' })).not.toContainText('Slot Menu');
 	await expect(page.locator('.slot-command-row')).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
 	for (const unavailableAction of [
@@ -1920,6 +1937,10 @@ test('async Evolve availability preserves Close focus by command identity', asyn
 	await installWorkspaceResponseHold(page);
 	await openEmptySaves(page);
 	await importEmeraldThroughSaves(page);
+	const now = Date.now();
+	await page.clock.setFixedTime(now);
+	await page.clock.pauseAt(now);
+	await page.clock.setSystemTime(now);
 	await holdWorkspaceResponses(page, 1, 'previewPokemonActions');
 	await page.locator('#box-grid').focus();
 	await page.keyboard.press('Enter');
@@ -1927,16 +1948,26 @@ test('async Evolve availability preserves Close focus by command identity', asyn
 	const slotActions = page.getByRole('dialog', { name: 'Slot actions' });
 	const close = slotActions.getByRole('button', { name: 'Close', exact: true });
 	await waitForHeldWorkspaceResponses(page);
+	await expect(slotActions.locator('.slot-context')).toHaveAttribute('aria-busy', 'true');
 	await close.focus();
 	await expect(close).toBeFocused();
 	await expect(slotActions.getByRole('button', { name: 'Evolve', exact: true })).toHaveCount(0);
+	const progress = slotActions.getByRole('status').filter({ hasText: 'Loading Slot actions' });
+	await page.clock.runFor(499);
+	await expect(progress).toHaveCount(0);
+	await page.clock.runFor(1);
+	await expect(progress).toBeVisible();
+	await page.clock.resume();
 
 	await releaseWorkspaceResponses(page);
 	await expect(slotActions.getByRole('button', { name: 'Evolve', exact: true })).toBeVisible();
+	await expect(slotActions.locator('.slot-context')).not.toHaveAttribute('aria-busy', 'true');
+	await expect(progress).toHaveCount(0);
 	await expect(close).toBeFocused();
 });
 
 test('Evolve cancels without mutation and explicitly applies an evolution', async ({ page }) => {
+	await installWorkspaceResponseHold(page);
 	await openEmptySaves(page);
 	await importEmeraldThroughSaves(page);
 	const backupsBefore = await backupCount(page);
@@ -1945,17 +1976,32 @@ test('Evolve cancels without mutation and explicitly applies an evolution', asyn
 	const slotActions = page.getByRole('dialog', { name: 'Slot actions' });
 	const evolveCommand = slotActions.getByRole('button', { name: 'Evolve', exact: true });
 	await expect(evolveCommand).toBeVisible({ timeout: 15000 });
+	const now = Date.now();
+	await page.clock.setFixedTime(now);
+	await page.clock.pauseAt(now);
+	await page.clock.setSystemTime(now);
+	await holdWorkspaceResponses(page, 1, 'previewPokemonActions');
 	await evolveCommand.click();
 
 	const actions = page.getByRole('dialog', { name: 'Evolve' });
-	await expect(actions).toBeVisible({ timeout: 15000 });
+	await expect(actions).toBeVisible();
+	await waitForHeldWorkspaceResponses(page);
 	await expect(page.getByRole('dialog')).toHaveCount(1);
 	await expect(page.locator('.boxes-route')).toHaveAttribute('inert', '');
 	await expect(actions.locator('.action-scroll')).toHaveCSS('overflow-y', 'auto');
 	await expect(actions.locator('#pokemon-action-close')).toBeFocused();
 	await expect(actions.getByLabel('Evolution source')).toContainText('ARON');
+	await expect(actions).not.toContainText(/Loading|PKHeX Engine/);
+	const progress = actions.getByRole('status').filter({ hasText: 'Loading evolutions' });
+	await page.clock.runFor(499);
+	await expect(progress).toHaveCount(0);
+	await page.clock.runFor(1);
+	await expect(progress).toBeVisible();
+	await page.clock.resume();
+	await releaseWorkspaceResponses(page);
+	await expect(progress).toHaveCount(0);
 	const evolve = actions.getByRole('button', { name: /Lairon.*Level 32/i });
-	await expect(evolve).toBeEnabled();
+	await expect(evolve).toBeEnabled({ timeout: 15000 });
 	await evolve.click();
 	const preview = actions.getByLabel('Evolution preview');
 	await expect(preview).toContainText('Aron');
@@ -2015,9 +2061,7 @@ test('creates a Pokemon from an empty Slot after explicit apply and preserves ca
 	await expect(dialog.locator('#pokemon-editor-apply')).toBeEnabled();
 
 	await page.locator('.takeover-backdrop').click({ position: { x: 20, y: 20 } });
-	await expect(
-		dialog.getByRole('heading', { name: 'Keep this Pokemon Editor session?' })
-	).toBeVisible();
+	await expect(dialog.getByRole('heading', { name: 'Discard this new Pokemon?' })).toBeVisible();
 	await dialog.getByRole('button', { name: 'Keep editing' }).click();
 	await expect(dialog.locator('#pokemon-editor-section-species-form')).toBeFocused();
 	await dialog.getByRole('button', { name: 'Close Pokemon Editor' }).click();
@@ -2051,6 +2095,10 @@ test('pending Create cannot reopen an Editor after its Slot Menu is dismissed', 
 	await installWorkspaceResponseHold(page);
 	await openEmptySaves(page);
 	await importEmeraldThroughSaves(page);
+	const now = Date.now();
+	await page.clock.setFixedTime(now);
+	await page.clock.pauseAt(now);
+	await page.clock.setSystemTime(now);
 	await holdWorkspaceResponses(page, 1, 'getPokemonCreationCatalogue');
 
 	await page.locator('#box-0-slot-2').click();
@@ -2058,8 +2106,17 @@ test('pending Create cannot reopen an Editor after its Slot Menu is dismissed', 
 	const create = page.getByRole('button', { name: 'Create Pokemon' });
 	await create.dblclick();
 	await waitForHeldWorkspaceResponses(page);
+	const slotActions = page.getByRole('dialog', { name: 'Slot actions' });
+	await expect(slotActions.locator('.slot-context')).toHaveAttribute('aria-busy', 'true');
+	const progress = slotActions.getByRole('status').filter({ hasText: 'Opening Pokemon Editor' });
+	await page.clock.runFor(499);
+	await expect(progress).toHaveCount(0);
+	await page.clock.runFor(1);
+	await expect(progress).toBeVisible();
 	await expect(page.getByRole('dialog', { name: 'New Pokemon' })).toHaveCount(0);
 	await page.keyboard.press('Escape');
+	await expect(progress).toHaveCount(0);
+	await page.clock.resume();
 
 	await page.locator('#box-0-slot-3').click();
 	await page.keyboard.press('Enter');
@@ -2125,9 +2182,7 @@ test('Pokemon Creation uses the shared Takeover bounds and preserves its draft t
 
 	const backupsBefore = await backupCount(page);
 	await page.locator('.takeover-backdrop').click({ position: { x: 20, y: 20 } });
-	await expect(
-		dialog.getByRole('heading', { name: 'Keep this Pokemon Editor session?' })
-	).toBeVisible();
+	await expect(dialog.getByRole('heading', { name: 'Discard this new Pokemon?' })).toBeVisible();
 	await dialog.getByRole('button', { name: 'Keep editing' }).click();
 	await expect(level).toBeFocused();
 	await page.locator('.takeover-backdrop').click({ position: { x: 20, y: 20 } });
@@ -2159,7 +2214,10 @@ test('Edit opens Pokemon Editor and returns focus to the command stack', async (
 
 	const editor = page.getByRole('dialog', { name: 'ARON' });
 	await expect(editor).toBeVisible();
-	await expect(editor).toContainText('Save File Pokemon');
+	await expect(editor).toHaveAttribute('aria-describedby', 'pokemon-editor-status');
+	await expect(editor.locator('#pokemon-editor-status')).toBeAttached();
+	await expect(editor).not.toContainText('Save File Pokemon');
+	await expect(editor).not.toContainText(/Engine|Editable/);
 	await expect(editor).toContainText('Box 01 · Slot 1 · Row A / Col 1');
 	await expect(editor).toContainText('Species #0304');
 	await expect(editor.locator('[data-editor-rail-section]')).toHaveCount(11);
@@ -2463,9 +2521,7 @@ test('Pokemon Editor keeps staged state through review, Legality, guarded Back, 
 		'page'
 	);
 	await pressController(page, 'Escape');
-	await expect(
-		editor.getByRole('heading', { name: 'Keep this Pokemon Editor session?' })
-	).toBeVisible();
+	await expect(editor.getByRole('heading', { name: 'Discard staged edits?' })).toBeVisible();
 	await expect(editor).toHaveAttribute('aria-describedby', 'pokemon-editor-status');
 	await expect(editor.locator('#pokemon-editor-status')).toContainText(
 		'6 staged changes will be lost.'
@@ -2516,16 +2572,12 @@ test('Pokemon Editor keeps staged state through review, Legality, guarded Back, 
 	await expect(page.locator('#pokemon-editor-content-nature')).toBeFocused();
 
 	await pressController(page, 'Escape');
-	await expect(
-		editor.getByRole('heading', { name: 'Keep this Pokemon Editor session?' })
-	).toBeVisible();
+	await expect(editor.getByRole('heading', { name: 'Discard staged edits?' })).toBeVisible();
 	await expect(page.locator('#pokemon-editor-keep-editing')).toBeFocused();
 	await pressController(page, 'Escape');
 	await expect(page.locator('#pokemon-editor-content-nature')).toBeFocused();
 	await page.locator('.takeover-backdrop').click({ position: { x: 8, y: 8 } });
-	await expect(
-		editor.getByRole('heading', { name: 'Keep this Pokemon Editor session?' })
-	).toBeVisible();
+	await expect(editor.getByRole('heading', { name: 'Discard staged edits?' })).toBeVisible();
 	await editor.getByRole('button', { name: 'Keep editing' }).click();
 	await expect(page.locator('#pokemon-editor-content-nature')).toBeFocused();
 
@@ -2575,10 +2627,10 @@ test('Pokemon Editor exposes Move Set, IV, and EV projection sections', async ({
 	const editor = page.getByRole('dialog', { name: 'ARON' });
 	await expect(editor).toBeVisible();
 	await expect(editor).toContainText('Move Set');
-	await expect(editor).toContainText('Visible Moves');
+	await expect(editor).toContainText('Current Moves');
 	await expect(editor).toContainText('IV / EV');
 	await expect(editor).toContainText('Stats');
-	await expect(editor).toContainText('No Pokemon edits staged.');
+	await expect(editor.locator('#pokemon-editor-status')).toBeEmpty();
 	await expect(editor.getByRole('button', { name: 'Apply edits' })).toBeDisabled();
 	await choosePokemonEditorSection(page, 'move-set');
 	await editor.getByRole('combobox', { name: 'Move 1' }).click();
@@ -2611,7 +2663,7 @@ test('Pokemon Editor applies nickname changes and refreshes Slot labels', async 
 	await expect(page.getByRole('dialog', { name: 'ARON' })).toBeVisible();
 	await expect(nickname).toHaveValue('RO');
 	await fillEditorInput(nickname, 'RON');
-	await expect(editor).toContainText('1 Pokemon edit drafted.');
+	await expect(editor.locator('#pokemon-editor-staged-count')).toHaveText('1 staged');
 
 	await editor.getByRole('button', { name: 'Apply edits' }).click();
 	await expect(page.locator('#box-0-slot-0')).toContainText('RON', { timeout: 15000 });
@@ -2619,6 +2671,10 @@ test('Pokemon Editor applies nickname changes and refreshes Slot labels', async 
 	await expect(updatedEditor).toBeVisible();
 	await expect(updatedEditor).toContainText('Pokemon nickname updated.');
 	await expect(updatedEditor.getByRole('button', { name: 'Apply edits' })).toBeDisabled();
+	const updatedNickname = updatedEditor.locator('#pokemon-editor-nickname');
+	await fillEditorInput(updatedNickname, 'RONA');
+	await expect(updatedEditor.locator('#pokemon-editor-status')).toBeEmpty();
+	await expect(updatedEditor).not.toContainText('Pokemon nickname updated.');
 });
 
 test('Pokemon Editor previews and applies a Species and Form change', async ({ page }) => {
@@ -2636,7 +2692,7 @@ test('Pokemon Editor previews and applies a Species and Form change', async ({ p
 	await species.selectOption({ label: 'Lairon' });
 	await expect(editor).toContainText('Lairon · Default', { timeout: 15000 });
 	await expect(editor).toContainText('Sprite Identity');
-	await expect(editor).toContainText('1 Pokemon edit drafted.');
+	await expect(editor.locator('#pokemon-editor-staged-count')).toHaveText('1 staged');
 
 	await editor.getByRole('button', { name: 'Apply edits' }).click();
 	await expect(page.locator('#box-0-slot-0')).toContainText('LAIRON', { timeout: 15000 });
@@ -2659,7 +2715,7 @@ test('Pokemon Editor applies Original Trainer name changes and returns focus', a
 	const trainerName = editor.locator('#pokemon-editor-original-trainer-name');
 	await expect(editor).toContainText('Original Trainer');
 	await fillEditorInput(trainerName, 'RAJAN');
-	await expect(editor).toContainText('1 Pokemon edit drafted.');
+	await expect(editor.locator('#pokemon-editor-staged-count')).toHaveText('1 staged');
 
 	await editor.getByRole('button', { name: 'Apply edits' }).click();
 	await expect(trainerName).toHaveValue('RAJAN', { timeout: 15000 });
@@ -2694,7 +2750,7 @@ test('Pokemon Editor changes Held Item and returns focus to the command stack', 
 	await expect(heldItem).not.toHaveValue(originalItem);
 	await pressController(page, 'Escape');
 	const changedItem = await heldItem.inputValue();
-	await expect(editor).toContainText('1 Pokemon edit drafted.');
+	await expect(editor.locator('#pokemon-editor-staged-count')).toHaveText('1 staged');
 
 	await editor.getByRole('button', { name: 'Apply edits' }).click();
 	await expect(editor).toContainText('Pokemon edits applied.', { timeout: 15000 });
@@ -2731,7 +2787,7 @@ test('Pokemon Editor changes Ability and returns focus to the command stack', as
 	await expect(ability).not.toHaveValue(originalAbility);
 	await pressController(page, 'Escape');
 	const changedAbility = await ability.inputValue();
-	await expect(editor).toContainText('1 Pokemon edit drafted.');
+	await expect(editor.locator('#pokemon-editor-staged-count')).toHaveText('1 staged');
 
 	await editor.getByRole('button', { name: 'Apply edits' }).click();
 	await expect(editor).toContainText('Pokemon edits applied.', { timeout: 15000 });
@@ -2765,7 +2821,7 @@ test('Pokemon Editor applies Met Data and returns focus to Edit', async ({ page 
 	if (!nextBall) throw new Error('Expected another engine-provided Ball choice.');
 
 	await ball.selectOption(nextBall.value);
-	await expect(editor).toContainText('1 Pokemon edit drafted.');
+	await expect(editor.locator('#pokemon-editor-staged-count')).toHaveText('1 staged');
 	await editor.getByRole('button', { name: 'Apply edits' }).click();
 
 	const updatedEditor = page.getByRole('dialog', { name: 'ARON' });
@@ -2796,7 +2852,16 @@ test('Legality Check opens an engine report from an occupied Slot and dismisses 
 	await expect(page.locator('.boxes-route')).toHaveAttribute('inert', '');
 	await expect(report.locator('.report-scroll')).toHaveCSS('overflow-y', 'auto');
 	await expect(report).toContainText('MEW');
-	await expect(report).toContainText(/PKHeX (judged|found)/);
+	await expect(report).toContainText('This Pokemon has legality issues.');
+	await expect(report).not.toContainText(/PKHeX|Engine/);
+	const normalizeRows = (rows: string[]) => rows.map((row) => row.replace(/\s+/g, ' ').trim());
+	const warningRows = normalizeRows(
+		await report.getByLabel('Warnings').getByRole('listitem').allTextContents()
+	);
+	const messageRows = normalizeRows(
+		await report.getByLabel('Messages').getByRole('listitem').allTextContents()
+	);
+	expect(messageRows.filter((message) => warningRows.includes(message))).toEqual([]);
 	await expect(page.getByText('Dirty Workspace')).toHaveCount(0);
 	const quickFix = report.getByRole('button', { name: 'Quick Fix', exact: true }).first();
 	await expect(quickFix).toBeVisible();
@@ -2865,9 +2930,7 @@ test('Pokemon Editor keeps a Quick Fix private until Apply and guards discard', 
 	await expect(slot).toContainText('MEW');
 
 	await editor.getByRole('button', { name: 'Close Pokemon Editor' }).click();
-	await expect(
-		editor.getByRole('heading', { name: 'Keep this Pokemon Editor session?' })
-	).toBeVisible();
+	await expect(editor.getByRole('heading', { name: 'Discard staged edits?' })).toBeVisible();
 	await editor.getByRole('button', { name: 'Discard edits' }).click();
 	await expect(editor).toBeHidden();
 	expect(await workspaceBytesHashForFile(page, fileName)).toBe(workspaceBefore);
@@ -3497,6 +3560,7 @@ test('Trainer and Bag destinations apply their Save File edits', async ({ page }
 	await moneySection.click();
 	await expect(page.getByRole('heading', { name: 'Money', exact: true })).toBeVisible();
 	await page.locator('#save-file-money').fill('12345');
+	await expect(page.getByText('Current balance:')).toBeVisible();
 
 	await chooseMainMenu(page, 'Bag');
 	await expect(page.getByRole('heading', { name: 'Inventory' })).toBeVisible();
@@ -3514,7 +3578,6 @@ test('Trainer and Bag destinations apply their Save File edits', async ({ page }
 	await page.getByRole('button', { name: '+ Add', exact: true }).click();
 	await expect(page.locator('.item-list article.new-item')).toHaveCount(1);
 	await page.locator('.item-list article:not(.new-item) button.remove').nth(1).click();
-	await expect(page.getByText('Save File bytes remain untouched until Apply.')).toBeVisible();
 
 	await chooseMainMenu(page, 'Trainer');
 	await expect(trainerName).toHaveValue('RAJ');
@@ -3523,8 +3586,8 @@ test('Trainer and Bag destinations apply their Save File edits', async ({ page }
 	await expect(page.getByText('5 staged edits')).toBeVisible();
 	await page.getByRole('button', { name: /Apply edits/ }).click();
 	await expect(page.getByText('Save File edits applied.')).toBeVisible({ timeout: 15000 });
-	await expect(page.getByText('Backup created')).toBeVisible();
-	await expect(page.getByText('Workspace has unapplied export changes.')).toBeVisible();
+	expect(await backupCount(page)).toBe(1);
+	await expect(page.getByText('Changes ready to export.')).toBeVisible();
 
 	await chooseMainMenu(page, 'Bag');
 	await expect(page.getByLabel(quantityLabel!)).toHaveValue(String(originalQuantity + 1));
@@ -3589,7 +3652,7 @@ test('Pokemon Editor changes level through Apply and keeps editor focus', async 
 	await expect(levelInput).toHaveAttribute('data-controller-editing', 'true');
 	await levelInput.fill('13');
 	await expect(levelInput).toHaveValue('13');
-	await expect(editor).toContainText('1 Pokemon edit drafted.');
+	await expect(editor.locator('#pokemon-editor-staged-count')).toHaveText('1 staged');
 	await expect(editor.getByRole('button', { name: 'Apply edits' })).toBeEnabled();
 
 	await editor.getByRole('button', { name: 'Apply edits' }).click();
@@ -3623,7 +3686,7 @@ test('Pokemon Editor stages, cancels, and applies an engine-projected Tera Type'
 	if (!next) throw new Error('Expected another Tera Type choice.');
 
 	await teraType.selectOption(next);
-	await expect(editor).toContainText('1 Pokemon edit drafted.');
+	await expect(editor.locator('#pokemon-editor-staged-count')).toHaveText('1 staged');
 	await editor.getByRole('button', { name: 'Cancel edits' }).click();
 	await expect(teraType).toHaveValue(original);
 
@@ -3660,7 +3723,7 @@ test('controller reaches and applies a Pokemon Editor change', async ({ page }) 
 	await expect(nature).not.toHaveValue(originalNature);
 	await pressController(page, 'Escape');
 	const nextNature = await nature.inputValue();
-	await expect(editor).toContainText('1 Pokemon edit drafted.');
+	await expect(editor.locator('#pokemon-editor-staged-count')).toHaveText('1 staged');
 
 	await pressController(page, 'ArrowDown');
 	await expect(page.locator('#pokemon-editor-staged-count')).toBeFocused();
@@ -3689,7 +3752,7 @@ test('Pokemon Editor stages and applies Friendship while restoring focus', async
 	const updated = original === 255 ? 254 : original + 1;
 
 	await fillEditorInput(friendship, String(updated));
-	await expect(editor).toContainText('1 Pokemon edit drafted.');
+	await expect(editor.locator('#pokemon-editor-staged-count')).toHaveText('1 staged');
 	await editor.getByRole('button', { name: 'Cancel edits' }).click();
 	await expect(friendship).toHaveValue(String(original));
 
@@ -4042,7 +4105,7 @@ test('clear slot cancellation and confirmation use the in-app confirmation surfa
 
 	const confirmDialog = page.getByRole('dialog', { name: 'Clear ARON?' });
 	await expect(confirmDialog).toBeVisible();
-	await expect(confirmDialog).toContainText('Clear Slot');
+	await expect(confirmDialog).not.toContainText('Clear Slot');
 	await expect(confirmDialog).toContainText('Box 01 Slot 1');
 	await page.getByRole('button', { name: 'Cancel' }).click();
 	await expect(confirmDialog).toBeHidden();

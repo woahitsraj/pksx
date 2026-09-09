@@ -28,7 +28,7 @@ describe('parseEngineResult', () => {
 			value: null,
 			error: {
 				code: 'invalid-engine-response',
-				message: 'The PKHeX Engine returned invalid JSON.'
+				message: 'Pokemon data could not be read.'
 			}
 		});
 	});

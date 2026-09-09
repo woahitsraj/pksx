@@ -87,7 +87,7 @@ export async function requestLegalityReport({
 				status: 'error',
 				location,
 				pokemonLabel,
-				message: 'The PKHeX Engine is not ready.'
+				message: 'Legality Check is still loading. Try again.'
 			},
 			dirtyChanged: false,
 			bytesChanged: false

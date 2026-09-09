@@ -31,6 +31,7 @@
 		type PokemonEditorSession
 	} from '$lib/pksx/pokemon-editor/session';
 	import { getSpriteIdentityLabels } from '$lib/pksx/sprite-catalog';
+	import DelayedSpinner from './DelayedSpinner.svelte';
 
 	interface Props {
 		editor: PokemonEditorState;
@@ -290,24 +291,16 @@
 		slot.speciesId ? `Species #${String(slot.speciesId).padStart(4, '0')}` : 'Unknown species'
 	);
 	const spriteIdentityLabels = $derived(getSpriteIdentityLabels(slot.spriteIdentity));
-	const sourceLabel = $derived(
-		mode === 'create'
-			? 'New Pokemon'
-			: editor.source.owner === 'save-file'
-				? 'Save File Pokemon'
-				: 'Pokemon Storage Pokemon'
-	);
 	const statusText = $derived(
 		draftValidationText
 			? draftValidationText
 			: feedback && (!draftDirty || lastAppliedDraftSignature === currentDraftSignature)
 				? feedback
 				: draftDirty
-					? `${draftEditCount} Pokemon edit${draftEditCount === 1 ? '' : 's'} drafted.`
+					? null
 					: pendingScratch
 						? 'Quick Fix staged.'
-						: (editor.applyOutcome.message ??
-							(mode === 'create' ? `Ready to create ${slot.label}.` : 'No Pokemon edits staged.'))
+						: editor.applyOutcome.message
 	);
 	const experienceProjection = $derived(slot.experienceProjection);
 	const canEditLevelExperience = $derived(experienceProjection !== null);
@@ -1361,7 +1354,6 @@
 				<img src={spriteUrl} alt="" width="48" height="48" />
 			{/if}
 			<div>
-				<p>{sourceLabel}</p>
 				<h2 id="pokemon-editor-title">{mode === 'create' ? 'New Pokemon' : slot.label}</h2>
 				<div class="identity-line">
 					<span>{editor.source.location}</span>
@@ -1385,8 +1377,9 @@
 
 	{#if session.view === 'discard'}
 		<section class="editor-internal-state" aria-labelledby="pokemon-editor-discard-title">
-			<p>Discard staged edits?</p>
-			<h3 id="pokemon-editor-discard-title">Keep this Pokemon Editor session?</h3>
+			<h3 id="pokemon-editor-discard-title">
+				{mode === 'create' ? 'Discard this new Pokemon?' : 'Discard staged edits?'}
+			</h3>
 			<span id="pokemon-editor-status">
 				{mode === 'create'
 					? 'This unpublished Pokemon will be lost.'
@@ -1447,7 +1440,7 @@
 						aria-label={`${pokemonEditorSections.find(({ id }) => id === session.section)?.label} section`}
 					>
 						{#if session.section === 'species-form' && identityRows.length > 0}
-							<div class="field-grid" aria-label="Projected Pokemon fields">
+							<div class="field-grid" aria-label="Pokemon details">
 								{#each identityRows as row (row.label)}
 									<span>{row.label}</span>
 									<strong>{row.value}</strong>
@@ -1462,7 +1455,7 @@
 						>
 							<div class="panel-title">
 								<span>Species / Form</span>
-								<small>{speciesFormProjection ? 'Engine choices' : 'Unavailable'}</small>
+								{#if !speciesFormProjection}<small>Unavailable</small>{/if}
 							</div>
 							{#if speciesFormProjection}
 								<div class="species-form-controls">
@@ -1501,7 +1494,7 @@
 								</div>
 								<div class="species-form-preview" aria-live="polite">
 									{#if speciesFormLoading || !speciesFormPreview}
-										<p>Loading PKHeX cascade preview...</p>
+										<DelayedSpinner active={speciesFormLoading} label="Updating preview" />
 									{:else}
 										<strong>{speciesFormPreview.speciesName} · {speciesFormPreview.formName}</strong
 										>
@@ -1533,11 +1526,8 @@
 							>
 								<div class="panel-title">
 									<span>Battle Fields</span>
-									<small
-										>{battleFields.some((field) => field.supported)
-											? 'Editable'
-											: 'Unsupported'}</small
-									>
+									{#if !battleFields.some((field) => field.supported)}<small>Unsupported</small
+										>{/if}
 								</div>
 								<div class="battle-field-controls">
 									{#each battleFields as field (field.key)}
@@ -1576,12 +1566,11 @@
 						>
 							<div class="panel-title">
 								<span>Nickname</span>
-								<small>Engine validated</small>
 							</div>
-							<label class="nickname-field">
-								<span>Nickname</span>
+							<div class="nickname-field">
 								<input
 									id="pokemon-editor-nickname"
+									aria-label="Nickname"
 									class:staged-field={isEditDirty('nickname')}
 									aria-invalid={isControlInvalid('pokemon-editor-nickname')}
 									type="text"
@@ -1599,7 +1588,7 @@
 									onkeydown={(event) => handleDraftInputKeydown(event, 'pokemon-editor-nickname')}
 									oninput={handleNicknameInput}
 								/>
-							</label>
+							</div>
 							<p id="pokemon-editor-nickname-hint">
 								Leave empty to restore the default species nickname.
 							</p>
@@ -1612,7 +1601,7 @@
 						>
 							<div class="panel-title">
 								<span>Nature</span>
-								<small>{canEditNature ? 'Engine constrained' : 'Unsupported'}</small>
+								{#if !canEditNature}<small>Unsupported</small>{/if}
 							</div>
 							{#if canEditNature}
 								<div class="nature-edit-summary">
@@ -1665,7 +1654,7 @@
 						>
 							<div class="panel-title">
 								<span>Held Item</span>
-								<small>{canEditHeldItem ? 'Engine constrained' : 'Unsupported'}</small>
+								{#if !canEditHeldItem}<small>Unsupported</small>{/if}
 							</div>
 							{#if heldItemEditConstraints && heldItemEditConstraints.options.length > 0}
 								<label class="held-item-edit-controls">
@@ -1688,21 +1677,16 @@
 										{/each}
 									</select>
 								</label>
-								<p class="held-item-restrictions">
-									{#if draftHeldItemId === 0}
-										No item is selected.
-									{:else if unavailableHeldItemCount > 0}
+								{#if unavailableHeldItemCount > 0}
+									<p class="held-item-restrictions">
 										{unavailableHeldItemCount} item
-										{unavailableHeldItemCount === 1 ? 'is' : 'choices are'} unavailable for this Pokemon
-										Entity format.
-									{:else}
-										Choices are limited to the active Save File and Pokemon Entity format.
-									{/if}
-								</p>
+										{unavailableHeldItemCount === 1 ? 'is' : 'choices are'} unavailable for this Pokemon.
+									</p>
+								{/if}
 							{:else}
 								<p class="unsupported-copy">
 									{heldItemEditConstraints?.unsupportedReason ??
-										'Held Item Editing is not supported for this Pokemon Entity format.'}
+										'Held Item Editing is not supported for this Pokemon.'}
 								</p>
 							{/if}
 						</div>
@@ -1714,7 +1698,7 @@
 						>
 							<div class="panel-title">
 								<span>Ability</span>
-								<small>{canEditAbility ? 'Engine constrained' : 'Unsupported'}</small>
+								{#if !canEditAbility}<small>Unsupported</small>{/if}
 							</div>
 							{#if abilityEditConstraints && abilityEditConstraints.options.length > 0}
 								<label class="ability-edit-controls">
@@ -1759,7 +1743,7 @@
 						>
 							<div class="panel-title">
 								<span>Met Data</span>
-								<small>{canEditMetData ? 'Engine constrained' : 'Unsupported'}</small>
+								{#if !canEditMetData}<small>Unsupported</small>{/if}
 							</div>
 							{#if canEditMetData}
 								<div class="met-data-edit-controls">
@@ -1877,14 +1861,10 @@
 										</label>
 									{/if}
 								</div>
-								<p class="met-data-hint">
-									Location, origin game, and ball choices come from the PKHeX Engine. Invalid
-									encounter combinations remain staged.
-								</p>
 							{:else}
 								<p class="unsupported-copy">
 									{metDataEditConstraints?.unsupportedReason ??
-										'Met Data Editing is not supported for this Pokemon Entity format.'}
+										'Met Data Editing is not supported for this Pokemon.'}
 								</p>
 							{/if}
 						</div>
@@ -1896,7 +1876,7 @@
 						>
 							<div class="panel-title">
 								<span>Original Trainer</span>
-								<small>{canEditOriginalTrainer ? 'Engine validated' : 'Unsupported'}</small>
+								{#if !canEditOriginalTrainer}<small>Unsupported</small>{/if}
 							</div>
 							{#if canEditOriginalTrainer && originalTrainerEditConstraints}
 								<div class="trainer-edit-controls">
@@ -2031,14 +2011,14 @@
 								</div>
 								{#if unsupportedOriginalTrainerFields.length > 0}
 									<p class="unsupported-copy">
-										This Pokemon Entity format does not support editing:
+										This Pokemon does not support editing:
 										{unsupportedOriginalTrainerFields.join(', ')}.
 									</p>
 								{/if}
 							{:else}
 								<p class="unsupported-copy">
 									{originalTrainerEditConstraints?.unsupportedReason ??
-										'Original Trainer Data Editing is not supported for this Pokemon Entity format.'}
+										'Original Trainer Data Editing is not supported for this Pokemon.'}
 								</p>
 							{/if}
 						</div>
@@ -2050,7 +2030,7 @@
 						>
 							<div class="panel-title">
 								<span>Level / Experience</span>
-								<small>{canEditLevelExperience ? 'Editable' : 'Unsupported'}</small>
+								{#if !canEditLevelExperience}<small>Unsupported</small>{/if}
 							</div>
 							<div class="level-edit-grid">
 								<span>Current level</span>
@@ -2145,7 +2125,7 @@
 						>
 							<div class="panel-title">
 								<span>Friendship</span>
-								<small>{canEditFriendship ? 'Editable' : 'Unsupported'}</small>
+								{#if !canEditFriendship}<small>Unsupported</small>{/if}
 							</div>
 							{#if canEditFriendship}
 								<div class="stat-edit-controls">
@@ -2199,7 +2179,7 @@
 						>
 							<div class="panel-title">
 								<span>Move Set</span>
-								<small>{canEditMoveSet ? 'Editable' : 'Unsupported'}</small>
+								{#if !canEditMoveSet}<small>Unsupported</small>{/if}
 							</div>
 							{#if canEditMoveSet}
 								<div class="move-edit-controls">
@@ -2307,12 +2287,11 @@
 						{#if slot.moves && slot.moves.length > 0}
 							<div
 								class="editor-panel"
-								aria-label="Visible Move Set Projection"
+								aria-label="Current Move Set"
 								data-editor-active={session.section === 'move-set'}
 							>
 								<div class="panel-title">
-									<span>Visible Moves</span>
-									<small>Projection</small>
+									<span>Current Moves</span>
 								</div>
 								<div class="move-grid">
 									{#each slot.moves as move, index (`${index}-${move.name}`)}
@@ -2441,7 +2420,6 @@
 							>
 								<div class="panel-title">
 									<span>Stats</span>
-									<small>Engine projection</small>
 								</div>
 								<div class="stat-grid">
 									{#each slot.stats as stat (stat.key)}
@@ -2458,9 +2436,7 @@
 		</div>
 
 		<footer class="editor-actions">
-			<p id="pokemon-editor-status">
-				{statusText}
-			</p>
+			<p id="pokemon-editor-status">{statusText ?? ''}</p>
 			{#if draftDirty}
 				<button
 					id="pokemon-editor-staged-count"
@@ -2482,12 +2458,16 @@
 				disabled={(mode === 'edit' && !draftDirty && !pendingScratch) ||
 					applying ||
 					draftValidation !== null}
-				aria-describedby="pokemon-editor-status"
+				aria-describedby={statusText ? 'pokemon-editor-status' : undefined}
 				title={draftValidationText ?? undefined}
 				onclick={handleApply}
 			>
-				{applying ? 'Applying...' : mode === 'create' ? 'Create Pokemon' : 'Apply edits'}
+				{mode === 'create' ? 'Create Pokemon' : 'Apply edits'}
 			</button>
+			<DelayedSpinner
+				active={applying}
+				label={mode === 'create' ? 'Creating Pokemon' : 'Applying Pokemon edits'}
+			/>
 			<button
 				id="pokemon-editor-cancel"
 				type="button"
@@ -2532,14 +2512,12 @@
 		border-bottom: 1px solid var(--rule);
 	}
 
-	.editor-header p,
 	.editor-header h2,
 	.editor-header span,
 	.editor-actions p {
 		margin: 0;
 	}
 
-	.editor-header p,
 	.editor-header span,
 	.panel-title small,
 	.editor-actions p {
@@ -2548,11 +2526,6 @@
 			650 0.66rem var(--pksx-font-mono),
 			monospace;
 		line-height: 1.2;
-	}
-
-	.editor-header p {
-		color: var(--rust);
-		text-transform: uppercase;
 	}
 
 	.editor-header h2 {
@@ -2697,7 +2670,6 @@
 		opacity: 0.55;
 	}
 
-	.nickname-field span,
 	.nickname-panel p {
 		margin: 0;
 		color: var(--ink-mute);
@@ -2752,7 +2724,6 @@
 	}
 
 	.met-data-edit-controls span,
-	.met-data-hint,
 	.nature-edit-controls span,
 	.nature-edit-hint,
 	.held-item-edit-controls span,
@@ -2853,7 +2824,6 @@
 		background: var(--paper-deep);
 	}
 
-	.species-form-preview p,
 	.species-form-preview ul {
 		margin: 0;
 	}
@@ -3163,7 +3133,6 @@
 		font-size: var(--pksx-type-title);
 	}
 
-	.editor-identity p,
 	.editor-identity span,
 	.editor-identity strong {
 		font-size: var(--pksx-type-caption);
@@ -3350,7 +3319,6 @@
 
 	.delta-review h3,
 	.editor-internal-state h3,
-	.editor-internal-state p,
 	.editor-internal-state span {
 		margin: 0;
 	}
@@ -3385,12 +3353,6 @@
 		border-radius: var(--pksx-radius-large);
 		background: var(--pksx-color-surface-subtle);
 		text-align: center;
-	}
-
-	.editor-internal-state p {
-		color: var(--pksx-color-accent-primary);
-		font: 800 var(--pksx-type-caption) var(--pksx-font-mono);
-		text-transform: uppercase;
 	}
 
 	.internal-actions {

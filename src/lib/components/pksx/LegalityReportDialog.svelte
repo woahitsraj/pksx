@@ -2,6 +2,7 @@
 	import { onMount, tick } from 'svelte';
 	import type { LegalityReportState } from '$lib/pksx/legality-report';
 	import type { PokemonActionState } from '$lib/pksx/pokemon-actions';
+	import DelayedSpinner from './DelayedSpinner.svelte';
 
 	interface Props {
 		state: Exclude<LegalityReportState, { status: 'idle' }>;
@@ -23,6 +24,17 @@
 	);
 	const legalityFix = $derived(
 		actionReady?.preview.actions.find((action) => action.kind === 'legality-fix') ?? null
+	);
+	const messages = $derived(
+		report?.messages.filter(
+			(message) =>
+				!report.warnings.some(
+					(warning) =>
+						warning.identifier === message.identifier &&
+						warning.message === message.message &&
+						warning.fixId === message.fixId
+				)
+		) ?? []
 	);
 
 	function hasQuickFix(fixId?: string) {
@@ -57,19 +69,22 @@
 	<div class="report-scroll">
 		<div class="summary">
 			<div class="judgement">
-				<span>{report?.judgement ?? (state.status === 'loading' ? 'Checking' : 'Unavailable')}</span
-				>
+				{#if report}<span>{report.judgement}</span>{:else if state.status !== 'loading'}<span
+						>Unavailable</span
+					>{/if}
 				<strong>{state.pokemonLabel}</strong>
 			</div>
-			<p>
-				{#if state.status === 'loading'}
-					Asking PKHeX Engine for a report...
-				{:else if report}
-					{report.summary}
-				{:else}
-					{blockingMessage}
-				{/if}
-			</p>
+			{#if state.status === 'loading'}
+				<DelayedSpinner active label="Checking legality" />
+			{:else}
+				<p>
+					{#if report}
+						{report.summary}
+					{:else}
+						{blockingMessage}
+					{/if}
+				</p>
+			{/if}
 		</div>
 
 		{#if report}
@@ -100,11 +115,11 @@
 					{/if}
 				</section>
 
-				<section aria-label="Messages">
-					<h3>Messages</h3>
-					{#if report.messages.length > 0}
+				{#if messages.length > 0}
+					<section aria-label="Messages">
+						<h3>Messages</h3>
 						<ul>
-							{#each report.messages as line, index (`message-${index}-${line.identifier}`)}
+							{#each messages as line, index (`message-${index}-${line.identifier}`)}
 								<li>
 									<span>{line.identifier}</span>
 									<p>{line.message}</p>
@@ -121,10 +136,8 @@
 								</li>
 							{/each}
 						</ul>
-					{:else}
-						<p class="empty-copy">No issues returned.</p>
-					{/if}
-				</section>
+					</section>
+				{/if}
 			</div>
 			{#if actionReady?.selection?.kind === 'legality-fix'}
 				<section class="fix-preview" aria-label="Quick Fix preview">
@@ -159,8 +172,9 @@
 				onclick={onApplyQuickFix}
 				disabled={actionState.status === 'applying'}
 			>
-				{actionState.status === 'applying' ? 'Applying...' : 'Apply Quick Fix'}
+				Apply Quick Fix
 			</button>
+			<DelayedSpinner active={actionState.status === 'applying'} label="Applying Quick Fix" />
 		{:else}
 			<button data-legality-report-control type="button" class="close-report" onclick={onClose}
 				>Close</button
@@ -320,6 +334,10 @@
 		display: grid;
 		align-content: start;
 		gap: var(--pksx-space-1);
+	}
+
+	.report-columns section:only-child {
+		grid-column: 1 / -1;
 	}
 
 	ul {

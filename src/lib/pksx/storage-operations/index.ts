@@ -196,7 +196,7 @@ export async function applyStorageOperation(
 		return {
 			ok: false,
 			reason: 'engine-unavailable',
-			message: 'The PKHeX Engine is not ready.'
+			message: 'Pokemon data is still loading. Try again.'
 		};
 	}
 
