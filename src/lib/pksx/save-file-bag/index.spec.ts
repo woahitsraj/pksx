@@ -391,7 +391,7 @@ describe('Save File Bag controller', () => {
 	});
 
 	test('maps Engine quantity rejection to the local field error without a Toast', async () => {
-		const { controller, results, toast, accepted } = harness();
+		const { controller, enqueueEdit, results, toast, accepted } = harness();
 		await settled();
 		results.push({
 			ok: false,
@@ -408,6 +408,21 @@ describe('Save File Bag controller', () => {
 			value: '7',
 			error: 'The quantity is invalid.'
 		});
+		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'blur');
+		expect(enqueueEdit).toHaveBeenCalledTimes(1);
+		expect(controller.ledgerProps.drafts?.itemQuantities?.['Items:1']).toEqual({
+			value: '2',
+			error: 'The quantity is invalid.'
+		});
+		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '8');
+		expect(controller.ledgerProps.drafts?.itemQuantities?.['Items:1']).toEqual({
+			value: '8',
+			error: null
+		});
+		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'blur');
+		expect(enqueueEdit).toHaveBeenCalledTimes(2);
+		await settled();
+		expect(controller.ledgerProps.drafts?.itemQuantities?.['Items:1']).toBeUndefined();
 		expect(toast.error).not.toHaveBeenCalled();
 	});
 

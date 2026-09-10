@@ -42,15 +42,17 @@ export type SaveFileBagLedgerProps = Pick<
 	| 'onItemQuantityInput'
 	| 'onItemQuantityCommit'
 	| 'onItemQuantityAbandon'
+	| 'onItemQuantityStep'
 	| 'onCommandChange'
 	| 'onAddItem'
 	| 'onRemoveItem'
-> & {
-	onItemQuantityStep: (pocketKey: string, itemId: number, step: -1 | 1, draft: string) => boolean;
-};
+>;
 
-type QuantityDraft = { value: string; error: string | null; version: number };
-type BagCatalogue = SaveFileLedgerCatalogue | { status: 'loading'; retrying?: boolean };
+type QuantityDraft = {
+	value: string;
+	error: string | null;
+	version: number;
+};
 type CommitContext =
 	| {
 			kind: 'quantity';
@@ -76,7 +78,7 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 	let commandVersion = 0;
 	let quantityDrafts = $state.raw<Record<string, QuantityDraft>>({});
 	let commandErrors = $state.raw<Record<string, string>>({});
-	let catalogues = $state.raw<Record<string, BagCatalogue>>({});
+	let catalogues = $state.raw<Record<string, SaveFileLedgerCatalogue>>({});
 	let catalogueGeneration = 0;
 	let catalogueRequest: Promise<void> | null = null;
 	let disposed = false;
@@ -129,6 +131,10 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 			error: null,
 			version: 0
 		};
+		if (reason === 'blur' && draft.error) {
+			setQuantityDraft(pocketKey, itemId, String(item.quantity), draft.error, draft.version);
+			return;
+		}
 		const parsed = parseQuantity(draft.value, item.maxQuantity);
 		if (!parsed.ok) {
 			setQuantityDraft(
