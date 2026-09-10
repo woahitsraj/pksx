@@ -399,7 +399,7 @@ test('shared density keeps focused Pokemon Editor controls at 16px across budget
 	await page.setViewportSize({ width: 360, height: 640 });
 	const editor = await openPokemonEditor(page);
 	const shell = page.locator('.app-shell');
-	const label = editor.locator('.nickname-field > span');
+	const label = editor.locator('.nickname-panel .panel-title > span');
 
 	for (const size of [
 		{ width: 640, height: 360 },
