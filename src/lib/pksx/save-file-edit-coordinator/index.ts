@@ -7,6 +7,8 @@ import {
 import {
 	createCleanWorkspaceState,
 	createPersistedWorkspaceState,
+	markAutomaticBackupCreated,
+	shouldCreateAutomaticBackup,
 	type WorkspaceState
 } from '$lib/pksx/backup-workflow';
 import {
@@ -62,7 +64,6 @@ export type SaveFileEditCoordinatorOptions = {
 	engine: EngineApi | (() => EngineApi);
 	publish?: (workspace: WorkspaceState, activeBox: number) => void;
 	isResultCurrent?: (origin: SaveFileEditOrigin) => boolean;
-	createWorkspaceId?: (saveFileId: SaveFileId) => string;
 };
 
 type OriginRecord = {
@@ -120,9 +121,7 @@ export class SaveFileEditCoordinator {
 		}
 
 		if (current) current.generation += 1;
-		const workspaceId =
-			this.options.createWorkspaceId?.(workspace.file.id) ??
-			`${workspace.file.id}:${this.nextWorkspaceId++}`;
+		const workspaceId = `${workspace.file.id}:${this.nextWorkspaceId++}`;
 		const origin = { saveFileId: workspace.file.id, workspaceId };
 		const record: OriginRecord = {
 			origin,
@@ -248,17 +247,36 @@ export class SaveFileEditCoordinator {
 		if (record && record.file.importedAt !== saveFile.importedAt) return Promise.resolve();
 		this.terminalSaveFiles.set(saveFileId, saveFile.importedAt);
 		if (record) record.terminal = true;
-		const deletion = (record?.tail ?? Promise.resolve()).then(async () => {
-			const stored = await this.options.storage.getSave(saveFileId);
-			if (!stored || stored.importedAt !== saveFile.importedAt) return;
-			await this.options.storage.deleteSave(saveFileId);
-			if (record && this.currentBySaveFileId.get(saveFileId) === record) {
-				record.generation += 1;
-				this.currentBySaveFileId.delete(saveFileId);
-			}
-		});
+		const deletion = (record?.tail ?? Promise.resolve())
+			.then(async () => {
+				const stored = await this.options.storage.getSave(saveFileId);
+				if (!stored || stored.importedAt !== saveFile.importedAt) return;
+				await this.options.storage.deleteSave(saveFileId);
+				if (record && this.currentBySaveFileId.get(saveFileId) === record) {
+					record.generation += 1;
+					this.currentBySaveFileId.delete(saveFileId);
+				}
+			})
+			.catch(async (error: unknown) => {
+				this.deletionPromises.delete(deletionKey);
+				let survivingImport = false;
+				try {
+					survivingImport =
+						(await this.options.storage.getSave(saveFileId))?.importedAt === saveFile.importedAt;
+				} catch {
+					// Keep the terminal lock while storage availability remains unknown.
+				}
+				if (
+					survivingImport &&
+					this.terminalSaveFiles.get(saveFileId) === saveFile.importedAt &&
+					(!record || this.currentBySaveFileId.get(saveFileId) === record)
+				) {
+					this.terminalSaveFiles.delete(saveFileId);
+					if (record) record.terminal = false;
+				}
+				throw error;
+			});
 		this.deletionPromises.set(deletionKey, deletion);
-		void deletion.catch(() => this.deletionPromises.delete(deletionKey));
 		return deletion;
 	}
 
@@ -267,15 +285,16 @@ export class SaveFileEditCoordinator {
 		request: SaveFileEditRequest,
 		generation: number
 	): Promise<SaveFileEditResult> {
+		if (!this.currentRecord(record.origin)) return this.staleResult(record.origin);
 		if (generation !== record.generation) {
 			return this.cancelledResult(record.origin, record.latest);
 		}
-		if (!this.currentRecord(record.origin)) return this.staleResult(record.origin);
 
 		let latest: WorkspaceState;
 		try {
 			latest = await this.loadLatest(record);
 		} catch (error) {
+			if (!this.currentRecord(record.origin)) return this.staleResult(record.origin);
 			return this.failedResult(record, generation, 'workspace-persistence-failed', error);
 		}
 		if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
@@ -286,6 +305,7 @@ export class SaveFileEditCoordinator {
 		try {
 			latest = await this.ensureAutomaticBackup(record, latest);
 		} catch (error) {
+			if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
 			if (error instanceof StaleWorkspaceError) {
 				return this.staleResult(record.origin, latest);
 			}
@@ -302,6 +322,7 @@ export class SaveFileEditCoordinator {
 				record.activeBox
 			);
 		} catch (error) {
+			if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
 			return {
 				ok: false,
 				status: 'failed',
@@ -311,6 +332,7 @@ export class SaveFileEditCoordinator {
 				workspace: latest
 			};
 		}
+		if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
 		if (!mutation.ok) {
 			return {
 				ok: false,
@@ -325,12 +347,12 @@ export class SaveFileEditCoordinator {
 				workspace: latest
 			};
 		}
-		if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
 
 		let persistedBeforeResult;
 		try {
 			persistedBeforeResult = await this.options.storage.getWorkspace(record.file.id);
 		} catch (error) {
+			if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
 			return this.failedResult(record, generation, 'workspace-persistence-failed', error, latest);
 		}
 		if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
@@ -382,7 +404,7 @@ export class SaveFileEditCoordinator {
 	}
 
 	private async ensureAutomaticBackup(record: OriginRecord, workspace: WorkspaceState) {
-		if (workspace.automaticBackupCreated) return workspace;
+		if (!shouldCreateAutomaticBackup(workspace)) return workspace;
 		const id = stableAutomaticBackupId(
 			workspace,
 			record.persistedRevision ?? workspace.file.importedAt
@@ -403,7 +425,7 @@ export class SaveFileEditCoordinator {
 		}
 		if (!this.currentRecord(record.origin)) throw new StaleWorkspaceError();
 
-		const next = { ...workspace, automaticBackupCreated: true };
+		const next = markAutomaticBackupCreated(workspace);
 		const stored = await this.options.storage.putWorkspace({
 			saveFileId: next.file.id,
 			bytes: next.bytes,

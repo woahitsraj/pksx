@@ -473,6 +473,26 @@ describe('Save File edit coordinator', () => {
 		expect(harness.storage.putWorkspace).not.toHaveBeenCalled();
 	});
 
+	it('rejects every queued result after Workspace replacement instead of failure cancellation', async () => {
+		const state = workspace('save-1', 1, true);
+		const harness = createHarness(state);
+		const gate = deferred<ReturnType<typeof mutationResult>>();
+		vi.mocked(harness.engine.applySaveFileEditOperation).mockImplementationOnce(() => gate.promise);
+		const edits = coordinator(harness);
+		const origin = edits.openWorkspace(state);
+		const first = edits.enqueueEdit(origin, { key: 'money', operation: { money: 200 } });
+		const second = edits.enqueueEdit(origin, {
+			key: 'trainer-name',
+			operation: { trainerProfile: { trainerName: 'BLUE' } }
+		});
+		await vi.waitFor(() => expect(harness.engine.applySaveFileEditOperation).toHaveBeenCalled());
+		edits.replaceWorkspace({ ...state, bytes: new Uint8Array(state.bytes) });
+		gate.resolve(mutationResult([state], state.bytes, { money: 200 }));
+
+		await expect(first).resolves.toMatchObject({ ok: false, code: 'stale-workspace' });
+		await expect(second).resolves.toMatchObject({ ok: false, code: 'stale-workspace' });
+	});
+
 	it('does not publish stale state when identity changes during the Backup write', async () => {
 		const state = workspace();
 		const harness = createHarness(state);
@@ -731,6 +751,24 @@ describe('Save File edit coordinator', () => {
 		expect(harness.storage.deleteSave).toHaveBeenCalledTimes(1);
 		expect(harness.files.has('save-1')).toBe(true);
 		await edits.deleteSave(reimported.file);
+		expect(harness.storage.deleteSave).toHaveBeenCalledTimes(2);
+		expect(harness.files.has('save-1')).toBe(false);
+	});
+
+	it('reopens a surviving import after deletion fails and allows Export, edit, and retry', async () => {
+		const state = workspace('save-1', 1, true);
+		const harness = createHarness(state);
+		vi.mocked(harness.storage.deleteSave).mockRejectedValueOnce(new Error('delete unavailable'));
+		const edits = coordinator(harness);
+		const origin = edits.openWorkspace(state);
+
+		await expect(edits.deleteSave(state.file)).rejects.toThrow('delete unavailable');
+		await expect(edits.export(origin)).resolves.toEqual(new Uint8Array([1]));
+		await expect(
+			edits.enqueueEdit(origin, { key: 'money', operation: { money: 200 } })
+		).resolves.toMatchObject({ ok: true, status: 'committed' });
+		await edits.deleteSave(state.file);
+
 		expect(harness.storage.deleteSave).toHaveBeenCalledTimes(2);
 		expect(harness.files.has('save-1')).toBe(false);
 	});
