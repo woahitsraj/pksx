@@ -1130,6 +1130,7 @@
 	}
 
 	.mock-field input {
+		--pksx-type-editable: 1.05rem;
 		width: 100%;
 		box-sizing: border-box;
 		border: 0;
@@ -1179,6 +1180,7 @@
 	}
 
 	.currency-control input {
+		--pksx-type-editable: clamp(1.35rem, 3vw, 2rem);
 		min-height: 54px;
 		min-width: 0;
 		padding: 0 14px;

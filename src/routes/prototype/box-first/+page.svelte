@@ -130,12 +130,10 @@
 		outline-offset: 2px;
 	}
 
-	@media (min-height: 560px) {
+	@container style(--pksx-height-band: tall) {
 		.prototype-canvas {
-			padding: max(8px, var(--safe-area-inset-top, env(safe-area-inset-top, 0px)))
-				max(8px, var(--safe-area-inset-right, env(safe-area-inset-right, 0px)))
-				max(8px, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))
-				max(8px, var(--safe-area-inset-left, env(safe-area-inset-left, 0px)));
+			padding: max(8px, var(--pksx-safe-area-top)) max(8px, var(--pksx-safe-area-right))
+				max(8px, var(--pksx-safe-area-bottom)) max(8px, var(--pksx-safe-area-left));
 		}
 	}
 </style>

@@ -9,6 +9,8 @@
 	import MobileTabbar from '$lib/components/pksx/MobileTabbar.svelte';
 	import TopBar from '$lib/components/pksx/TopBar.svelte';
 	import { appChrome } from '$lib/pksx/app-chrome.svelte';
+	import { heightBandLock } from '$lib/pksx/height-band-lock';
+	import { theme } from '$lib/pksx/theme.svelte';
 	import {
 		controllerFocusSystem,
 		dispatchControllerKey,
@@ -27,17 +29,24 @@
 		{ key: 'saves', label: 'Saves', glyph: '☁' }
 	];
 
-	let darkMode = $state(false);
 	let chromeFocus = $state<{ zone: 'topbar' | 'mobileTabs'; index: number } | null>(null);
 	const activeRoute = $derived(
 		page.url.pathname.startsWith('/saves')
 			? 'saves'
 			: page.url.pathname.startsWith('/save-file')
 				? 'save-file'
-				: 'boxes'
+				: page.url.pathname.startsWith('/settings')
+					? 'settings'
+					: 'boxes'
 	);
 	const activeSection = $derived(
-		activeRoute === 'saves' ? 'Saves' : activeRoute === 'save-file' ? 'Save File' : 'Boxes'
+		activeRoute === 'saves'
+			? 'Saves'
+			: activeRoute === 'save-file'
+				? 'Save File'
+				: activeRoute === 'settings'
+					? 'Settings'
+					: 'Boxes'
 	);
 
 	function openBoxes() {
@@ -304,7 +313,7 @@
 		if (index === 2) openSaves();
 		if (index === 3 && !appChrome.busy) document.getElementById('quick-save-import')?.click();
 		if (index === 4 && appChrome.hasLoadedSave && !appChrome.busy) handleExport();
-		if (index === 6) darkMode = !darkMode;
+		if (index === 6) theme.toggle();
 	}
 
 	function focusChromeElement(id: string) {
@@ -323,11 +332,12 @@
 <svelte:window onkeydown={handleChromeKeydown} />
 
 <main
-	class={['app-shell', darkMode && 'dark']}
+	class={['app-shell', 'pksx-density', theme.dark && 'dark']}
 	aria-labelledby="screen-title"
 	onfocusin={handleShellFocusIn}
 	{@attach controllerNavigation}
 	{@attach controllerFocusSystem}
+	{@attach heightBandLock}
 >
 	<TopBar
 		{sectionPills}
@@ -338,7 +348,7 @@
 		fileName={appChrome.fileName}
 		busy={appChrome.busy}
 		hasLoadedSave={appChrome.hasLoadedSave}
-		{darkMode}
+		darkMode={theme.dark}
 		focusIndex={chromeFocus?.zone === 'topbar' ? chromeFocus.index : null}
 		onFocusControl={focusTopControl}
 		onOpenBoxes={openBoxes}
@@ -346,7 +356,7 @@
 		onOpenSaves={openSaves}
 		onImport={handleImport}
 		onExport={handleExport}
-		onToggleTheme={() => (darkMode = !darkMode)}
+		onToggleTheme={() => theme.toggle()}
 	/>
 
 	{@render children()}

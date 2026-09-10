@@ -2,9 +2,116 @@
 @plugin '@tailwindcss/forms';
 @plugin '@tailwindcss/typography';
 
+@property --pksx-type-caption {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 10px;
+}
+
+@property --pksx-type-label {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 12px;
+}
+
+@property --pksx-type-body {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 13px;
+}
+
+@property --pksx-type-title {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 16px;
+}
+
+@property --pksx-type-display {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 24px;
+}
+
+@property --pksx-type-editable {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 16px;
+}
+
+@property --pksx-control-height {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 32px;
+}
+
+@property --pksx-small-control-height {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 24px;
+}
+
+@property --pksx-icon-size {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 16px;
+}
+
+@property --pksx-small-icon-size {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 12px;
+}
+
+@property --pksx-space-unit {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 2px;
+}
+
+@property --pksx-radius-small {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 4px;
+}
+
+@property --pksx-radius-medium {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 6px;
+}
+
+@property --pksx-radius-large {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 9px;
+}
+
+@property --pksx-border-width {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 1px;
+}
+
+@property --pksx-focus-ring {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 2px;
+}
+
+@property --pksx-slot-minimum {
+	syntax: '<length>';
+	inherits: true;
+	initial-value: 44px;
+}
+
 :root {
 	--pksx-font-sans: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 	--pksx-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+	--pksx-height-band: short;
+	--pksx-safe-area-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+	--pksx-safe-area-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+	--pksx-safe-area-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+	--pksx-safe-area-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
 
 	--pksx-color-surface-canvas: #f4ecdf;
 	--pksx-color-surface-panel: #fbf6ec;
@@ -35,6 +142,70 @@
 	--pksx-shadow-panel:
 		0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 14px 36px -16px rgba(70, 50, 30, 0.26),
 		0 4px 10px -6px rgba(70, 50, 30, 0.18);
+}
+
+@media (min-height: 560px) {
+	:root {
+		--pksx-height-band: tall;
+	}
+}
+
+.pksx-density-container {
+	container: pksx-density / size;
+}
+
+.pksx-density {
+	--pksx-type-caption: 10px;
+	--pksx-type-label: 12px;
+	--pksx-type-body: 13px;
+	--pksx-type-title: 16px;
+	--pksx-type-display: 24px;
+	--pksx-type-editable: 16px;
+	--pksx-control-height: clamp(32px, 9.4cqh, 44px);
+	--pksx-small-control-height: clamp(24px, calc(var(--pksx-control-height) * 0.75), 33px);
+	--pksx-icon-size: 16px;
+	--pksx-small-icon-size: 12px;
+	--pksx-space-unit: clamp(2px, 0.9cqh, 6px);
+	--pksx-radius-small: 4px;
+	--pksx-radius-medium: calc(4px + var(--pksx-space-unit));
+	--pksx-radius-large: calc(6px + var(--pksx-space-unit) * 1.5);
+	--pksx-border-width: 1px;
+	--pksx-focus-ring: clamp(2px, 0.6cqh, 3px);
+	--pksx-slot-minimum: 44px;
+	--pksx-space-1: var(--pksx-space-unit);
+	--pksx-space-2: calc(var(--pksx-space-unit) * 2);
+	--pksx-space-3: calc(var(--pksx-space-unit) * 3);
+	--pksx-space-4: calc(var(--pksx-space-unit) * 4);
+}
+
+.pksx-density
+	:where(
+		input:not([type='button']):not([type='checkbox']):not([type='file']):not([type='hidden']):not(
+				[type='radio']
+			):not([type='reset']):not([type='submit']),
+		select,
+		textarea,
+		[contenteditable]:not([contenteditable='false' i])
+	) {
+	font-size: max(16px, var(--pksx-type-editable)) !important;
+}
+
+@container pksx-density (min-width: 900px) and (min-height: 700px) {
+	.pksx-density {
+		--pksx-type-caption: 11px;
+		--pksx-type-label: 13px;
+		--pksx-type-body: 15px;
+		--pksx-type-title: 18px;
+		--pksx-type-display: 28px;
+	}
+}
+
+:root[data-pksx-height-band-lock='short'] {
+	--pksx-height-band: short;
+}
+
+:root[data-pksx-height-band-lock='tall'] {
+	--pksx-height-band: tall;
 }
 
 :root:has(.app-shell.dark) {
@@ -112,10 +283,8 @@ html[data-input-modality='controller'] body :focus {
 	--shadow-deep: var(--pksx-shadow-panel);
 	height: 100dvh;
 	min-height: 100dvh;
-	padding: max(18px, var(--safe-area-inset-top, env(safe-area-inset-top, 0px)))
-		max(18px, var(--safe-area-inset-right, env(safe-area-inset-right, 0px)))
-		max(18px, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))
-		max(18px, var(--safe-area-inset-left, env(safe-area-inset-left, 0px)));
+	padding: max(18px, var(--pksx-safe-area-top)) max(18px, var(--pksx-safe-area-right))
+		max(18px, var(--pksx-safe-area-bottom)) max(18px, var(--pksx-safe-area-left));
 	display: flex;
 	flex-direction: column;
 	gap: 12px;
@@ -138,10 +307,8 @@ html[data-input-modality='controller'] body :focus {
 	.app-shell {
 		height: auto;
 		min-height: 100dvh;
-		padding: max(10px, var(--safe-area-inset-top, env(safe-area-inset-top, 0px)))
-			max(10px, var(--safe-area-inset-right, env(safe-area-inset-right, 0px)))
-			calc(78px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))
-			max(10px, var(--safe-area-inset-left, env(safe-area-inset-left, 0px)));
+		padding: max(10px, var(--pksx-safe-area-top)) max(10px, var(--pksx-safe-area-right))
+			calc(78px + var(--pksx-safe-area-bottom)) max(10px, var(--pksx-safe-area-left));
 		gap: 10px;
 		overflow: visible;
 	}

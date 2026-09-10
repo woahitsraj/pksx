@@ -114,6 +114,18 @@ final class ControllerNavigationTests: XCTestCase {
         XCTAssertEqual(preservesInsets, true)
     }
 
+    func testSettingsReportsInstalledAppVersion() async throws {
+        let webView = try appWebView()
+        let installedVersion = try XCTUnwrap(
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        )
+        _ = try await webView.evaluateJavaScript("location.href = 'settings.html'")
+        try await waitForJavaScript(
+            "document.querySelector('[data-testid=\"app-version\"]')?.textContent === '\(installedVersion)' && document.querySelector('[data-testid=\"app-platform\"]')?.textContent === 'iOS'",
+            in: webView
+        )
+    }
+
     private func controllerSurface() async throws -> WKWebView {
         let webView = try appWebView()
         try await waitForJavaScript(

@@ -151,13 +151,7 @@
 		container-type: size;
 		width: 100%;
 		height: 100dvh;
-		--band: short;
-	}
-
-	@media (min-height: 560px) {
-		.live-frame {
-			--band: tall;
-		}
+		--band: var(--pksx-height-band);
 	}
 
 	:global(.density-root) {

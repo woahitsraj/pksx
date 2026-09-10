@@ -889,6 +889,7 @@ test('controller focus framework covers every interactive surface', async ({ pag
 	await pressController(page, 'Enter');
 	const editor = page.getByRole('dialog', { name: 'ARON' });
 	await expect(editor).toBeVisible();
+	await expect(editor.locator('#pokemon-editor-species')).toBeEnabled({ timeout: 15000 });
 	await expectControllerHighlights(page, editor);
 	await pressController(page, 'Escape');
 	await pressController(page, 'Escape');

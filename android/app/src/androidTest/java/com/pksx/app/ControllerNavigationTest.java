@@ -6,13 +6,15 @@ import static org.junit.Assume.assumeTrue;
 import android.content.pm.PackageInfo;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.os.Build;
 import android.os.SystemClock;
+import android.util.Base64;
 import android.util.Log;
 import android.view.InputDevice;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
-import android.util.Base64;
+import android.view.inputmethod.InputMethodManager;
 import android.webkit.WebView;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -20,12 +22,12 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.test.ext.junit.rules.ActivityScenarioRule;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.Locale;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.json.JSONArray;
 import org.junit.Rule;
 import org.junit.Test;
@@ -379,6 +381,372 @@ public class ControllerNavigationTest {
         assertAllFocusableControlsHighlighted(".saves-page");
     }
 
+    @Test
+    public void settingsReportsInstalledAppVersion() throws Exception {
+        String installedVersion = InstrumentationRegistry
+            .getInstrumentation()
+            .getTargetContext()
+            .getPackageManager()
+            .getPackageInfo(
+                InstrumentationRegistry.getInstrumentation().getTargetContext().getPackageName(),
+                0
+            )
+            .versionName;
+        awaitJavaScript(
+            "document.readyState === 'complete'"
+                + " && document.querySelector('.boxes-route')?.dataset.initialState === 'ready'",
+            ENGINE_TIMEOUT_SECONDS
+        );
+        runJavaScript(
+            "window.__pksxSettingsDocument = 'alive';"
+                + " (() => {"
+                + " const link = document.createElement('a');"
+                + " link.href = '/settings';"
+                + " document.body.append(link);"
+                + " link.click();"
+                + " link.remove();"
+                + " })()"
+        );
+        awaitJavaScript(
+            "window.__pksxSettingsDocument === 'alive'"
+                + " && location.pathname === '/settings'"
+                + " && document.querySelector('[data-testid=\"app-version\"]')?.textContent === '"
+                + installedVersion
+                + "' && document.querySelector('[data-testid=\"app-platform\"]')?.textContent === 'Android'"
+        );
+    }
+
+    @Test
+    public void editableFocusKeepsTallHeightBandWhileImeShrinksWebView() throws Throwable {
+        assumeTrue("Requires Android 11 display controls", Build.VERSION.SDK_INT >= Build.VERSION_CODES.R);
+        awaitImeHidden();
+        awaitJavaScript("document.readyState === 'complete' && document.querySelector('.app-shell')");
+
+        String originalRotationMode = userRotation("");
+        if (!originalRotationMode.matches("free|lock [0-3]")) {
+            fail("Unexpected Android user rotation state: " + originalRotationMode);
+        }
+        int originalAngle = displayRotation();
+        String originalSizeState = shellCommand("wm size");
+        if (!originalSizeState.matches("(?s).*Physical size: [0-9]+x[0-9]+.*")) {
+            fail("Unexpected Android display size state: " + originalSizeState);
+        }
+        java.util.regex.Matcher override = java.util.regex.Pattern
+            .compile("(?m)^Override size: ([0-9]+x[0-9]+)\\s*$")
+            .matcher(originalSizeState);
+        String originalSizeOverride = override.find() ? override.group(1) : null;
+        Rect originalWindowBounds = windowBounds();
+        JSONArray originalViewport = awaitSettledViewport(originalAngle, originalWindowBounds);
+        int originalWidth = originalViewport.getInt(0);
+        int originalHeight = originalViewport.getInt(1);
+        String originalGeometry = nativeWindowGeometry();
+        Log.i("PKSXAcceptance", "IME fixture captured geometry " + originalGeometry);
+        String fixedRotation = shellCommand("cmd window fixed-to-user-rotation");
+        String densityState = shellCommand("wm density");
+        Log.i(
+            "PKSXAcceptance",
+            String.format(
+                Locale.US,
+                "IME fixture captured mode=%s angle=%d sizeOverride=%s viewport=%dx%d fixed=%s density=%s",
+                originalRotationMode,
+                originalAngle,
+                originalSizeOverride == null ? "reset" : originalSizeOverride,
+                originalWidth,
+                originalHeight,
+                fixedRotation,
+                densityState.replace('\n', ' ')
+            )
+        );
+
+        Throwable primaryFailure = null;
+        try {
+            shellCommand("wm size 540x720");
+            userRotation("lock 0");
+            awaitDisplayRotation(0);
+            awaitImeHidden();
+            awaitJavaScript(
+                "innerHeight >= 560 && getComputedStyle(document.querySelector('.app-shell'))"
+                    + ".getPropertyValue('--pksx-height-band').trim() === 'tall'"
+            );
+            String beforeImeHeight = runJavaScript("innerHeight");
+
+            importEmeraldSave();
+            runJavaScript("document.querySelector('#mobile-tab-1').click()");
+            awaitJavaScript(
+                "location.pathname.endsWith('/save-file') && document.querySelector('#save-file-trainer-name')"
+            );
+            runJavaScript(
+                "(() => { const input = document.querySelector('#save-file-trainer-name');"
+                    + " input.focus(); input.click(); return document.activeElement === input; })()"
+            );
+            activityRule
+                .getScenario()
+                .onActivity(
+                    activity -> {
+                        WebView webView = activity.getBridge().getWebView();
+                        webView.requestFocus();
+                        ((InputMethodManager) activity.getSystemService(MainActivity.INPUT_METHOD_SERVICE))
+                            .showSoftInput(webView, InputMethodManager.SHOW_IMPLICIT);
+                    }
+                );
+            awaitImeVisible();
+            awaitJavaScript(
+                "innerHeight < 560"
+                    + " && document.documentElement.dataset.pksxHeightBandLock === 'tall'"
+                    + " && getComputedStyle(document.querySelector('.app-shell'))"
+                    + ".getPropertyValue('--pksx-height-band').trim() === 'tall'"
+                    + " && document.activeElement?.id === 'save-file-trainer-name'"
+            );
+            String withImeHeight = runJavaScript("innerHeight");
+            Log.i(
+                "PKSXAcceptance",
+                "IME fixture measured before=" + beforeImeHeight + " withIme=" + withImeHeight
+            );
+
+            runJavaScript("document.querySelector('button[aria-label=\"Back to boxes\"]').focus()");
+            hideIme();
+            awaitJavaScript(
+                "document.documentElement.dataset.pksxHeightBandLock === undefined"
+                    + " && getComputedStyle(document.querySelector('.app-shell'))"
+                    + ".getPropertyValue('--pksx-height-band').trim() === 'tall'"
+            );
+        } catch (Throwable failure) {
+            primaryFailure = failure;
+            throw failure;
+        } finally {
+            try {
+                try {
+                    runJavaScript("document.activeElement?.blur()");
+                    hideIme();
+                } finally {
+                    try {
+                        shellCommand(
+                            "wm size " + (originalSizeOverride == null ? "reset" : originalSizeOverride)
+                        );
+                    } finally {
+                        try {
+                            userRotation("lock " + originalAngle);
+                            awaitDisplayRotation(originalAngle);
+                            awaitImeHidden();
+                            awaitSettledViewport(originalAngle, originalWindowBounds);
+                        } finally {
+                            userRotation(originalRotationMode);
+                        }
+                        awaitDisplayRotation(originalAngle);
+                        awaitImeHidden();
+                        JSONArray restoredViewport = awaitSettledViewport(originalAngle, originalWindowBounds);
+                        if (!originalRotationMode.equals(userRotation(""))) {
+                            fail("Android rotation mode was not restored");
+                        }
+                        String restoredSizeState = shellCommand("wm size");
+                        boolean sizeRestored = originalSizeOverride == null
+                            ? !restoredSizeState.contains("Override size:")
+                            : restoredSizeState.contains("Override size: " + originalSizeOverride);
+                        if (!sizeRestored) {
+                            fail("Android display size was not restored: " + restoredSizeState);
+                        }
+                        Log.i(
+                            "PKSXAcceptance",
+                            "IME fixture restored mode="
+                                + userRotation("")
+                                + " angle="
+                                + displayRotation()
+                                + " size="
+                                + restoredSizeState.replace('\n', ' ')
+                                + " geometry="
+                                + nativeWindowGeometry()
+                                + " css="
+                                + restoredViewport
+                        );
+                    }
+                }
+            } catch (Throwable cleanupFailure) {
+                AssertionError restorationFailure = new AssertionError(
+                    "IME fixture cleanup failed; captured=" + originalGeometry
+                        + "; current=" + nativeWindowGeometry(), cleanupFailure
+                );
+                if (primaryFailure == null) throw restorationFailure;
+                primaryFailure.addSuppressed(restorationFailure);
+            }
+        }
+    }
+
+    private JSONArray awaitSettledViewport(int expectedRotation, Rect expectedWindowBounds) throws Exception {
+        long deadline = SystemClock.uptimeMillis() + TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS);
+        String lastState = "no observation";
+        while (SystemClock.uptimeMillis() < deadline) {
+            int[] firstNative = readyNativeViewport(expectedWindowBounds);
+            JSONArray firstCss = firstNative == null ? null : viewportMetrics();
+            int[] firstAfter = readyNativeViewport(expectedWindowBounds);
+            if (!awaitNextVisualState(deadline)) break;
+            int[] secondNative = readyNativeViewport(expectedWindowBounds);
+            JSONArray secondCss = secondNative == null ? null : viewportMetrics();
+            int[] secondAfter = readyNativeViewport(expectedWindowBounds);
+
+            lastState =
+                "native="
+                    + java.util.Arrays.toString(firstNative)
+                    + "/"
+                    + java.util.Arrays.toString(firstAfter)
+                    + "/"
+                    + java.util.Arrays.toString(secondNative)
+                    + "/"
+                    + java.util.Arrays.toString(secondAfter)
+                    + ", css="
+                    + firstCss
+                    + "/"
+                    + secondCss;
+            if (
+                firstNative != null
+                    && firstNative[0] == expectedRotation
+                    && java.util.Arrays.equals(firstNative, firstAfter)
+                    && java.util.Arrays.equals(firstNative, secondNative)
+                    && java.util.Arrays.equals(firstNative, secondAfter)
+                    && matchesNativeViewport(firstCss, firstNative)
+                    && matchesNativeViewport(secondCss, firstNative)
+            ) return secondCss;
+        }
+        fail("Timed out waiting for Android window " + expectedWindowBounds + ": "
+            + lastState + ", " + nativeWindowGeometry());
+        return null;
+    }
+
+    private String nativeWindowGeometry() {
+        AtomicReference<String> state = new AtomicReference<>();
+        try {
+            activityRule.getScenario().onActivity(activity -> {
+                try {
+                    com.getcapacitor.Bridge bridge = activity.getBridge();
+                    WebView webView = bridge == null ? null : bridge.getWebView();
+                    android.view.Display display = webView == null ? null : webView.getDisplay();
+                    if (webView == null || display == null || !(webView.getParent() instanceof android.view.View)) {
+                        state.set("unavailable(detached WebView)");
+                        return;
+                    }
+                    android.view.View parent = (android.view.View) webView.getParent();
+                    android.view.View decor = activity.getWindow().getDecorView();
+                    WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(decor);
+                    int[] position = new int[2];
+                    webView.getLocationOnScreen(position);
+                    state.set("rotation=" + display.getRotation()
+                        + " density=" + activity.getResources().getDisplayMetrics().densityDpi
+                        + " decor=" + decor.getWidth() + "x" + decor.getHeight()
+                        + " parent=" + parent.getWidth() + "x" + parent.getHeight()
+                        + " padding=" + parent.getPaddingLeft() + "," + parent.getPaddingTop()
+                        + "," + parent.getPaddingRight() + "," + parent.getPaddingBottom()
+                        + " webView=" + webView.getWidth() + "x" + webView.getHeight()
+                        + "@" + position[0] + "," + position[1]
+                        + " status=" + (insets == null ? null : insets.getInsets(WindowInsetsCompat.Type.statusBars()))
+                        + " navigation=" + (insets == null ? null : insets.getInsets(WindowInsetsCompat.Type.navigationBars()))
+                        + " cutout=" + (insets == null ? null : insets.getInsets(WindowInsetsCompat.Type.displayCutout()))
+                        + " ime=" + (insets == null ? null : insets.getInsets(WindowInsetsCompat.Type.ime()))
+                        + " imeVisible=" + (insets == null ? null : insets.isVisible(WindowInsetsCompat.Type.ime())));
+                } catch (RuntimeException failure) {
+                    state.set("unavailable(" + failure.getClass().getSimpleName() + ")");
+                }
+            });
+        } catch (RuntimeException failure) {
+            return "unavailable(" + failure.getClass().getSimpleName() + ")";
+        }
+        return state.get();
+    }
+
+    private Rect windowBounds() {
+        AtomicReference<Rect> bounds = new AtomicReference<>();
+        activityRule.getScenario().onActivity(activity -> bounds.set(
+            new Rect(activity.getWindowManager().getCurrentWindowMetrics().getBounds())
+        ));
+        return bounds.get();
+    }
+
+    private int[] readyNativeViewport(Rect expectedWindowBounds) {
+        AtomicReference<int[]> viewport = new AtomicReference<>();
+        activityRule
+            .getScenario()
+            .onActivity(
+                activity -> {
+                    WebView webView = activity.getBridge().getWebView();
+                    android.view.View parent = (android.view.View) webView.getParent();
+                    android.view.View decor = activity.getWindow().getDecorView();
+                    WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(decor);
+                    if (
+                        webView.getDisplay() != null
+                            && parent != null
+                            && webView.isAttachedToWindow()
+                            && webView.isLaidOut()
+                            && webView.getWidth() > 0
+                            && webView.getHeight() > 0
+                            && !webView.isLayoutRequested()
+                            && !parent.isLayoutRequested()
+                            && insets != null
+                            && !insets.isVisible(WindowInsetsCompat.Type.ime())
+                    ) {
+                        int[] origin = new int[2];
+                        decor.getLocationOnScreen(origin);
+                        Rect decorBounds = new Rect(origin[0], origin[1],
+                            origin[0] + decor.getWidth(), origin[1] + decor.getHeight());
+                        if (!expectedWindowBounds.equals(decorBounds)) return;
+                        webView.getLocationOnScreen(origin);
+                        Rect webViewBounds = new Rect(origin[0], origin[1],
+                            origin[0] + webView.getWidth(), origin[1] + webView.getHeight());
+                        Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()
+                            | WindowInsetsCompat.Type.displayCutout());
+                        Rect safeBounds = new Rect(decorBounds.left + bars.left,
+                            decorBounds.top + bars.top, decorBounds.right - bars.right,
+                            decorBounds.bottom - bars.bottom);
+                        if (!decorBounds.contains(webViewBounds) || !webViewBounds.contains(safeBounds)) return;
+                        viewport.set(
+                            new int[] {
+                                webView.getDisplay().getRotation(),
+                                webView.getWidth(),
+                                webView.getHeight(),
+                                webViewBounds.left,
+                                webViewBounds.top,
+                            }
+                        );
+                    }
+                }
+            );
+        return viewport.get();
+    }
+
+    private JSONArray viewportMetrics() throws Exception {
+        return new JSONArray(
+            runJavaScript("[innerWidth,innerHeight,devicePixelRatio,visualViewport?.scale]")
+        );
+    }
+
+    private boolean matchesNativeViewport(JSONArray css, int[] nativeViewport) throws Exception {
+        return css != null
+            && css.getInt(0) == nativeViewport[1]
+            && css.getInt(1) == nativeViewport[2]
+            && css.getDouble(2) == 1d
+            && css.getDouble(3) == 1d;
+    }
+
+    private boolean awaitNextVisualState(long deadline) throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
+        activityRule
+            .getScenario()
+            .onActivity(
+                activity ->
+                    activity
+                        .getBridge()
+                        .getWebView()
+                        .postVisualStateCallback(
+                            SystemClock.uptimeMillis(),
+                            new WebView.VisualStateCallback() {
+                                @Override
+                                public void onComplete(long requestId) {
+                                    latch.countDown();
+                                }
+                            }
+                        )
+            );
+        long remaining = deadline - SystemClock.uptimeMillis();
+        return remaining > 0 && latch.await(remaining, TimeUnit.MILLISECONDS);
+    }
+
     private void awaitControllerSurface() throws Exception {
         awaitJavaScript(
             "document.readyState === 'complete'"
@@ -386,6 +754,99 @@ public class ControllerNavigationTest {
         );
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         SystemClock.sleep(500);
+    }
+
+    private void awaitImeVisible() throws Exception {
+        long deadline = SystemClock.uptimeMillis() + TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS);
+        while (SystemClock.uptimeMillis() < deadline) {
+            AtomicReference<Boolean> visible = new AtomicReference<>(false);
+            activityRule
+                .getScenario()
+                .onActivity(
+                    activity -> {
+                        WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(
+                            activity.getBridge().getWebView()
+                        );
+                        visible.set(
+                            insets != null && insets.isVisible(WindowInsetsCompat.Type.ime())
+                        );
+                    }
+                );
+            if (visible.get()) return;
+            SystemClock.sleep(50);
+        }
+        fail("Timed out waiting for the Android IME to become visible");
+    }
+
+    private void awaitImeHidden() throws Exception {
+        long deadline = SystemClock.uptimeMillis() + TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS);
+        while (SystemClock.uptimeMillis() < deadline) {
+            AtomicReference<Boolean> hidden = new AtomicReference<>(false);
+            activityRule
+                .getScenario()
+                .onActivity(
+                    activity -> {
+                        WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(
+                            activity.getBridge().getWebView()
+                        );
+                        hidden.set(insets != null && !insets.isVisible(WindowInsetsCompat.Type.ime()));
+                    }
+                );
+            if (hidden.get()) return;
+            SystemClock.sleep(50);
+        }
+        fail("Timed out waiting for the Android IME to become hidden");
+    }
+
+    private void hideIme() {
+        activityRule
+            .getScenario()
+            .onActivity(
+                activity ->
+                    ((InputMethodManager) activity.getSystemService(MainActivity.INPUT_METHOD_SERVICE))
+                        .hideSoftInputFromWindow(activity.getBridge().getWebView().getWindowToken(), 0)
+            );
+    }
+
+    private int displayRotation() {
+        AtomicReference<Integer> rotation = new AtomicReference<>();
+        activityRule
+            .getScenario()
+            .onActivity(
+                activity -> rotation.set(
+                    activity.getBridge().getWebView().getDisplay().getRotation()
+                )
+            );
+        return rotation.get();
+    }
+
+    private void awaitDisplayRotation(int expected) throws Exception {
+        long deadline = SystemClock.uptimeMillis() + TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS);
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (displayRotation() == expected) return;
+            SystemClock.sleep(50);
+        }
+        fail("Timed out waiting for Android display rotation " + expected);
+    }
+
+    private String userRotation(String arguments) throws Exception {
+        return shellCommand("cmd window user-rotation " + arguments);
+    }
+
+    private String shellCommand(String command) throws Exception {
+        try (
+            InputStream output = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                InstrumentationRegistry
+                    .getInstrumentation()
+                    .getUiAutomation()
+                    .executeShellCommand(command)
+            )
+        ) {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            byte[] buffer = new byte[256];
+            for (int count; (count = output.read(buffer)) != -1; ) bytes.write(buffer, 0, count);
+            return bytes.toString("UTF-8").trim();
+        }
     }
 
     private RectF screenBounds(int[] origin, double scaleX, double scaleY, double[] cssBounds) {
@@ -563,11 +1024,17 @@ public class ControllerNavigationTest {
 
         String state =
             runJavaScript(
-                "JSON.stringify({activeId: document.activeElement?.id,"
+                "(() => { const mobile = document.querySelector('.mobile-tabbar');"
+                    + " const sidebar = document.querySelector('.box-sidebar');"
+                    + " return JSON.stringify({activeId: document.activeElement?.id,"
                     + " controllerEvents: window.__pksxTestControllerEvents,"
                     + " innerWidth, innerHeight,"
-                    + " mobileDisplay: getComputedStyle(document.querySelector('.mobile-tabbar')).display,"
-                    + " sidebarDisplay: getComputedStyle(document.querySelector('.box-sidebar')).display})"
+                    + " appVersion: document.querySelector('[data-testid=\"app-version\"]')?.textContent,"
+                    + " appPlatform: document.querySelector('[data-testid=\"app-platform\"]')?.textContent,"
+                    + " settingsDocument: window.__pksxSettingsDocument ?? null,"
+                    + " path: location.pathname,"
+                    + " mobileDisplay: mobile ? getComputedStyle(mobile).display : null,"
+                    + " sidebarDisplay: sidebar ? getComputedStyle(sidebar).display : null}); })()"
             );
         fail(
             "Timed out waiting for JavaScript: "
