@@ -11,7 +11,11 @@ type LoadSaveResult = Awaited<ReturnType<EngineApi['loadSaveWorkspace']>>;
 const fakes = vi.hoisted(() => ({
 	databaseName: 'pksx-grid-test-' + crypto.randomUUID(),
 	host: null as ReturnType<typeof createSummonedWorkflowHost> | null,
-	detailsRequest: null as Promise<LoadSaveResult> | null
+	detailsRequest: null as Promise<LoadSaveResult> | null,
+	toastHost: {
+		success: vi.fn(),
+		error: vi.fn()
+	}
 }));
 
 vi.mock('$lib/pksx/saves', async (importOriginal) => {
@@ -25,6 +29,9 @@ vi.mock('$lib/pksx/saves', async (importOriginal) => {
 vi.mock('$lib/pksx/summoned-workflow/host.svelte', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/pksx/summoned-workflow/host.svelte')>()),
 	getSummonedWorkflowHost: () => fakes.host
+}));
+vi.mock('$lib/pksx/toast/host.svelte', () => ({
+	getToastHost: () => fakes.toastHost
 }));
 vi.mock('$lib/engine', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/engine')>()),
