@@ -134,7 +134,7 @@ function createHarness(...states: WorkspaceState[]) {
 		clearWorkspace: vi.fn(),
 		getPokemonStorage: vi.fn(),
 		putPokemonStorage: vi.fn(),
-		getActiveSaveFileId: vi.fn(),
+		getActiveSaveFileId: vi.fn(async () => states[0]?.file.id ?? null),
 		setActiveSaveFileId: vi.fn(),
 		deleteBackup: vi.fn(),
 		exportSave: vi.fn()
@@ -142,7 +142,10 @@ function createHarness(...states: WorkspaceState[]) {
 
 	const engine = {
 		loadSaveWorkspace: vi.fn(async (bytes: Uint8Array, fileName?: string) => {
-			const source = states.find((state) => state.file.originalFileName === fileName) ?? states[0];
+			const source =
+				states.find((state) => state.bytes[0] === bytes[0]) ??
+				states.find((state) => state.file.originalFileName === fileName) ??
+				states[0];
 			return { ok: true, value: { ...source.workspace }, error: null } as const;
 		}),
 		applySaveFileEditOperation: vi.fn(
@@ -254,6 +257,21 @@ function workspace(id = 'save-1', byte = 1, automaticBackupCreated = false): Wor
 	});
 }
 
+function storedWorkspace(
+	state: WorkspaceState,
+	updatedAt: string,
+	overrides: Partial<Pick<StoredWorkspace, 'dirty' | 'automaticBackupCreated'>> = {}
+): StoredWorkspace {
+	return {
+		saveFileId: state.file.id,
+		bytes: new Uint8Array(state.bytes),
+		dirty: state.dirty,
+		automaticBackupCreated: state.automaticBackupCreated,
+		updatedAt,
+		...overrides
+	};
+}
+
 function deferred<T>() {
 	let resolve!: (value: T) => void;
 	let reject!: (reason?: unknown) => void;
@@ -269,6 +287,295 @@ function coordinator(harness: Harness) {
 }
 
 describe('Save File edit coordinator', () => {
+	it('drains edits admitted during recovery parsing and publishes their final Workspace', async () => {
+		const state = workspace('save-1', 1, true);
+		const harness = createHarness(state);
+		const firstMutation = deferred<ReturnType<typeof mutationResult>>();
+		const firstRecoveryLoad = deferred<Awaited<ReturnType<EngineApi['loadSaveWorkspace']>>>();
+		const editAResult = mutationResult([state], state.bytes, { money: 200 });
+		const afterEditA = {
+			...state,
+			bytes: editAResult.value.bytes,
+			workspace: editAResult.value.workspace
+		};
+		const editBResult = mutationResult([afterEditA], afterEditA.bytes, {
+			trainerProfile: { trainerName: 'BLUE' }
+		});
+		vi.mocked(harness.engine.applySaveFileEditOperation)
+			.mockImplementationOnce(() => firstMutation.promise)
+			.mockResolvedValueOnce(editBResult);
+		vi.mocked(harness.engine.loadSaveWorkspace)
+			.mockImplementationOnce(() => firstRecoveryLoad.promise)
+			.mockResolvedValueOnce({ ok: true, value: editBResult.value.workspace, error: null });
+		const publish = vi.fn();
+		const edits = new SaveFileEditCoordinator({
+			storage: harness.storage,
+			engine: harness.engine,
+			publish
+		});
+		const origin = edits.openWorkspace(state);
+		const editA = edits.enqueueEdit(origin, { key: 'money', operation: { money: 200 } });
+		const recovered = edits.recoverWorkspace(origin, { isCurrent: () => true });
+
+		firstMutation.resolve(editAResult);
+		await vi.waitFor(() => expect(harness.engine.loadSaveWorkspace).toHaveBeenCalledTimes(1));
+		const editB = edits.enqueueEdit(origin, {
+			key: 'trainer-name',
+			operation: { trainerProfile: { trainerName: 'BLUE' } }
+		});
+		firstRecoveryLoad.resolve({
+			ok: true,
+			value: workspace('save-1', 2, true).workspace,
+			error: null
+		});
+
+		await editA;
+		await editB;
+		await expect(recovered).resolves.toMatchObject({
+			ok: true,
+			status: 'accepted',
+			workspace: {
+				bytes: new Uint8Array([3]),
+				workspace: {
+					summary: { trainerName: 'BLUE' },
+					saveFile: { money: { value: 200 } }
+				}
+			}
+		});
+		expect(harness.engine.loadSaveWorkspace).toHaveBeenCalledTimes(2);
+		expect(publish).toHaveBeenCalledTimes(3);
+		expect(publish).toHaveBeenCalledWith(
+			expect.objectContaining({ bytes: new Uint8Array([3]) }),
+			0
+		);
+	});
+
+	it('restarts a forced projection when byte-identical revision or flags change', async () => {
+		const state = workspace('save-1', 1, true);
+		const harness = createHarness(state);
+		harness.workspaces.set(
+			state.file.id,
+			storedWorkspace(state, 'external-a', {
+				dirty: true,
+				automaticBackupCreated: false
+			})
+		);
+		const firstLoad = deferred<Awaited<ReturnType<EngineApi['loadSaveWorkspace']>>>();
+		const finalProjection = workspace('projection', 8, true).workspace;
+		vi.mocked(harness.engine.loadSaveWorkspace)
+			.mockImplementationOnce(() => firstLoad.promise)
+			.mockResolvedValueOnce({ ok: true, value: finalProjection, error: null });
+		const edits = coordinator(harness);
+		const origin = edits.openWorkspace(state);
+		const recovery = edits.recoverWorkspace(origin, {
+			isCurrent: () => true
+		});
+		await vi.waitFor(() => expect(harness.engine.loadSaveWorkspace).toHaveBeenCalledTimes(1));
+		expect(edits.openWorkspace(state, 2)).toEqual(origin);
+		harness.workspaces.set(
+			state.file.id,
+			storedWorkspace(state, 'external-b', {
+				dirty: false,
+				automaticBackupCreated: true
+			})
+		);
+		firstLoad.resolve({ ok: true, value: state.workspace, error: null });
+
+		const result = await recovery;
+		expect(result).toMatchObject({
+			ok: true,
+			workspace: {
+				dirty: false,
+				automaticBackupCreated: true,
+				workspace: finalProjection
+			}
+		});
+		expect(harness.engine.loadSaveWorkspace).toHaveBeenCalledTimes(2);
+		expect(vi.mocked(harness.engine.loadSaveWorkspace).mock.calls.map((call) => call[2])).toEqual([
+			0, 2
+		]);
+	});
+
+	it('lets a stale origin recover the current same import but never a replacement import', async () => {
+		const state = workspace('save-1', 1, true);
+		const sameImport = { ...workspace('save-1', 9, true), file: state.file };
+		const harness = createHarness(state);
+		harness.workspaces.set(state.file.id, storedWorkspace(sameImport, 'same-import'));
+		vi.mocked(harness.engine.loadSaveWorkspace).mockResolvedValue({
+			ok: true,
+			value: sameImport.workspace,
+			error: null
+		});
+		const edits = coordinator(harness);
+		const staleOrigin = edits.openWorkspace(state);
+		const currentOrigin = edits.replaceWorkspace(sameImport);
+
+		const recovered = await edits.recoverWorkspace(staleOrigin, { isCurrent: () => true });
+		expect(recovered).toMatchObject({
+			ok: true,
+			status: 'accepted',
+			workspace: { bytes: new Uint8Array([9]) }
+		});
+		if (!recovered.ok) throw new Error('Expected accepted recovery.');
+		expect(recovered.origin.workspaceId).not.toBe(currentOrigin.workspaceId);
+
+		const reimported = workspace('save-1', 5, true);
+		harness.files.set(reimported.file.id, reimported.file);
+		harness.workspaces.set(reimported.file.id, storedWorkspace(reimported, 'reimported'));
+		edits.replaceWorkspace(reimported);
+		await expect(
+			edits.recoverWorkspace(staleOrigin, { isCurrent: () => true })
+		).resolves.toMatchObject({ ok: false, code: 'stale-workspace' });
+	});
+
+	it('waits for an obsolete origin to restore the current Workspace before recovery', async () => {
+		const state = workspace('save-1', 1, true);
+		const replacement = { ...workspace('save-1', 9, true), file: state.file };
+		const harness = createHarness(state);
+		const finalWrite = deferred<StoredWorkspace>();
+		vi.mocked(harness.storage.putWorkspace).mockImplementationOnce(async (input) => {
+			const stored = await finalWrite.promise;
+			harness.workspaces.set(input.saveFileId, stored);
+			return stored;
+		});
+		vi.mocked(harness.engine.loadSaveWorkspace).mockResolvedValue({
+			ok: true,
+			value: replacement.workspace,
+			error: null
+		});
+		const edits = coordinator(harness);
+		const staleOrigin = edits.openWorkspace(state);
+		const pending = edits.enqueueEdit(staleOrigin, { key: 'money', operation: { money: 200 } });
+		await vi.waitFor(() => expect(harness.storage.putWorkspace).toHaveBeenCalledTimes(1));
+		edits.replaceWorkspace(replacement);
+		const recovery = edits.recoverWorkspace(staleOrigin, { isCurrent: () => true });
+		finalWrite.resolve(
+			storedWorkspace({ ...state, bytes: new Uint8Array([2]) }, 'stale-write', {
+				dirty: true
+			})
+		);
+
+		await expect(pending).resolves.toMatchObject({ ok: false, code: 'stale-workspace' });
+		await expect(recovery).resolves.toMatchObject({
+			ok: true,
+			workspace: { bytes: new Uint8Array([9]) }
+		});
+		expect(harness.workspaces.get(state.file.id)?.bytes).toEqual(new Uint8Array([9]));
+	});
+
+	it('rejects terminal deletion before or during recovery without reviving the import', async () => {
+		const beforeState = workspace('save-before', 1, true);
+		const beforeHarness = createHarness(beforeState);
+		const before = coordinator(beforeHarness);
+		const beforeOrigin = before.openWorkspace(beforeState);
+		await before.deleteSave(beforeState.file);
+		await expect(
+			before.recoverWorkspace(beforeOrigin, { isCurrent: () => true })
+		).resolves.toMatchObject({ ok: false, code: 'save-file-deleted' });
+
+		const duringState = workspace('save-during', 2, true);
+		const duringHarness = createHarness(duringState);
+		const load = deferred<Awaited<ReturnType<EngineApi['loadSaveWorkspace']>>>();
+		vi.mocked(duringHarness.engine.loadSaveWorkspace).mockImplementationOnce(() => load.promise);
+		const during = coordinator(duringHarness);
+		const duringOrigin = during.openWorkspace(duringState);
+		const recovery = during.recoverWorkspace(duringOrigin, { isCurrent: () => true });
+		await vi.waitFor(() => expect(duringHarness.engine.loadSaveWorkspace).toHaveBeenCalled());
+		await during.deleteSave(duringState.file);
+		load.resolve({ ok: true, value: duringState.workspace, error: null });
+		await expect(recovery).resolves.toMatchObject({ ok: false, code: 'save-file-deleted' });
+	});
+
+	it('rejects a late result after caller lifetime, active owner, or import changes', async () => {
+		for (const invalidation of ['lifetime', 'active', 'reimport'] as const) {
+			const state = workspace('save-' + invalidation, 1, true);
+			const harness = createHarness(state);
+			const load = deferred<Awaited<ReturnType<EngineApi['loadSaveWorkspace']>>>();
+			vi.mocked(harness.engine.loadSaveWorkspace).mockImplementationOnce(() => load.promise);
+			let current = true;
+			const edits = coordinator(harness);
+			const origin = edits.openWorkspace(state);
+			const recovery = edits.recoverWorkspace(origin, { isCurrent: () => current });
+			await vi.waitFor(() => expect(harness.engine.loadSaveWorkspace).toHaveBeenCalled());
+			if (invalidation === 'lifetime') current = false;
+			if (invalidation === 'active') {
+				vi.mocked(harness.storage.getActiveSaveFileId).mockResolvedValue('another-save');
+			}
+			if (invalidation === 'reimport') {
+				harness.files.set(state.file.id, workspace(state.file.id, 7, true).file);
+			}
+			load.resolve({ ok: true, value: state.workspace, error: null });
+
+			await expect(recovery).resolves.toMatchObject({ ok: false, code: 'stale-workspace' });
+		}
+	});
+
+	it('publishes one accepted origin without writing Workspace, Backup, or dirty state', async () => {
+		const state = workspace('save-1', 1, false);
+		const harness = createHarness(state);
+		harness.workspaces.delete(state.file.id);
+		const publish = vi.fn();
+		const edits = new SaveFileEditCoordinator({
+			storage: harness.storage,
+			engine: harness.engine,
+			publish,
+			isResultCurrent: () => false
+		});
+		const origin = edits.openWorkspace(state);
+		const result = await edits.recoverWorkspace(origin, { isCurrent: () => true });
+
+		expect(result).toMatchObject({
+			ok: true,
+			status: 'accepted',
+			workspace: { dirty: false, automaticBackupCreated: false }
+		});
+		if (!result.ok) throw new Error('Expected accepted recovery.');
+		expect(result.origin.workspaceId).not.toBe(origin.workspaceId);
+		expect(edits.openWorkspace(result.workspace)).toEqual(result.origin);
+		expect(publish).toHaveBeenCalledOnce();
+		expect(harness.storage.putWorkspace).not.toHaveBeenCalled();
+		expect(harness.storage.ensureAutomaticBackup).not.toHaveBeenCalled();
+	});
+
+	it('surfaces storage and Engine recovery failures without publishing', async () => {
+		const state = workspace('save-1', 1, true);
+		const storageFailure = createHarness(state);
+		vi.mocked(storageFailure.storage.getWorkspace).mockRejectedValueOnce(
+			new Error('storage unavailable')
+		);
+		const storagePublish = vi.fn();
+		const storageCoordinator = new SaveFileEditCoordinator({
+			storage: storageFailure.storage,
+			engine: storageFailure.engine,
+			publish: storagePublish
+		});
+		await expect(
+			storageCoordinator.recoverWorkspace(storageCoordinator.openWorkspace(state), {
+				isCurrent: () => true
+			})
+		).rejects.toThrow('storage unavailable');
+		expect(storagePublish).not.toHaveBeenCalled();
+
+		const engineFailure = createHarness(state);
+		vi.mocked(engineFailure.engine.loadSaveWorkspace).mockResolvedValueOnce({
+			ok: false,
+			value: null,
+			error: { code: 'engine-unavailable', message: 'Engine unavailable.' }
+		});
+		const enginePublish = vi.fn();
+		const engineCoordinator = new SaveFileEditCoordinator({
+			storage: engineFailure.storage,
+			engine: engineFailure.engine,
+			publish: enginePublish
+		});
+		await expect(
+			engineCoordinator.recoverWorkspace(engineCoordinator.openWorkspace(state), {
+				isCurrent: () => true
+			})
+		).rejects.toMatchObject({ code: 'engine-unavailable' });
+		expect(enginePublish).not.toHaveBeenCalled();
+	});
+
 	it('serializes concurrent fields FIFO against the latest persisted Workspace', async () => {
 		const state = workspace('save-1', 1, true);
 		const harness = createHarness(state);

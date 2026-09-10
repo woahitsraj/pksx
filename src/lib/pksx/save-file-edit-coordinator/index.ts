@@ -54,6 +54,21 @@ export type SaveFileEditResult =
 			workspace?: WorkspaceState;
 	  };
 
+export type SaveFileWorkspaceRecoveryResult =
+	| {
+			ok: true;
+			status: 'accepted';
+			origin: SaveFileEditOrigin;
+			workspace: WorkspaceState;
+	  }
+	| {
+			ok: false;
+			status: 'rejected';
+			origin: SaveFileEditOrigin;
+			code: 'stale-workspace' | 'save-file-deleted';
+			message: string;
+	  };
+
 export type PendingSaveFileEdit = {
 	key: string;
 	sequence: number;
@@ -78,6 +93,13 @@ type OriginRecord = {
 	pending: Map<number, string>;
 	listeners: Set<(pending: readonly PendingSaveFileEdit[]) => void>;
 	terminal: boolean;
+};
+
+type WorkspaceRecoveryAuthority = {
+	activeSaveFileId: SaveFileId | null;
+	file: StoredSaveFile | null;
+	persisted: StoredWorkspace | null;
+	bytes: Uint8Array | null;
 };
 
 export class SaveFileEditCoordinator {
@@ -233,6 +255,112 @@ export class SaveFileEditCoordinator {
 			() => undefined
 		);
 		return result;
+	}
+
+	async recoverWorkspace(
+		origin: SaveFileEditOrigin,
+		options: { isCurrent: () => boolean }
+	): Promise<SaveFileWorkspaceRecoveryResult> {
+		const caller = this.record(origin);
+		if (!caller || !options.isCurrent()) return this.recoveryRejected(origin, 'stale-workspace');
+		if (this.importIsTerminal(caller.file)) {
+			return this.recoveryRejected(origin, 'save-file-deleted');
+		}
+		const target = this.currentBySaveFileId.get(origin.saveFileId);
+		if (!target || target.file.importedAt !== caller.file.importedAt) {
+			return this.recoveryRejected(origin, 'stale-workspace');
+		}
+		const initialOwner = await this.readRecoveryOwner(caller.file.id);
+		if (!initialOwner.file) return this.recoveryRejected(origin, 'save-file-deleted');
+		if (
+			initialOwner.activeSaveFileId !== caller.file.id ||
+			initialOwner.file.importedAt !== caller.file.importedAt ||
+			!options.isCurrent()
+		) {
+			return this.recoveryRejected(origin, 'stale-workspace');
+		}
+
+		for (;;) {
+			const tails = this.sameImportRecords(caller.file).map((record) => ({
+				record,
+				tail: record.tail
+			}));
+			await Promise.all(tails.map(({ tail }) => tail));
+			if (!options.isCurrent()) return this.recoveryRejected(origin, 'stale-workspace');
+			if (this.importIsTerminal(caller.file)) {
+				return this.recoveryRejected(origin, 'save-file-deleted');
+			}
+			if (this.currentBySaveFileId.get(origin.saveFileId) !== target) {
+				return this.recoveryRejected(origin, 'stale-workspace');
+			}
+			if (tails.some(({ record, tail }) => record.tail !== tail)) continue;
+
+			const settledTail = target.tail;
+			const activeBox = target.activeBox;
+			const before = await this.readRecoveryAuthority(caller.file);
+			const rejected = this.validateRecoveryAuthority(origin, caller.file, target, before, options);
+			if (rejected) return rejected;
+			if (!before.file) return this.recoveryRejected(origin, 'save-file-deleted');
+			if (!before.bytes) throw new Error('The Save File bytes are no longer available.');
+
+			const loaded = await this.engine.loadSaveWorkspace(
+				copyBytes(before.bytes),
+				before.file.originalFileName ?? undefined,
+				activeBox
+			);
+			if (!loaded.ok) throw loaded.error;
+
+			const after = await this.readRecoveryAuthority(caller.file);
+			const afterRejection = this.validateRecoveryAuthority(
+				origin,
+				caller.file,
+				target,
+				after,
+				options
+			);
+			if (afterRejection) return afterRejection;
+			if (!after.file) return this.recoveryRejected(origin, 'save-file-deleted');
+			if (!after.bytes) throw new Error('The Save File bytes are no longer available.');
+			if (target.tail !== settledTail || target.activeBox !== activeBox) continue;
+			if (!sameRecoveryAuthority(before, after)) continue;
+
+			const workspace = after.persisted
+				? createPersistedWorkspaceState({
+						file: after.file,
+						bytes: after.bytes,
+						workspace: loaded.value,
+						dirty: after.persisted.dirty,
+						automaticBackupCreated: after.persisted.automaticBackupCreated
+					})
+				: createCleanWorkspaceState({
+						file: after.file,
+						bytes: after.bytes,
+						workspace: loaded.value
+					});
+			if (
+				!options.isCurrent() ||
+				this.currentBySaveFileId.get(origin.saveFileId) !== target ||
+				target.tail !== settledTail ||
+				target.activeBox !== activeBox ||
+				this.importIsTerminal(caller.file)
+			) {
+				return this.recoveryRejected(
+					origin,
+					this.importIsTerminal(caller.file) ? 'save-file-deleted' : 'stale-workspace'
+				);
+			}
+
+			const acceptedOrigin = this.replaceWorkspace(workspace, activeBox);
+			const accepted = this.currentRecord(acceptedOrigin)!;
+			accepted.storedRevision = after.persisted?.updatedAt ?? null;
+			this.options.publish?.(copyWorkspace(workspace), activeBox);
+			return {
+				ok: true,
+				status: 'accepted',
+				origin: acceptedOrigin,
+				workspace: copyWorkspace(workspace)
+			};
+		}
 	}
 
 	deleteSave(saveFile: Pick<StoredSaveFile, 'id' | 'importedAt'>): Promise<void> {
@@ -563,6 +691,76 @@ export class SaveFileEditCoordinator {
 		}
 	}
 
+	private sameImportRecords(file: Pick<StoredSaveFile, 'id' | 'importedAt'>) {
+		return [...this.recordsByWorkspaceId.values()].filter(
+			(record) => record.file.id === file.id && record.file.importedAt === file.importedAt
+		);
+	}
+
+	private importIsTerminal(file: Pick<StoredSaveFile, 'id' | 'importedAt'>) {
+		const current = this.currentBySaveFileId.get(file.id);
+		return (
+			this.terminalSaveFiles.get(file.id) === file.importedAt ||
+			(current?.file.importedAt === file.importedAt && current.terminal)
+		);
+	}
+
+	private async readRecoveryAuthority(file: Pick<StoredSaveFile, 'id' | 'importedAt'>) {
+		const [{ activeSaveFileId, file: storedFile }, persisted] = await Promise.all([
+			this.readRecoveryOwner(file.id),
+			this.options.storage.getWorkspace(file.id)
+		]);
+		const bytes = persisted?.bytes ?? (await this.options.storage.getSaveBytes(file.id));
+		if (!bytes && storedFile) throw new Error('The Save File bytes are no longer available.');
+		return { activeSaveFileId, file: storedFile, persisted, bytes: bytes && copyBytes(bytes) };
+	}
+
+	private async readRecoveryOwner(saveFileId: SaveFileId) {
+		const [activeSaveFileId, file] = await Promise.all([
+			this.options.storage.getActiveSaveFileId(),
+			this.options.storage.getSave(saveFileId)
+		]);
+		return { activeSaveFileId, file };
+	}
+
+	private validateRecoveryAuthority(
+		origin: SaveFileEditOrigin,
+		file: Pick<StoredSaveFile, 'id' | 'importedAt'>,
+		target: OriginRecord,
+		authority: WorkspaceRecoveryAuthority,
+		options: { isCurrent: () => boolean }
+	): Extract<SaveFileWorkspaceRecoveryResult, { ok: false }> | null {
+		if (this.importIsTerminal(file) || !authority.file) {
+			return this.recoveryRejected(origin, 'save-file-deleted');
+		}
+		if (
+			!options.isCurrent() ||
+			authority.activeSaveFileId !== file.id ||
+			authority.file.importedAt !== file.importedAt ||
+			this.currentBySaveFileId.get(file.id) !== target ||
+			target.file.importedAt !== file.importedAt
+		) {
+			return this.recoveryRejected(origin, 'stale-workspace');
+		}
+		return null;
+	}
+
+	private recoveryRejected(
+		origin: SaveFileEditOrigin,
+		code: 'stale-workspace' | 'save-file-deleted'
+	): Extract<SaveFileWorkspaceRecoveryResult, { ok: false }> {
+		return {
+			ok: false,
+			status: 'rejected',
+			origin,
+			code,
+			message:
+				code === 'save-file-deleted'
+					? 'The Save File is being deleted.'
+					: 'The Save File Workspace changed before recovery completed.'
+		};
+	}
+
 	private recoveryFailure(origin: SaveFileEditOrigin, error: unknown): SaveFileEditResult {
 		const cause = error instanceof StaleWorkspaceRecoveryError ? error.cause : error;
 		return {
@@ -657,6 +855,22 @@ class StaleWorkspaceRecoveryError extends Error {
 	constructor(readonly cause?: unknown) {
 		super('The current Workspace could not be restored after a stale write.');
 	}
+}
+
+function sameRecoveryAuthority(
+	left: WorkspaceRecoveryAuthority,
+	right: WorkspaceRecoveryAuthority
+) {
+	return (
+		left.activeSaveFileId === right.activeSaveFileId &&
+		left.file?.importedAt === right.file?.importedAt &&
+		left.persisted?.updatedAt === right.persisted?.updatedAt &&
+		(left.persisted?.dirty ?? false) === (right.persisted?.dirty ?? false) &&
+		(left.persisted?.automaticBackupCreated ?? false) ===
+			(right.persisted?.automaticBackupCreated ?? false) &&
+		((left.bytes === null && right.bytes === null) ||
+			(left.bytes !== null && right.bytes !== null && bytesEqual(left.bytes, right.bytes)))
+	);
 }
 
 function operationIsNoop(workspace: WorkspaceState, operation: SaveFileEditOperation) {
