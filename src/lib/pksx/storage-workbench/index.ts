@@ -1,4 +1,4 @@
-import { BOX_SLOT_COUNT, PARTY_SLOT_COUNT, type SlotFocus } from '$lib/pksx/box-navigation';
+import { BOX_SLOT_COUNT, projectSlotCoordinate, type SlotFocus } from '$lib/pksx/box-navigation';
 import type {
 	SaveFileId,
 	StoredPokemonStorage,
@@ -64,6 +64,7 @@ export type CarryState = {
 	source: WorkbenchSlotRef;
 	sourceOwner: BoxSourceRef;
 	pokemonLabel: string;
+	spriteUrl: string | null;
 	sourceLabel: string;
 	origin: PokemonOrigin;
 };
@@ -158,16 +159,11 @@ export function closeBoxPane(panes: BoxPaneState[], paneId: string): BoxPaneStat
 export function focusSurvivingPaneAfterClose(
 	closingPane: BoxPaneState,
 	survivingPane: BoxPaneState,
-	options: { partyAvailable?: boolean; partyCollapsed?: boolean } = {}
+	options: { partyAvailable?: boolean } = {}
 ): SlotFocus {
 	const zone =
-		survivingPane.focus.zone === 'party' &&
-		(options.partyAvailable ?? true) &&
-		!(options.partyCollapsed ?? false)
-			? 'party'
-			: 'box';
-	const maxSlot = zone === 'party' ? PARTY_SLOT_COUNT - 1 : BOX_SLOT_COUNT - 1;
-	return { zone, slot: Math.min(closingPane.focus.slot, maxSlot) };
+		survivingPane.focus.zone === 'party' && (options.partyAvailable ?? true) ? 'party' : 'box';
+	return projectSlotCoordinate(closingPane.focus, zone);
 }
 
 export function switchPaneSource(
@@ -181,7 +177,7 @@ export function switchPaneSource(
 			? createBoxPane(pane.id, source, {
 					activeBox: pane.activeBox,
 					boxCount,
-					focus: pane.focus.zone === 'box' ? pane.focus : { zone: 'box', slot: pane.focus.slot }
+					focus: source.type === 'save-file' ? pane.focus : projectSlotCoordinate(pane.focus, 'box')
 				})
 			: pane
 	);
@@ -357,6 +353,7 @@ export function createCarryState(input: {
 	now?: () => string;
 	originGame?: string | null;
 	trainerId?: string | null;
+	spriteUrl?: string | null;
 }): CarryState | null {
 	if (input.slot.kind !== 'pokemon') {
 		return null;
@@ -367,6 +364,7 @@ export function createCarryState(input: {
 		source: input.source,
 		sourceOwner: input.pane.source,
 		pokemonLabel: input.slot.label,
+		spriteUrl: input.spriteUrl ?? null,
 		sourceLabel: describeSlotRef(input.source, input.pane.source.label),
 		origin: {
 			entryMode: input.mode === 'copy' ? 'copied-in' : 'moved-in',
@@ -510,14 +508,6 @@ export function createSourcePickerCards(input: {
 				},
 				...saveCards
 			];
-}
-
-export function stateTagForPane(pane: BoxPaneState): 'AUTO-SAVED' | 'EDITS WORKSPACE' | null {
-	if (pane.source.type === 'pokemon-storage') {
-		return 'AUTO-SAVED';
-	}
-
-	return pane.source.dirty ? 'EDITS WORKSPACE' : null;
 }
 
 function createMutationPlan(input: {

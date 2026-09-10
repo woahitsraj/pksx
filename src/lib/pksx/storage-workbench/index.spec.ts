@@ -13,7 +13,6 @@ import {
 	focusSurvivingPaneAfterClose,
 	movePaneFocus,
 	refreshSaveFilePaneWorkspaces,
-	stateTagForPane,
 	switchPaneSource,
 	toggleCarryMode,
 	type BoxSourceRef,
@@ -26,7 +25,6 @@ const saveSource: BoxSourceRef = {
 	label: 'emerald.sav',
 	dirty: false
 };
-const dirtySaveSource: BoxSourceRef = { ...saveSource, dirty: true };
 const storageSource: BoxSourceRef = {
 	type: 'pokemon-storage',
 	id: 'pokemon-storage',
@@ -157,26 +155,19 @@ describe('storage workbench panes', () => {
 			focus: { zone: 'box', slot: 29 }
 		});
 		const partySurvivor = createBoxPane('pane-save', saveSource, {
-			focus: { zone: 'party', slot: 2 }
+			focus: { zone: 'party', slot: 5 }
 		});
 
 		expect(focusSurvivingPaneAfterClose(closing, partySurvivor)).toEqual({
 			zone: 'party',
 			slot: 5
 		});
-		expect(focusSurvivingPaneAfterClose(closing, partySurvivor, { partyCollapsed: true })).toEqual({
-			zone: 'box',
-			slot: 29
-		});
 		expect(focusSurvivingPaneAfterClose(closing, partySurvivor, { partyAvailable: false })).toEqual(
 			{ zone: 'box', slot: 29 }
 		);
-	});
 
-	it('derives visible pane state tags from source ownership', () => {
-		expect(stateTagForPane(createBoxPane('pane-save', dirtySaveSource))).toBe('EDITS WORKSPACE');
-		expect(stateTagForPane(createBoxPane('pane-storage', storageSource))).toBe('AUTO-SAVED');
-		expect(stateTagForPane(createBoxPane('pane-save', saveSource))).toBeNull();
+		const switched = switchPaneSource([partySurvivor], 'pane-save', storageSource, 8);
+		expect(switched[0].focus).toEqual({ zone: 'box', slot: 8 });
 	});
 
 	it('refreshes save pane workspace caches after a slot mutation', () => {
@@ -291,11 +282,13 @@ describe('storage workbench carry contract', () => {
 			slot: aron,
 			source: slotRef('pane-save', 0),
 			now: () => '2026-06-05T10:00:00.000Z',
-			originGame: 'Pokemon Emerald'
+			originGame: 'Pokemon Emerald',
+			spriteUrl: '/sprites/304.png'
 		});
 
 		expect(carry?.mode).toBe('move');
 		expect(carry?.pokemonLabel).toBe('ARON');
+		expect(carry?.spriteUrl).toBe('/sprites/304.png');
 		expect(carry?.origin).toMatchObject({
 			entryMode: 'moved-in',
 			originSaveFileName: 'emerald.sav',
@@ -303,8 +296,11 @@ describe('storage workbench carry contract', () => {
 			originalTrainer: 'RAJ'
 		});
 
-		expect(toggleCarryMode(carry!).mode).toBe('copy');
-		expect(toggleCarryMode(carry!).origin.entryMode).toBe('copied-in');
+		expect(toggleCarryMode(carry!)).toMatchObject({
+			mode: 'copy',
+			spriteUrl: '/sprites/304.png',
+			origin: { entryMode: 'copied-in' }
+		});
 	});
 
 	it('returns null when lifting an empty source slot', () => {

@@ -131,6 +131,18 @@ async function importScarletThroughSaves(page: Page) {
 	).toBeVisible({ timeout: 60000 });
 }
 
+async function showPartyFromFirstBox(page: Page) {
+	const pane = page.locator('.box-pane.active-pane');
+	await pane.getByRole('button', { name: 'Previous Location' }).click();
+	await expect(pane.getByRole('heading', { name: 'Party' })).toBeVisible({ timeout: 60000 });
+}
+
+async function showFirstBoxFromParty(page: Page) {
+	const pane = page.locator('.box-pane.active-pane');
+	await pane.getByRole('button', { name: 'Next Location' }).click();
+	await expect(pane.getByRole('heading', { name: 'Box 01' })).toBeVisible({ timeout: 60000 });
+}
+
 // Seeds a Pokemon Storage shape the app never creates itself, so a later read proves persistence.
 async function seedPokemonStorageBoxes(page: Page, boxCount: number) {
 	await page.evaluate(
@@ -341,6 +353,61 @@ async function shellExtents(page: Page) {
 	});
 }
 
+async function boxLayoutMetrics(page: Page) {
+	return page.evaluate(() => {
+		const bounds = (selector: string) => {
+			const element = document.querySelector<HTMLElement>(selector);
+			if (!element) throw new Error(`Missing ${selector}.`);
+			const rect = element.getBoundingClientRect();
+			const style = getComputedStyle(element);
+			return {
+				top: rect.top,
+				right: rect.right,
+				bottom: rect.bottom,
+				left: rect.left,
+				width: rect.width,
+				height: rect.height,
+				clientWidth: element.clientWidth,
+				clientHeight: element.clientHeight,
+				scrollWidth: element.scrollWidth,
+				scrollHeight: element.scrollHeight,
+				overflowX: style.overflowX,
+				overflowY: style.overflowY
+			};
+		};
+		const slots = Array.from(document.querySelectorAll<HTMLElement>('.location-grid .slot'));
+		const firstSlot = slots[0]?.getBoundingClientRect();
+		const lastSlot = slots.at(-1)?.getBoundingClientRect();
+
+		return {
+			route: bounds('.boxes-route'),
+			workspace: bounds('.storage-workspace'),
+			pane: bounds('.box-pane'),
+			header: bounds('.pane-header'),
+			title: bounds('.box-title h2'),
+			occupancy: bounds('.box-title b'),
+			control: bounds('.source-chip'),
+			grid: bounds('.location-grid'),
+			rail: bounds('.detail-rail'),
+			slotCount: slots.length,
+			slotWidth: firstSlot?.width ?? 0,
+			slotHeight: firstSlot?.height ?? 0,
+			lastSlotRight: lastSlot?.right ?? 0,
+			lastSlotBottom: lastSlot?.bottom ?? 0,
+			caption: parseFloat(
+				getComputedStyle(
+					document.querySelector<HTMLElement>('.storage-workspace')!
+				).getPropertyValue('--pksx-type-caption')
+			),
+			label: parseFloat(
+				getComputedStyle(
+					document.querySelector<HTMLElement>('.storage-workspace')!
+				).getPropertyValue('--pksx-type-label')
+			)
+		};
+	});
+}
+
 async function edgeSurfaceBounds(page: Page) {
 	return page.locator('.edge-menu-layer').evaluate((layer) => {
 		const panel = layer.querySelector('[role="dialog"]');
@@ -497,7 +564,7 @@ test('compact box controls and keyboard shortcuts update the active box label', 
 	await expect(page.getByRole('heading', { name: 'Box 01' })).toBeVisible();
 	await expect(page.locator('#box-0-slot-0')).toHaveAttribute('aria-selected', 'true');
 
-	await page.getByRole('button', { name: 'Next box' }).click();
+	await page.getByRole('button', { name: 'Next Location' }).click();
 	await expect(page.getByRole('heading', { name: 'Box 02' })).toBeVisible();
 	await expect(page.locator('#box-1-slot-0')).toHaveAttribute('aria-selected', 'true');
 
@@ -510,9 +577,9 @@ test('compact box controls and keyboard shortcuts update the active box label', 
 	await expect(page.getByRole('heading', { name: 'Box 01' })).toBeVisible();
 	await expect(page.locator('#box-0-slot-0')).toHaveAttribute('aria-selected', 'true');
 
-	await page.getByRole('button', { name: 'Previous box' }).click();
-	await expect(page.getByRole('heading', { name: 'Box 01' })).toBeVisible();
-	await expect(page.locator('#box-0-slot-0')).toHaveAttribute('aria-selected', 'true');
+	await page.getByRole('button', { name: 'Previous Location' }).click();
+	await expect(page.getByRole('heading', { name: 'Box 03' })).toBeVisible();
+	await expect(page.locator('#box-2-slot-0')).toHaveAttribute('aria-selected', 'true');
 });
 
 test('switches to durable Pokemon Storage with focusable empty Slot actions', async ({ page }) => {
@@ -527,7 +594,7 @@ test('switches to durable Pokemon Storage with focusable empty Slot actions', as
 		.getByRole('button', { name: 'Open another' })
 		.click();
 	await page.getByRole('button', { name: /Pokemon Storage/ }).click();
-	await expect(page.locator('.pane-state-tag')).toContainText('AUTO-SAVED');
+	await expect(page.locator('.pane-state-tag')).toHaveCount(0);
 	await expect(page.locator('#box-0-slot-0')).toContainText('Empty');
 
 	await page.getByRole('button', { name: 'Open Box Menu for Pokemon Storage' }).click();
@@ -548,9 +615,9 @@ test('switches to durable Pokemon Storage with focusable empty Slot actions', as
 	await expect(page.getByRole('heading', { name: 'Box 02' })).toBeVisible();
 	await expect(page.locator('#box-1-slot-0')).toHaveAttribute('aria-selected', 'true');
 
-	await page.getByRole('button', { name: 'Next box' }).click();
-	await page.getByRole('button', { name: 'Next box' }).click();
-	await page.getByRole('button', { name: 'Next box' }).click();
+	await page.getByRole('button', { name: 'Next Location' }).click();
+	await page.getByRole('button', { name: 'Next Location' }).click();
+	await page.getByRole('button', { name: 'Next Location' }).click();
 	// Only reachable when the persisted five-box shape survived the reload; a fresh shape wraps at Box 03.
 	await expect(page.getByRole('heading', { name: 'Box 05' })).toBeVisible();
 	await expect(page.locator('#box-4-slot-0')).toContainText('Empty');
@@ -605,7 +672,7 @@ test('Box Menu keeps fixed unavailable commands and X and Y preserve their conte
 	await expect(menu).toBeVisible();
 	expect(downloads).toBe(0);
 	expect(await backupCount(page)).toBe(backupsBefore);
-	await expect(page.locator('.box-zone')).toHaveCount(1);
+	await expect(page.locator('.box-pane')).toHaveCount(1);
 
 	await page.keyboard.press('x');
 	await expect(menu).toBeHidden();
@@ -714,6 +781,8 @@ test('Box Menu exports and backs up the captured secondary Save File Workspace',
 	await importEmeraldThroughSaves(page);
 	await moveFirstEmeraldBoxSlotToThirdSlot(page);
 	await importScarletThroughSaves(page);
+	await expect(page.locator('#box-0-slot-0')).toHaveAttribute('aria-selected', 'true');
+	await showPartyFromFirstBox(page);
 	await page.locator('#party-slot-5').click();
 	await page.keyboard.press('x');
 	let menu = page.getByRole('dialog', { name: 'Box Menu' });
@@ -739,10 +808,29 @@ test('Box Menu exports and backs up the captured secondary Save File Workspace',
 	).toBeVisible();
 	await openAnotherPicker.getByRole('button', { name: /011020251345\.sav/ }).click();
 
-	await expect(page.locator('.box-zone')).toHaveCount(2);
+	await expect(page.locator('.box-pane')).toHaveCount(2);
 	await expect(page.locator('#box-0-slot-0')).toBeFocused();
 	await expect(page.locator('#box-0-slot-0')).toContainText('Empty');
 	await expect(page.locator('#box-0-slot-2')).toContainText('ARON');
+	await page.keyboard.press('Enter');
+	const secondarySlotMenu = page.getByRole('dialog', { name: 'Slot actions' });
+	await expect(secondarySlotMenu.getByRole('button', { name: 'Create Pokemon' })).toHaveAttribute(
+		'aria-disabled',
+		'true'
+	);
+	await expect(secondarySlotMenu).toContainText('Load a Save File before creating Pokemon.');
+	await page.keyboard.press('Escape');
+	await page.locator('#box-0-slot-2').click();
+	await page.keyboard.press('Enter');
+	await page.getByRole('button', { name: 'Move' }).click();
+	await page.locator('#box-0-slot-3').click();
+	await expect(page.getByRole('alert')).toContainText(
+		'Moving Pokemon between Save Files needs engine transfer support.'
+	);
+	await expect(page.locator('#box-0-slot-2')).toContainText('ARON');
+	await expect(page.locator('#box-0-slot-3')).toContainText('Empty');
+	await page.keyboard.press('Escape');
+	await expect(page.locator('#box-0-slot-2')).toBeFocused();
 	await page.locator('#box-0-slot-29').click();
 	await page.keyboard.press('x');
 	menu = page.getByRole('dialog', { name: 'Box Menu' });
@@ -760,9 +848,9 @@ test('Box Menu exports and backs up the captured secondary Save File Workspace',
 
 	await page.keyboard.press('x');
 	await menu.getByRole('button', { name: 'Save a backup' }).click();
-	await expect(
-		page.getByRole('status').filter({ hasText: 'Backup saved for emerald-011020251345.sav.' })
-	).toBeVisible();
+	await expect(page.locator('.toast-success')).toContainText(
+		'Backup saved for emerald-011020251345.sav.'
+	);
 	const backups = (await backupRecords(page)).filter(({ reason }) => reason === 'manual');
 	expect(backups).toHaveLength(1);
 	expect(backups[0]).toMatchObject({
@@ -813,8 +901,11 @@ test('Box Menu exports and backs up the captured secondary Save File Workspace',
 		'aria-label',
 		/pokemon-scarlet-2025-03-24-main\.sav Box 01/
 	);
-	await page.getByRole('button', { name: /Box 32 BOX 32/ }).click();
-	await expect(page.locator('.toolbar-status-strip')).not.toHaveText('Working');
+	const activePane = page.locator('.box-pane.active-pane');
+	await activePane.getByRole('button', { name: 'Previous Location' }).click();
+	await activePane.getByRole('button', { name: 'Previous Location' }).click();
+	await expect(page.getByRole('heading', { name: 'Box 32' })).toBeVisible({ timeout: 60000 });
+	await expect(page.locator('.box-pane.active-pane')).not.toHaveAttribute('aria-busy', 'true');
 	await page.locator('#box-31-slot-29').click();
 	await page.keyboard.press('x');
 	menu = page.getByRole('dialog', { name: 'Box Menu' });
@@ -835,7 +926,7 @@ test('Box Menu exports and backs up the captured secondary Save File Workspace',
 	).toBeVisible();
 	await expect(page.locator('#box-2-slot-29')).toBeFocused();
 
-	await page.locator('#party-slot-5').click();
+	await page.locator('#pane-active-save-party-slot-5').click();
 	await page.keyboard.press('x');
 	menu = page.getByRole('dialog', { name: 'Box Menu' });
 	await expect(menu).toContainText('pokemon-scarlet-2025-03-24-main.sav');
@@ -843,14 +934,13 @@ test('Box Menu exports and backs up the captured secondary Save File Workspace',
 	await expect(menu.locator('#box-menu-command-4-reason')).toHaveText(activeFileReason);
 	await page.keyboard.press('x');
 	await expect(page.locator('#party-slot-5')).toBeFocused();
-	await page.getByRole('button', { name: 'Party' }).click();
 	await page.getByRole('button', { name: 'Open Box Menu for Pokemon Storage' }).click();
 	await page
 		.getByRole('dialog', { name: 'Box Menu' })
 		.getByRole('button', { name: 'Close' })
 		.click();
-	await expect(page.locator('.box-zone')).toHaveCount(1);
-	await expect(page.locator('#box-0-slot-5')).toBeFocused();
+	await expect(page.locator('.box-pane')).toHaveCount(1);
+	await expect(page.locator('#party-slot-5')).toBeFocused();
 });
 
 test('Box Menu allows duplicate Save File panes and keeps Open another collection disabled at two panes', async ({
@@ -874,6 +964,51 @@ test('Box Menu allows duplicate Save File panes and keeps Open another collectio
 	await expect(
 		page.getByRole('button', { name: 'Open Box Menu for emerald-011020251345.sav' })
 	).toHaveCount(2);
+	await page.locator('#pane-active-save-box-0-slot-0').click();
+	const fixedPane = page.locator('.box-pane').first();
+	const duplicatePane = page.locator('.box-pane').nth(1);
+	await expect(duplicatePane).not.toHaveAttribute('aria-busy', 'true');
+	await duplicatePane.evaluate((pane) => {
+		pane.setAttribute('data-observed-busy', 'false');
+		const observer = new MutationObserver(() => {
+			if (pane.getAttribute('aria-busy') === 'true') {
+				pane.setAttribute('data-observed-busy', 'true');
+				observer.disconnect();
+			}
+		});
+		observer.observe(pane, { attributes: true, attributeFilter: ['aria-busy'] });
+	});
+	await duplicatePane.getByRole('button', { name: 'Next Location' }).click();
+	await expect(duplicatePane).toHaveAttribute('data-observed-busy', 'true');
+	await expect(duplicatePane.getByRole('heading', { name: 'Box 02' })).toBeVisible();
+	await expect(duplicatePane).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
+	await fixedPane.getByRole('button', { name: 'Next Location' }).click();
+	await expect(fixedPane.getByRole('heading', { name: 'Box 02' })).toBeVisible();
+	await expect(fixedPane).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
+	await page.evaluate(() => {
+		const [fixed, duplicate] = Array.from(document.querySelectorAll<HTMLElement>('.box-pane'));
+		duplicate.querySelector<HTMLButtonElement>('[aria-label="Previous Location"]')?.click();
+		duplicate.querySelector<HTMLButtonElement>('[role="gridcell"]')?.click();
+		fixed.querySelector<HTMLButtonElement>('[aria-label="Previous Location"]')?.click();
+	});
+	await expect(fixedPane.getByRole('gridcell').first()).toContainText('ARON', { timeout: 15000 });
+	await expect(duplicatePane.getByRole('gridcell').first()).toContainText('ARON', {
+		timeout: 15000
+	});
+	await expect(fixedPane).not.toHaveAttribute('aria-busy', 'true');
+	await expect(duplicatePane).not.toHaveAttribute('aria-busy', 'true');
+	await duplicatePane.getByRole('button', { name: 'Previous Location' }).click();
+	await expect(duplicatePane.getByRole('heading', { name: 'Party' })).toBeVisible({
+		timeout: 15000
+	});
+	await duplicatePane.getByRole('gridcell').nth(5).click();
+	await page.keyboard.press('x');
+	await page.getByRole('button', { name: 'Switch', exact: true }).click();
+	await page
+		.getByRole('dialog', { name: 'Switch collection' })
+		.getByRole('button', { name: /Pokemon Storage/ })
+		.click();
+	await expect(page.locator('#box-0-slot-8')).toBeFocused();
 	await page.keyboard.press('x');
 	const menu = page.getByRole('dialog', { name: 'Box Menu' });
 	await expect(menu.getByRole('button', { name: 'Open another collection' })).toHaveAttribute(
@@ -881,7 +1016,7 @@ test('Box Menu allows duplicate Save File panes and keeps Open another collectio
 		'true'
 	);
 	await menu.getByRole('button', { name: 'Open another collection' }).click({ force: true });
-	await expect(page.locator('.box-zone')).toHaveCount(2);
+	await expect(page.locator('.box-pane')).toHaveCount(2);
 });
 
 test('Box Menu and related picker Cancel restore focus at both viewport floors', async ({
@@ -931,20 +1066,26 @@ test('Carry suppresses the Box Menu and Y only toggles Move and Copy', async ({ 
 		.click();
 	await page.locator('#pane-active-save-box-0-slot-0').click();
 	await expect(page.locator('#box-0-slot-0')).toContainText('ARON');
+	const sourceSpriteUrl = await page.locator('#box-0-slot-0 img.slot-sprite').getAttribute('src');
+	expect(sourceSpriteUrl).not.toBeNull();
 	await page.locator('#box-grid').focus();
 	await page.keyboard.press('Enter');
 	await page.getByRole('button', { name: 'Move' }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await expect(page.locator('#box-0-slot-0')).toHaveAccessibleName(
+		'Box Slot 1, row 1, column 1: ARON, Lv. 11. Carry Move ARON'
+	);
 	const collectionControl = page.getByRole('button', {
 		name: 'Open Box Menu for Pokemon Storage'
 	});
 	await expect(collectionControl).toHaveAttribute('aria-disabled', 'true');
 	await expect(collectionControl).toHaveAttribute('tabindex', '-1');
 	await collectionControl.focus();
-	await expect(page.locator('#box-grid #collection-control-pane-active-save')).toHaveCount(1);
+	await expect(
+		page.locator('.box-pane').filter({ has: collectionControl }).locator('.location-grid')
+	).toHaveCount(1);
 	await expect(page.locator('#box-0-slot-0')).toBeFocused();
 	await collectionControl.click({ force: true });
-	await expect(page.locator('#box-grid #collection-control-pane-active-save')).toHaveCount(1);
 	await expect(page.locator('#box-0-slot-0')).toBeFocused();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await expect(page.getByRole('dialog', { name: 'Open another collection' })).toBeHidden();
@@ -956,9 +1097,53 @@ test('Carry suppresses the Box Menu and Y only toggles Move and Copy', async ({ 
 	await expect(page.getByRole('dialog', { name: 'Main Menu' })).toBeHidden();
 	await expect(page.getByRole('button', { name: 'Open Main Menu' })).toHaveCount(0);
 	await page.keyboard.press('y');
-	await expect(page.locator('.toolbar-status-strip')).toHaveText('Copy ARON');
+	await expect(page.locator('.carry-at-focus')).toHaveAttribute('aria-label', 'copy ARON');
+	await expect(page.locator('#box-0-slot-0')).toHaveAccessibleName(
+		'Box Slot 1, row 1, column 1: ARON, Lv. 11. Carry Copy ARON'
+	);
 	await page.keyboard.press('y');
-	await expect(page.locator('.toolbar-status-strip')).toHaveText('Move ARON');
+	await expect(page.locator('.carry-at-focus')).toHaveAttribute('aria-label', 'move ARON');
+	await expect(page.locator('.carry-at-focus img')).toHaveAttribute('src', sourceSpriteUrl!);
+	expect(
+		await page
+			.locator('.carry-at-focus strong')
+			.evaluate((element) => parseFloat(getComputedStyle(element).fontSize))
+	).toBeGreaterThanOrEqual(10);
+	const closeControl = page.getByRole('button', { name: 'Close Pokemon Storage pane' });
+	await expect(closeControl).toHaveAttribute('aria-disabled', 'true');
+	await expect(closeControl).toHaveAttribute('tabindex', '-1');
+	await closeControl.focus();
+	await expect(page.locator('#box-0-slot-0')).toBeFocused();
+	await closeControl.click({ force: true });
+	await expect(page.locator('.box-pane')).toHaveCount(2);
+
+	await pressController(page, 'PageDown');
+	await expect(
+		page.locator('.box-pane.active-pane').getByRole('heading', { name: 'Box 02' })
+	).toBeVisible();
+	await expect(page.locator('#box-1-slot-0')).toBeFocused();
+	await expect(page.locator('.carry-at-focus')).toHaveAttribute('aria-label', 'move ARON');
+	await expect(page.locator('.carry-at-focus img')).toHaveAttribute('src', sourceSpriteUrl!);
+	await page.setViewportSize({ width: 360, height: 640 });
+	await expect(page.locator('#box-1-slot-0')).toBeFocused();
+	await expect(page.locator('.carry-at-focus')).toHaveAttribute('aria-label', 'move ARON');
+	await expect(page.locator('.carry-at-focus img')).toHaveAttribute('src', sourceSpriteUrl!);
+	await page.keyboard.press('Escape');
+	await expect(
+		page.locator('.box-pane.active-pane').getByRole('heading', { name: 'Box 01' })
+	).toBeVisible();
+	await expect(page.locator('#box-0-slot-0')).toBeFocused();
+	await expect(page.locator('#box-0-slot-0')).toContainText('ARON', { timeout: 15000 });
+	await expect(page.locator('.carry-at-focus')).toHaveCount(0);
+	await page.keyboard.press('Enter');
+	await page.getByRole('button', { name: 'Move' }).click();
+	await pressController(page, 'PageUp');
+	await expect(page.getByRole('heading', { name: 'Party' })).toBeVisible();
+	await expect(page.locator('#party-slot-0')).toBeFocused();
+	await pressController(page, 'ArrowUp');
+	await expect(page.locator('#party-slot-0')).toBeFocused();
+	await pressController(page, 'PageDown');
+	await expect(page.locator('#box-0-slot-0')).toBeFocused();
 	await page.locator('#box-0-slot-2').click();
 	await expect(page.locator('#box-0-slot-0')).toContainText('Empty');
 	await expect(page.locator('#box-0-slot-2')).toContainText('ARON');
@@ -1112,14 +1297,14 @@ test('Pokemon Actions cancel without mutation and explicitly apply an evolution'
 	await actions.getByRole('button', { name: 'Cancel' }).click();
 	await expect(actions).toContainText('Preview Legality Fix');
 	await expect(page.locator('#box-0-slot-0')).toContainText('ARON');
-	await expect(page.locator('.toolbar-status-strip')).not.toHaveText('Unsaved edits');
+	await expect(page.locator('.toolbar-status-strip')).toHaveCount(0);
 
 	await actions.getByRole('button', { name: /Lairon.*Level 32/i }).click();
 	await actions.getByRole('button', { name: 'Apply Pokemon Action' }).click();
 	await expect(actions).toBeHidden({ timeout: 15000 });
 	await expect(page.locator('#box-0-slot-0')).toContainText('LAIRON');
 	await expect(page.locator('#box-0-slot-0')).toContainText('Lv 32');
-	await expect(page.locator('.toolbar-status-strip')).toHaveText('Unsaved edits');
+	await expect(page.locator('.toolbar-status-strip')).toHaveCount(0);
 	await expect(page.locator('#slot-action-6')).toBeFocused();
 });
 
@@ -1144,7 +1329,7 @@ test('creates a Pokemon from an empty Slot after explicit apply and preserves ca
 	await page.keyboard.press('Escape');
 	await expect(dialog).toBeHidden();
 	await expect(destination).toContainText('Empty');
-	await expect(page.locator('.toolbar-status-strip')).not.toHaveText('Unsaved edits');
+	await expect(page.locator('.toolbar-status-strip')).toHaveCount(0);
 
 	await createCommand.click();
 	await dialog.locator('#pokemon-creation-species').fill('25');
@@ -1155,7 +1340,7 @@ test('creates a Pokemon from an empty Slot after explicit apply and preserves ca
 	await expect(destination).toContainText('PIKACHU');
 	await expect(destination).toContainText('Lv 5');
 	await expect(destination).toBeFocused();
-	await expect(page.locator('.toolbar-status-strip')).toHaveText('Unsaved edits');
+	await expect(page.locator('.toolbar-status-strip')).toHaveCount(0);
 
 	const browser = await openBackupBrowser(page);
 	await expect(browser).toContainText('Pokemon creation');
@@ -1356,7 +1541,7 @@ test('Pokemon Editor previews and applies a Species and Form change', async ({ p
 	const updatedEditor = page.getByRole('dialog', { name: 'LAIRON' });
 	await expect(updatedEditor).toContainText('Pokemon edits applied.');
 	await expect(updatedEditor).toContainText('Species #0305');
-	await expect(page.getByRole('status').filter({ hasText: 'Unsaved edits' })).toBeVisible();
+	await expect(page.locator('.toolbar-status-strip')).toHaveCount(0);
 	await expect(page.locator('#pokemon-editor-close')).toBeFocused();
 });
 
@@ -1633,7 +1818,7 @@ test('controller focus framework covers every interactive surface', async ({ pag
 	await expectControllerHighlights(page, confirmDialog);
 });
 
-test('controller shoulder buttons switch boxes and A drives the party toggle and editor', async ({
+test('controller shoulders cycle Party and Boxes while collection focus is retained', async ({
 	page
 }) => {
 	await openEmptySaves(page);
@@ -1645,32 +1830,20 @@ test('controller shoulder buttons switch boxes and A drives the party toggle and
 	await pressController(page, 'PageUp');
 	await expect(page.getByRole('heading', { name: 'Box 01' })).toBeVisible();
 
+	await pressController(page, 'PageUp');
+	await expect(page.getByRole('heading', { name: 'Party' })).toBeVisible();
+	await expect(page.locator('#party-slot-0')).toBeFocused();
 	await pressController(page, 'ArrowUp');
 	await expect(page.locator('#collection-control-pane-active-save')).toBeFocused();
 	await pressController(page, 'ArrowUp');
-	await expect(page.locator('#party-slot-0')).toBeFocused();
-	await pressController(page, 'ArrowUp');
-	await expect(page.locator('#party-toggle')).toBeFocused();
-
-	await pressController(page, 'Enter');
-	await expect(page.locator('#party-list')).toBeHidden();
-	await pressController(page, 'ArrowDown');
+	await expect(page.locator('#collection-control-pane-active-save')).toBeFocused();
+	await pressController(page, 'PageDown');
+	await expect(page.getByRole('heading', { name: 'Box 01' })).toBeVisible();
 	await expect(page.locator('#collection-control-pane-active-save')).toBeFocused();
 	await pressController(page, 'ArrowDown');
 	await expect(page.locator('#box-0-slot-0')).toBeFocused();
-	await pressController(page, 'ArrowUp');
-	await expect(page.locator('#collection-control-pane-active-save')).toBeFocused();
-	await pressController(page, 'ArrowUp');
-	await expect(page.locator('#party-toggle')).toBeFocused();
-	await pressController(page, 'Enter');
-	await expect(page.locator('#party-list')).toBeVisible();
-
-	await pressController(page, 'ArrowDown');
+	await pressController(page, 'PageUp');
 	await expect(page.locator('#party-slot-0')).toBeFocused();
-	await pressController(page, 'ArrowDown');
-	await expect(page.locator('#collection-control-pane-active-save')).toBeFocused();
-	await pressController(page, 'ArrowDown');
-	await expect(page.locator('#box-0-slot-0')).toBeFocused();
 	await pressController(page, 'Enter');
 	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toBeVisible();
 	await pressController(page, 'Enter');
@@ -1679,7 +1852,129 @@ test('controller shoulder buttons switch boxes and A drives the party toggle and
 	await expect(page.locator('.pokemon-editor')).toBeHidden();
 	await pressController(page, 'Escape');
 	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toBeHidden();
-	await expect(page.locator('#box-0-slot-0')).toBeFocused();
+	await expect(page.locator('#party-slot-0')).toBeFocused();
+});
+
+test('Box Pane owns the viewport budget at floors, target, and large thresholds', async ({
+	page
+}) => {
+	await openEmptySaves(page);
+
+	await page.setViewportSize({ width: 640, height: 360 });
+	await setSafeArea(page, { top: 12, right: 12, bottom: 12, left: 12 });
+	let metrics = await boxLayoutMetrics(page);
+	expect(metrics.route).toMatchObject({ width: 616, height: 336 });
+	expect(metrics.slotCount).toBe(30);
+	expect(metrics.slotWidth).toBeGreaterThanOrEqual(57);
+	expect(metrics.slotWidth).toBeLessThanOrEqual(60);
+	expect(metrics.slotHeight).toBe(metrics.slotWidth);
+	expect(metrics.lastSlotRight).toBeLessThanOrEqual(metrics.grid.right + 0.5);
+	expect(metrics.lastSlotBottom).toBeLessThanOrEqual(metrics.grid.bottom + 0.5);
+	expect(metrics.control.height).toBeGreaterThan(0);
+	expect(metrics.rail.right).toBeLessThanOrEqual(metrics.route.right);
+	expect(metrics.title.top).toBeGreaterThanOrEqual(metrics.header.top);
+	expect(metrics.occupancy.bottom).toBeLessThanOrEqual(metrics.header.bottom);
+	expect(metrics.header.bottom).toBeLessThanOrEqual(metrics.grid.top);
+	await expect(page.locator('#box-0-slot-0 .slot-number')).toHaveCSS('display', 'block');
+	await expect(page.locator('#box-0-slot-0 .slot-label')).toHaveCSS('display', 'none');
+	expect(await shellExtents(page)).toMatchObject({
+		bodyHeight: 360,
+		bodyWidth: 640,
+		htmlHeight: 360,
+		htmlWidth: 640,
+		shellHeight: 360,
+		shellWidth: 640
+	});
+
+	await page.setViewportSize({ width: 360, height: 640 });
+	await setSafeArea(page, { top: 24, right: 0, bottom: 72, left: 0 });
+	metrics = await boxLayoutMetrics(page);
+	expect(metrics.pane.bottom).toBeLessThanOrEqual(metrics.rail.top);
+	expect(metrics.route.scrollHeight).toBe(metrics.route.clientHeight);
+	expect(metrics.route.scrollWidth).toBe(metrics.route.clientWidth);
+	expect(metrics.grid.overflowY).toBe('auto');
+	expect(metrics.rail.width).toBeLessThanOrEqual(260);
+	expect(metrics.title.top).toBeGreaterThanOrEqual(metrics.header.top);
+	expect(metrics.occupancy.bottom).toBeLessThanOrEqual(metrics.header.bottom);
+	expect(metrics.header.bottom).toBeLessThanOrEqual(metrics.grid.top);
+
+	await page.setViewportSize({ width: 360, height: 400 });
+	await setSafeArea(page, { top: 10, right: 10, bottom: 10, left: 10 });
+	metrics = await boxLayoutMetrics(page);
+	expect(metrics.workspace.scrollHeight).toBeGreaterThan(metrics.workspace.clientHeight);
+	await page.locator('.storage-workspace').evaluate((workspace) => {
+		workspace.scrollTop = workspace.scrollHeight;
+	});
+	await expect(page.getByTestId('active-slot-detail-rail')).toBeInViewport();
+
+	await page.setViewportSize({ width: 640, height: 480 });
+	await setSafeArea(page, { top: 12, right: 0, bottom: 12, left: 0 });
+	metrics = await boxLayoutMetrics(page);
+	expect(metrics.pane.right).toBeLessThanOrEqual(metrics.rail.left);
+	expect(metrics.lastSlotBottom).toBeLessThanOrEqual(metrics.grid.bottom + 0.5);
+
+	for (const allocation of [
+		{ viewport: { width: 919, height: 720 }, type: { caption: 10, label: 12 } },
+		{ viewport: { width: 920, height: 719 }, type: { caption: 10, label: 12 } },
+		{ viewport: { width: 920, height: 720 }, type: { caption: 11, label: 13 } }
+	]) {
+		await page.setViewportSize(allocation.viewport);
+		await setSafeArea(page, { top: 10, right: 10, bottom: 10, left: 10 });
+		metrics = await boxLayoutMetrics(page);
+		expect({ caption: metrics.caption, label: metrics.label }).toEqual(allocation.type);
+		expect(metrics.pane.width).toBeLessThanOrEqual(800);
+		expect(metrics.rail.width).toBeLessThanOrEqual(260);
+	}
+	await expect(page.locator('#box-0-slot-0 .slot-label')).toHaveCSS('display', 'flex');
+});
+
+test('Box and Party grids expose rows and size real sprites against the Slot', async ({ page }) => {
+	await openEmptySaves(page);
+	await importEmeraldThroughSaves(page);
+	await page.setViewportSize({ width: 640, height: 360 });
+	await setSafeArea(page, { top: 24, right: 12, bottom: 72, left: 12 });
+	await expect(page.locator('#box-0-slot-0 .slot-number')).toHaveCSS('display', 'none');
+	await expect(page.locator('#box-0-slot-0')).toHaveAccessibleName(
+		'Box Slot 1, row 1, column 1: ARON, Lv. 11'
+	);
+	await expect(page.locator('#box-0-slot-2')).toHaveAccessibleName(
+		'Box Slot 3, row 1, column 3: Empty'
+	);
+
+	for (const viewport of [
+		{ width: 640, height: 360 },
+		{ width: 920, height: 720 }
+	]) {
+		await page.setViewportSize(viewport);
+		await setSafeArea(
+			page,
+			viewport.width === 640
+				? { top: 12, right: 12, bottom: 12, left: 12 }
+				: { top: 10, right: 10, bottom: 10, left: 10 }
+		);
+		const rows = page.getByRole('grid').getByRole('row');
+		await expect(rows).toHaveCount(5);
+		for (let row = 0; row < 5; row += 1) {
+			await expect(rows.nth(row).getByRole('gridcell')).toHaveCount(6);
+		}
+		const ratio = await page.locator('#box-0-slot-0').evaluate((slot) => {
+			const sprite = slot.querySelector<HTMLElement>('img.slot-sprite');
+			if (!sprite) throw new Error('Expected a fixture sprite.');
+			return sprite.getBoundingClientRect().width / slot.getBoundingClientRect().width;
+		});
+		expect(ratio).toBeGreaterThanOrEqual(0.78);
+		expect(ratio).toBeLessThanOrEqual(0.92);
+	}
+
+	await showPartyFromFirstBox(page);
+	await expect(page.locator('#party-slot-0')).toHaveAccessibleName(
+		'Party Slot 1, row 1, column 1: 1-UP, Lv. 25'
+	);
+	const partyRows = page.getByRole('grid').getByRole('row');
+	await expect(partyRows).toHaveCount(2);
+	for (let row = 0; row < 2; row += 1) {
+		await expect(partyRows.nth(row).getByRole('gridcell')).toHaveCount(3);
+	}
 });
 
 test('landscape-floor Slot Menu uses the trailing Safe Canvas edge without shell growth', async ({
@@ -1864,6 +2159,7 @@ test('each Clear and Slot Menu backdrop tap dismisses exactly one level without 
 test('pointer Slot clicks only move Controller Focus', async ({ page }) => {
 	await openEmptySaves(page);
 	await importEmeraldThroughSaves(page);
+	await showPartyFromFirstBox(page);
 	await page.locator('#party-slot-4').click();
 
 	await expect(page.locator('#party-slot-4')).toHaveAttribute('aria-selected', 'true');
@@ -1925,6 +2221,7 @@ test('active slot detail rail follows controller focus', async ({ page }) => {
 	await expect(rail).not.toContainText('Not available');
 	await expect(rail).toContainText('Move Set');
 
+	await showPartyFromFirstBox(page);
 	await page.locator('#party-slot-0').click();
 	await expect(page.locator('#party-slot-0')).toHaveAttribute('aria-selected', 'true');
 	await expect(rail).toContainText('1-UP');
@@ -1940,7 +2237,6 @@ test('imports the Emerald Save File, renders engine data, and exports serialized
 
 	await expect(page.getByText('DIXIE', { exact: true })).toBeVisible();
 	await expect(page.locator('#box-0-slot-0')).toContainText('ARON');
-	await expect(page.locator('#party-slot-0')).toContainText('1-UP');
 	const detailRail = page.getByTestId('active-slot-detail-rail');
 	await expect(detailRail).toContainText('Steel');
 	await expect(detailRail).toContainText('Rock');
@@ -1952,6 +2248,10 @@ test('imports the Emerald Save File, renders engine data, and exports serialized
 	await expect(detailRail).toContainText('Move Set');
 	await expect(detailRail).not.toContainText('Not available');
 
+	await showPartyFromFirstBox(page);
+	await expect(page.locator('#party-slot-0')).toContainText('1-UP');
+	await expect(detailRail).toContainText('Party · Slot 1');
+	await showFirstBoxFromParty(page);
 	await chooseMainMenu(page, 'Boxes');
 	await page.locator('#box-grid').focus();
 	await pressController(page, 'x');
@@ -2142,6 +2442,7 @@ test('Pokemon Editor stages, cancels, and applies an engine-projected Tera Type'
 	await openEmptySaves(page);
 	await importScarletThroughSaves(page);
 
+	await showPartyFromFirstBox(page);
 	await page.locator('#party-slot-0').click();
 	await page.keyboard.press('Enter');
 	await page.getByRole('button', { name: 'Edit' }).click();
@@ -2165,7 +2466,7 @@ test('Pokemon Editor stages, cancels, and applies an engine-projected Tera Type'
 	await editor.getByRole('button', { name: 'Apply edits' }).click();
 	await expect(editor).toContainText('Pokemon edits applied.', { timeout: 60000 });
 	await expect(editor.locator('#pokemon-editor-battle-field-tera-type')).toHaveValue(next);
-	await expect(page.locator('.toolbar-status-strip')).toHaveText('Unsaved edits');
+	await expect(page.locator('.toolbar-status-strip')).toHaveCount(0);
 });
 
 test('Pokemon Editor changes Nature through Apply and keeps editor focus', async ({ page }) => {
@@ -2467,14 +2768,17 @@ test('reload preserves unexported slot changes from the active workspace', async
 	await importEmeraldThroughSaves(page);
 
 	await moveFirstEmeraldBoxSlotToThirdSlot(page);
-	await expect(page.locator('.toolbar-status-strip')).toHaveText('Unsaved edits');
+	await expect(page.locator('.toolbar-status-strip')).toHaveCount(0);
 
 	await page.reload();
 	await expectActiveSaveOwner(page, 'emerald-011020251345.sav');
-	await expect(page.locator('.toolbar-status-strip')).toHaveText('Unsaved edits');
+	await expect(
+		page.getByRole('button', { name: 'Open Box Menu for emerald-011020251345.sav' })
+	).toBeVisible({ timeout: 15000 });
+	await expect(page.locator('.toolbar-status-strip')).toHaveCount(0);
 	await expect(page.locator('#box-0-slot-0')).toContainText('Empty');
 	await expect(page.locator('#box-0-slot-2')).toContainText('ARON');
-	await expect(page.locator('.toolbar-status-strip')).toHaveText('Unsaved edits');
+	await expect(page.locator('.toolbar-status-strip')).toHaveCount(0);
 });
 
 test('can perform another slot mutation after the first move changes workspace bytes', async ({
@@ -2622,7 +2926,7 @@ test('Saves opens Pokemon Storage as the focused single Boxes collection', async
 	await expect(
 		page.getByRole('button', { name: 'Open Box Menu for Pokemon Storage' })
 	).toBeVisible();
-	await expect(page.locator('.box-zone')).toHaveCount(1);
+	await expect(page.locator('.box-pane')).toHaveCount(1);
 	await expect(page.locator('#box-0-slot-0')).toBeFocused();
 	const persistedActiveSaveFileId = await page.evaluate(
 		() =>

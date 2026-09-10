@@ -226,7 +226,16 @@ public class ControllerNavigationTest {
                 + " && innerWidth > innerHeight"
                 + " && document.querySelector('.top-bar,.mobile-tabbar') === null"
                 + " && document.querySelector('.main-menu-opener') !== null"
-                + " && getComputedStyle(document.querySelector('.box-sidebar')).display === 'none'"
+                + " && document.querySelector('.box-sidebar') === null"
+                + " && (() => {"
+                + " const route = document.querySelector('.boxes-route')?.getBoundingClientRect();"
+                + " const pane = document.querySelector('.box-pane')?.getBoundingClientRect();"
+                + " const grid = document.querySelector('.location-grid')?.getBoundingClientRect();"
+                + " const rail = document.querySelector('.detail-rail')?.getBoundingClientRect();"
+                + " return route && pane && grid && rail && pane.width > 0 && grid.height > 0"
+                + " && grid.left >= pane.left && grid.right <= pane.right"
+                + " && rail.left >= route.left && rail.right <= route.right;"
+                + " })()"
         );
     }
 

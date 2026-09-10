@@ -11,7 +11,7 @@
 		rowIndex: number;
 		colIndex: number;
 		spriteUrl: string | null;
-		collapsed?: boolean;
+		carried?: { label: string; mode: 'move' | 'copy'; spriteUrl?: string | null } | null;
 		destinationState?: 'valid' | 'invalid' | 'source' | null;
 		onFocusSlot: () => void;
 		onChooseSlot?: () => void;
@@ -27,7 +27,7 @@
 		rowIndex,
 		colIndex,
 		spriteUrl,
-		collapsed = false,
+		carried = null,
 		destinationState = null,
 		onFocusSlot,
 		onChooseSlot
@@ -35,6 +35,17 @@
 
 	const zoneClass = $derived(zone === 'party' ? 'party-slot' : 'box-slot');
 	const slotNumber = $derived(zone === 'party' ? `P${slot.slot + 1}` : String(slot.slot + 1));
+	const accessibleDetails = $derived(
+		[
+			slot.label,
+			slot.detail || (slot.kind === 'pokemon' && slot.level !== null ? `Level ${slot.level}` : null)
+		]
+			.filter(Boolean)
+			.join(', ')
+	);
+	const accessibleLabel = $derived(
+		`${zone === 'party' ? 'Party' : 'Box'} Slot ${slot.slot + 1}, row ${rowIndex}, column ${colIndex}: ${accessibleDetails}${carried ? `. Carry ${carried.mode === 'move' ? 'Move' : 'Copy'} ${carried.label}` : ''}`
+	);
 	function handleClick() {
 		onFocusSlot();
 
@@ -59,9 +70,9 @@
 	tabindex="-1"
 	{style}
 	aria-selected={focused}
+	aria-label={accessibleLabel}
 	aria-rowindex={rowIndex}
 	aria-colindex={colIndex}
-	aria-hidden={collapsed ? 'true' : undefined}
 	data-destination-state={destinationState ?? undefined}
 	onfocus={onFocusSlot}
 	onclick={handleClick}
@@ -83,6 +94,14 @@
 	{#if slot.detail}
 		<span class="slot-detail">{slot.detail}</span>
 	{/if}
+	{#if carried}
+		<span class="carry-at-focus" aria-label={`${carried.mode} ${carried.label}`}>
+			{#if carried.spriteUrl}
+				<img src={carried.spriteUrl} alt="" width="48" height="48" />
+			{/if}
+			<strong>{carried.mode === 'move' ? 'MOVE' : 'COPY'}</strong>
+		</span>
+	{/if}
 </button>
 
 <style>
@@ -94,6 +113,7 @@
 		--slot-fill: oklch(0.9 var(--slot-chroma) var(--slot-hue));
 		--slot-fill-2: oklch(0.9 var(--slot-chroma-2) var(--slot-hue-2));
 		position: relative;
+		container-type: size;
 		width: 100%;
 		height: 100%;
 		min-width: 0;
@@ -200,6 +220,7 @@
 	}
 
 	.slot-number {
+		display: none;
 		position: absolute;
 		top: 4px;
 		left: 5px;
@@ -213,7 +234,7 @@
 
 	.sprite-stage {
 		position: absolute;
-		inset: 5px 5px 17px;
+		inset: 0;
 		display: grid;
 		place-items: center;
 		border-radius: calc(var(--pksx-radius-md) - 2px);
@@ -222,7 +243,7 @@
 	}
 
 	.slot.empty .sprite-stage {
-		inset: 9px 10px 22px;
+		inset: 8px;
 		background: color-mix(in srgb, var(--paper), transparent 68%);
 	}
 
@@ -237,21 +258,14 @@
 	}
 
 	img.slot-sprite {
-		width: 100%;
-		height: 100%;
-		max-width: 58px;
-		max-height: 58px;
+		width: 92%;
+		height: 92%;
 		aspect-ratio: 1;
 		border-radius: 0;
 		background: none;
 		box-shadow: none;
 		object-fit: contain;
-		image-rendering: auto;
-	}
-
-	.party-slot img.slot-sprite {
-		max-width: 58px;
-		max-height: 58px;
+		image-rendering: pixelated;
 	}
 
 	.empty-sprite,
@@ -311,7 +325,7 @@
 		right: 4px;
 		bottom: 4px;
 		min-height: 17px;
-		display: flex;
+		display: none;
 		align-items: center;
 		justify-content: center;
 		gap: 3px;
@@ -357,27 +371,61 @@
 		text-overflow: ellipsis;
 	}
 
-	@media (max-width: 1024px) {
-		.party-slot {
-			min-height: 56px;
-			padding: 4px;
+	.carry-at-focus {
+		position: absolute;
+		inset: 3px;
+		z-index: 8;
+		display: grid;
+		place-items: center;
+		border: var(--pksx-border-width) solid var(--rust);
+		border-radius: var(--pksx-radius-small);
+		background: color-mix(in srgb, var(--paper-hi), transparent 12%);
+		box-shadow: 0 0 0 var(--pksx-focus-ring) var(--rust-ring);
+		pointer-events: none;
+	}
+
+	.carry-at-focus img {
+		width: 72%;
+		height: 72%;
+		object-fit: contain;
+		image-rendering: pixelated;
+	}
+
+	.carry-at-focus strong {
+		position: absolute;
+		right: var(--pksx-space-1);
+		bottom: var(--pksx-space-1);
+		padding: var(--pksx-border-width) var(--pksx-space-1);
+		border-radius: var(--pksx-radius-small);
+		background: var(--rust);
+		color: var(--paper-hi);
+		font: 800 var(--pksx-type-caption) / 1 var(--pksx-font-mono);
+	}
+
+	@container (min-width: 46px) and (min-height: 46px) {
+		.slot-number {
+			display: block;
 		}
 
-		.party-slot .sprite-stage {
-			inset: 7px 4px 21px;
+		img.slot-sprite {
+			width: 88%;
+			height: 88%;
+			max-width: 88%;
+			max-height: 88%;
+		}
+	}
+
+	@container (min-width: 66px) and (min-height: 66px) {
+		.box-slot .slot-label,
+		.party-slot .slot-label {
+			display: flex;
 		}
 
-		.party-slot .slot-sprite {
-			max-width: 42px;
-			max-height: 42px;
-		}
-
-		.party-slot .slot-detail {
-			display: none;
-		}
-
-		.box-slot {
-			min-height: 62px;
+		img.slot-sprite {
+			width: 79%;
+			height: 79%;
+			max-width: 79%;
+			max-height: 79%;
 		}
 	}
 </style>

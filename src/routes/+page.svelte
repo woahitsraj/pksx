@@ -15,17 +15,22 @@
 	import {
 		applyNavigationAction,
 		BOX_COLUMNS,
+		BOX_ROWS,
 		BOX_SLOT_COUNT,
 		createInitialNavigationState,
 		focusBoxSlot,
 		focusPaneBoundarySlot,
 		focusPaneControl,
 		focusPartySlot,
-		focusPartyToggle,
 		getBoxSlotPosition,
+		getPartySlotPosition,
 		getFocusId,
 		PARTY_SLOT_COUNT,
+		PARTY_COLUMNS,
+		PARTY_ROWS,
+		projectSlotCoordinate,
 		selectActiveBox,
+		setLocationFocus,
 		type BoxNavigationState,
 		type ControllerFocus,
 		type NavigationAction,
@@ -43,7 +48,7 @@
 		destinationStateForStorageOperation,
 		type PendingStorageSlotOperation
 	} from '$lib/pksx/storage-operations';
-	import { appChrome, updateAppChrome } from '$lib/pksx/app-chrome.svelte';
+	import { updateAppChrome } from '$lib/pksx/app-chrome.svelte';
 	import {
 		addBoxPane,
 		applyPokemonStorageSlotOperation,
@@ -59,7 +64,6 @@
 		removeStoragePokemon,
 		setPaneActiveBox,
 		setPaneFocus,
-		stateTagForPane,
 		switchPaneSource,
 		toggleCarryMode,
 		type BoxPaneState,
@@ -87,7 +91,6 @@
 		seedSavesSnapshotFromActiveWorkspace,
 		setCachedActiveWorkspace
 	} from '$lib/pksx/saves-cache';
-	import BoxSidebar from '$lib/components/pksx/BoxSidebar.svelte';
 	import BoxMenu from '$lib/components/pksx/BoxMenu.svelte';
 	import BoxSourceControls from '$lib/components/pksx/BoxSourceControls.svelte';
 	import ClearSlotConfirm from '$lib/components/pksx/ClearSlotConfirm.svelte';
@@ -97,10 +100,9 @@
 	import PokemonCreation from '$lib/components/pksx/PokemonCreation.svelte';
 	import PokemonEditor from '$lib/components/pksx/PokemonEditor.svelte';
 	import SlotActionMenu from '$lib/components/pksx/SlotActionMenu.svelte';
-	import StatusStrip from '$lib/components/pksx/StatusStrip.svelte';
 	import StorageSlot from '$lib/components/pksx/StorageSlot.svelte';
 	import ToastRegion from '$lib/components/pksx/ToastRegion.svelte';
-	import type { BoxNavItem, BoxSourceView, SlotView } from '$lib/components/pksx/types';
+	import type { SlotView } from '$lib/components/pksx/types';
 	import {
 		createPokemonCreationOperation,
 		pokemonCreationAvailability,
@@ -134,7 +136,6 @@
 		type PokemonActionTarget
 	} from '$lib/pksx/pokemon-actions';
 	import {
-		briefToolbarStatus,
 		createBoxSlotViews,
 		createPartySlotViews,
 		createSlotView,
@@ -173,6 +174,7 @@
 	type PokemonCreationView = {
 		destination: SaveSlotRef;
 		location: string;
+		paneId: string;
 	};
 
 	type SavePaneWorkspace = {
@@ -264,10 +266,6 @@
 
 	function slotHasDualType(slot: SlotView, box: number): boolean {
 		return slot.kind === 'pokemon' && slotTypeHues(slot, box).secondaryHue !== null;
-	}
-
-	function boxHue(box: number): number {
-		return slotPalette[box % slotPalette.length];
 	}
 
 	function boxNameFor(box: number): string {
@@ -440,6 +438,7 @@
 
 	let navigation = $state<BoxNavigationState>(createInitialNavigationState(placeholderBoxCount));
 	let loadedSave = $state<WorkspaceState | null>(null);
+	let pokemonEditorPaneId = $state<string | null>(null);
 	let importError = $state<string | null>(null);
 	let statusMessage = $state('Import a Save File to begin.');
 	let busy = $state(false);
@@ -459,7 +458,6 @@
 	let pokemonAction = $state<PokemonActionState>({ status: 'idle' });
 	let pokemonActionRequest = 0;
 	let pokemonActionContext = $state<PokemonActionContext | null>(null);
-	let partyCollapsed = $state(false);
 	let pendingSlotOperation = $state<PendingStorageSlotOperation | null>(null);
 	let carryState = $state<CarryState | null>(null);
 	let clearSlotConfirmation = $state<ClearSlotConfirmation | null>(null);
@@ -481,8 +479,9 @@
 	let workspacePublicationRequest = 0;
 	let paneSwitchRequest = 0;
 	let destroyed = false;
+	const paneWorkspaceRequests: Record<string, number> = {};
+	let paneWorkspaceLoadingRequests = $state<Record<string, number>>({});
 
-	const controllerConnected = $derived(appChrome.controllerStatus !== null);
 	const activeSummonedWorkflow = $derived(summonedWorkflow.active);
 	const sourcePickerOpen = $derived(activeSummonedWorkflow?.kind === 'source-picker');
 	const slotMenuOpen = $derived(activeSummonedWorkflow?.kind === 'slot-menu');
@@ -516,11 +515,7 @@
 			: null
 	);
 	const boxCount = $derived(loadedSave?.workspace.summary.boxCount ?? placeholderBoxCount);
-	const activePaneBoxCount = $derived(activePane?.boxCount ?? placeholderBoxCount);
-	const partyAvailable = $derived(loadedSave !== null);
-	const partySlots = $derived(
-		loadedSave ? createPartySlotViews(loadedSave.workspace.partySlots) : placeholderPartySlots
-	);
+	const partyAvailable = $derived(paneHasParty(activePane));
 	const activeBoxSlots = $derived(paneBoxSlots(activePane, activePaneBox));
 	const activeFocusId = $derived(getFocusId(navigation.focus, activePaneBox));
 	const activeSlotFocus = $derived<SlotFocus | null>(
@@ -528,7 +523,8 @@
 			? null
 			: (navigation.focus.zone === 'party' && partyAvailable) || navigation.focus.zone === 'box'
 				? navigation.focus
-				: summonedSlotLauncher && (summonedSlotLauncher.focus.zone !== 'party' || partyAvailable)
+				: summonedSlotLauncher &&
+					  (summonedSlotLauncher.focus.zone !== 'party' || paneHasParty(summonedSlotPane))
 					? summonedSlotLauncher.focus
 					: null
 	);
@@ -536,12 +532,12 @@
 		activeSlotFocus === null
 			? noSelectedSlot
 			: activeSlotFocus.zone === 'party'
-				? (partySlots[activeSlotFocus.slot] ?? noSelectedSlot)
+				? (panePartySlots(activePane)[activeSlotFocus.slot] ?? noSelectedSlot)
 				: (activeBoxSlots[activeSlotFocus.slot] ?? noSelectedSlot)
 	);
 	const summonedSlot = $derived(
 		summonedSlotLauncher?.focus.zone === 'party'
-			? (partySlots[summonedSlotLauncher.focus.slot] ?? noSelectedSlot)
+			? (panePartySlots(summonedSlotPane)[summonedSlotLauncher.focus.slot] ?? noSelectedSlot)
 			: summonedSlotLauncher?.focus.zone === 'box' && summonedSlotBox !== null
 				? (paneBoxSlots(summonedSlotPane, summonedSlotBox)[summonedSlotLauncher.focus.slot] ??
 					noSelectedSlot)
@@ -549,46 +545,22 @@
 	);
 	const focusedSlot = $derived(summonedSlot ?? navigationFocusedSlot);
 	const focusedSlotPane = $derived(summonedSlotLauncher ? summonedSlotPane : activePane);
-	const focusedSlotOwner = $derived(
-		activeSlotFocus?.zone === 'party'
-			? saveFileSource(loadedSave)
-			: (focusedSlotPane?.source ?? pokemonStorageSource())
-	);
+	const carriedSpriteUrl = $derived(carryState?.spriteUrl ?? null);
+	const focusedSlotOwner = $derived(focusedSlotPane?.source ?? pokemonStorageSource());
+	const focusedPaneWorkspace = $derived(saveWorkspaceForPane(focusedSlotPane));
 	const createPokemonAvailability = $derived(
 		pokemonCreationAvailability(
 			focusedSlotOwner.type,
 			focusedSlot,
-			loadedSave !== null &&
-				(activeSlotFocus?.zone === 'party' ||
-					(focusedSlotOwner.type === 'save-file' && focusedSlotOwner.id === loadedSave.file.id))
+			focusedPaneWorkspace !== null &&
+				focusedSlotOwner.type === 'save-file' &&
+				focusedSlotOwner.id === loadedSave?.file.id
 		)
 	);
 	const slotMenuCommands = $derived(
 		createSlotMenuCommands(focusedSlot, createPokemonAvailability.reason)
 	);
-	const saveSummary = $derived(loadedSave?.workspace.summary ?? null);
-	const boxIndices = $derived(Array.from({ length: activePaneBoxCount }, (_, index) => index));
-	const boxNavItems = $derived<BoxNavItem[]>(
-		boxIndices.map((index) => ({
-			index,
-			name: boxNameFor(index),
-			hue: boxHue(index),
-			active: index === activePaneBox,
-			occupied:
-				index === activePaneBox
-					? activeBoxSlots.filter((slot) => slot.kind === 'pokemon').length
-					: null
-		}))
-	);
-	const activeBoxSource = $derived<BoxSourceView>({
-		key: activePane?.source.type ?? 'pokemon-storage',
-		label: activePane?.source.label ?? 'Pokemon Storage',
-		activeBoxLabel: boxNameFor(activePaneBox),
-		activeBoxNumber: activePaneBox + 1,
-		boxCount: activePaneBoxCount,
-		occupied: activeBoxSlots.filter((slot) => slot.kind === 'pokemon').length,
-		capacity: BOX_SLOT_COUNT
-	});
+	const saveSummary = $derived(focusedPaneWorkspace?.state.workspace.summary ?? null);
 	const activeSlotPositionLabel = $derived(
 		activeSlotFocus === null
 			? 'No slot selected'
@@ -599,18 +571,7 @@
 					})()
 				: `Party · Slot ${activeSlotFocus.slot + 1}`
 	);
-	const multiPaneWorkbench = $derived(workbenchPanes.length > 1);
 	const activePaneControlCount = $derived(activePane ? paneControlCountFor(activePane) : 0);
-	const toolbarStatus = $derived.by(() => {
-		if (busy) return 'Working';
-		if (carryState) return carryStatusLabel(carryState);
-		if (sourcePickerOpen) return 'Choose collection';
-		if (importError) return 'Import failed';
-		if (loadedSave?.dirty) return 'Unsaved edits';
-		if (loadedSave?.restoredFromBackup) return 'Backup restored';
-
-		return briefToolbarStatus(statusMessage, activePane?.source.type ?? 'pokemon-storage');
-	});
 	const sourcePickerCards = $derived<SourcePickerCard[]>(
 		createSourcePickerCards({
 			saveFiles:
@@ -711,7 +672,7 @@
 		}
 
 		if (pendingSlotOperation && action === 'back') {
-			cancelPendingSlotOperation();
+			void cancelPendingSlotOperation();
 			return true;
 		}
 
@@ -735,7 +696,7 @@
 		navigation = applyNavigationAction(navigation, action, {
 			paneControlCount: activePaneControlCount,
 			partyAvailable,
-			partyCollapsed
+			carryActive: pendingSlotOperation !== null
 		});
 
 		if (action === 'confirm') {
@@ -745,8 +706,8 @@
 		if (pane && navigation.activeBox !== previousBox) {
 			workbenchPanes = setPaneActiveBox(workbenchPanes, pane.id, navigation.activeBox);
 		}
-		if (pane && isSlotFocus(navigation.focus)) {
-			workbenchPanes = setPaneFocus(workbenchPanes, pane.id, navigation.focus);
+		if (pane) {
+			workbenchPanes = setPaneFocus(workbenchPanes, pane.id, navigation.locationFocus);
 		}
 
 		if (
@@ -836,13 +797,11 @@
 			return;
 		}
 
-		if (navigation.focus.zone === 'party') {
-			const savePane = workbenchPanes.find(({ id }) => id === activeSavePaneId);
-			if (savePane) openBoxMenu(savePane);
-			return;
-		}
-
-		if (navigation.focus.zone === 'box' || navigation.focus.zone === 'paneControls') {
+		if (
+			navigation.focus.zone === 'party' ||
+			navigation.focus.zone === 'box' ||
+			navigation.focus.zone === 'paneControls'
+		) {
 			openBoxMenu(activePane);
 		}
 	}
@@ -887,13 +846,15 @@
 		}
 
 		activatePane(nextPane);
+		const boundaryFocus = focusPaneBoundarySlot(navigation.focus.slot, action);
 		navigation = {
 			...navigation,
 			activeBox: nextPane.activeBox,
 			boxCount: Math.max(1, nextPane.boxCount),
-			focus: focusPaneBoundarySlot(navigation.focus.slot, action)
+			focus: boundaryFocus,
+			locationFocus: boundaryFocus
 		};
-		workbenchPanes = setPaneFocus(workbenchPanes, nextPane.id, navigation.focus as SlotFocus);
+		workbenchPanes = setPaneFocus(workbenchPanes, nextPane.id, boundaryFocus);
 		return true;
 	}
 
@@ -1255,11 +1216,6 @@
 			return;
 		}
 
-		if (activeElement.id === 'party-toggle') {
-			navigation = { ...navigation, focus: focusPartyToggle() };
-			return;
-		}
-
 		const paneControlIndex = activeElement.dataset.paneControlIndex;
 		if (paneControlIndex !== undefined) {
 			navigation = {
@@ -1271,99 +1227,64 @@
 
 		const partySlotMatch = activeElement.id.match(/^party-slot-(\d+)$/);
 		if (partySlotMatch) {
-			navigation = {
-				...navigation,
-				focus: focusPartySlot(Number(partySlotMatch[1]))
-			};
+			navigation = setLocationFocus(navigation, focusPartySlot(Number(partySlotMatch[1])));
 			return;
 		}
 
 		const boxSlotMatch = activeElement.id.match(/^box-\d+-slot-(\d+)$/);
 		if (boxSlotMatch) {
-			navigation = {
-				...navigation,
-				focus: focusBoxSlot(Number(boxSlotMatch[1]))
-			};
+			navigation = setLocationFocus(navigation, focusBoxSlot(Number(boxSlotMatch[1])));
 		}
 	}
 
 	function focusParty(slot: number) {
-		navigation = { ...navigation, focus: focusPartySlot(slot) };
-		workbenchPanes = setPaneFocus(workbenchPanes, activePaneId, navigation.focus as SlotFocus);
+		navigation = setLocationFocus(navigation, focusPartySlot(slot));
+		workbenchPanes = setPaneFocus(workbenchPanes, activePaneId, navigation.locationFocus);
 		queueMicrotask(focusActiveControl);
 	}
 
 	function focusBox(slot: number) {
-		navigation = { ...navigation, focus: focusBoxSlot(slot) };
-		workbenchPanes = setPaneFocus(workbenchPanes, activePaneId, navigation.focus as SlotFocus);
+		navigation = setLocationFocus(navigation, focusBoxSlot(slot));
+		workbenchPanes = setPaneFocus(workbenchPanes, activePaneId, navigation.locationFocus);
 		queueMicrotask(focusActiveControl);
 	}
 
-	function togglePartyCollapsed() {
-		partyCollapsed = !partyCollapsed;
-		if (partyCollapsed && navigation.focus.zone === 'party') {
-			navigation = { ...navigation, focus: focusPartyToggle() };
-			queueMicrotask(focusActiveControl);
-		}
-	}
-
-	function firstRowFocusForBoxChange(): SlotFocus {
-		if (activeSlotFocus?.zone !== 'box') {
-			return { zone: 'box', slot: 0 };
-		}
-
-		return { zone: 'box', slot: getBoxSlotPosition(activeSlotFocus.slot).column };
-	}
-
-	function selectBox(index: number) {
-		const pane = activePane;
-		if (!pane) {
-			return;
-		}
-
+	function changePaneLocation(pane: BoxPaneState, action: 'previousBox' | 'nextBox') {
 		const previousBox = pane.activeBox;
-		const nextBox = Math.max(0, Math.min(index, Math.max(1, pane.boxCount) - 1));
-		workbenchPanes = setPaneActiveBox(workbenchPanes, pane.id, nextBox);
-		navigation = {
-			...selectActiveBox({ ...navigation, boxCount: Math.max(1, pane.boxCount) }, nextBox),
-			focus: firstRowFocusForBoxChange()
-		};
-		workbenchPanes = setPaneFocus(workbenchPanes, pane.id, navigation.focus as SlotFocus);
+		const state = applyNavigationAction(
+			{
+				...navigation,
+				activeBox: pane.activeBox,
+				boxCount: Math.max(1, pane.boxCount),
+				focus: pane.id === activePaneId ? navigation.focus : pane.focus,
+				locationFocus: pane.focus
+			},
+			action,
+			{
+				paneControlCount: paneControlCountFor(pane),
+				partyAvailable: paneHasParty(pane),
+				carryActive: pendingSlotOperation !== null
+			}
+		);
+		workbenchPanes = setPaneFocus(
+			setPaneActiveBox(workbenchPanes, pane.id, state.activeBox),
+			pane.id,
+			state.locationFocus
+		);
+		if (pane.id === activePaneId) navigation = state;
 
-		if (
-			loadedSave &&
-			pane.source.type === 'save-file' &&
-			pane.source.id === loadedSave.file.id &&
-			nextBox !== previousBox
-		) {
-			void loadWorkspaceForSave(loadedSave, nextBox);
-		}
-
-		if (pane.source.type === 'save-file' && pane.source.id !== loadedSave?.file.id) {
-			void refreshPaneWorkspace(pane.id, nextBox);
-		}
-
-		queueMicrotask(focusActiveControl);
-	}
-
-	function selectPaneBox(pane: BoxPaneState, index: number) {
-		const nextBox = Math.max(0, Math.min(index, Math.max(1, pane.boxCount) - 1));
-		workbenchPanes = setPaneActiveBox(workbenchPanes, pane.id, nextBox);
-		if (pane.id === activePaneId) {
-			navigation = {
-				...selectActiveBox({ ...navigation, boxCount: Math.max(1, pane.boxCount) }, nextBox),
-				focus: firstRowFocusForBoxChange()
-			};
-			workbenchPanes = setPaneFocus(workbenchPanes, pane.id, navigation.focus as SlotFocus);
-			if (loadedSave && pane.source.type === 'save-file' && pane.source.id === loadedSave.file.id) {
-				void loadWorkspaceForSave(loadedSave, nextBox);
+		if (state.locationFocus.zone === 'box' && state.activeBox !== previousBox) {
+			if (
+				loadedSave &&
+				pane.id === activePaneId &&
+				pane.source.type === 'save-file' &&
+				pane.source.id === loadedSave.file.id
+			) {
+				void loadWorkspaceForSave(loadedSave, state.activeBox, pane.id);
+			} else if (pane.source.type === 'save-file') {
+				void refreshPaneWorkspace(pane.id, state.activeBox);
 			}
 		}
-
-		if (pane.source.type === 'save-file' && pane.source.id !== loadedSave?.file.id) {
-			void refreshPaneWorkspace(pane.id, nextBox);
-		}
-
 		queueMicrotask(focusActiveControl);
 	}
 
@@ -1409,11 +1330,17 @@
 			const pane = workbenchPanes.find(({ id }) => id === launcher.paneId);
 			if (pane) {
 				activePaneId = pane.id;
+				workbenchPanes = setPaneFocus(
+					setPaneActiveBox(workbenchPanes, pane.id, launcher.box ?? pane.activeBox),
+					pane.id,
+					launcher.focus
+				);
 				navigation = {
 					...navigation,
 					activeBox: launcher.box ?? pane.activeBox,
 					boxCount: pane.boxCount,
-					focus: launcher.focus
+					focus: launcher.focus,
+					locationFocus: launcher.focus
 				};
 			}
 		}
@@ -1607,7 +1534,7 @@
 		pane: BoxPaneState | undefined = activePane
 	): SlotView | null {
 		if (ref.zone === 'party') {
-			return partySlots[ref.slot] ?? null;
+			return panePartySlots(pane)[ref.slot] ?? null;
 		}
 
 		if (pane?.source.type === 'pokemon-storage') {
@@ -1615,20 +1542,6 @@
 		}
 
 		return paneBoxSlots(pane, ref.box)[ref.slot] ?? null;
-	}
-
-	function paneForParty(): BoxPaneState | undefined {
-		if (!loadedSave) {
-			return undefined;
-		}
-
-		const activeSaveFileId = loadedSave.file.id;
-		return (
-			workbenchPanes.find((pane) => pane.id === activeSavePaneId) ??
-			workbenchPanes.find(
-				(pane) => pane.source.type === 'save-file' && pane.source.id === activeSaveFileId
-			)
-		);
 	}
 
 	function storageSlotForRef(ref: SaveSlotRef): SlotView | null {
@@ -1648,7 +1561,7 @@
 			return null;
 		}
 
-		const destinationPane = ref.zone === 'party' ? paneForParty() : pane;
+		const destinationPane = pane;
 
 		if (carryState && destinationPane) {
 			return destinationStateForEvaluation(
@@ -1669,16 +1582,21 @@
 			pending: pendingSlotOperation,
 			destination: ref,
 			destinationSlot: slot,
-			partyCount: loadedSave?.workspace.summary.partyCount ?? 0
+			partyCount: saveWorkspaceForPane(pane)?.state.workspace.summary.partyCount ?? 0
 		});
 	}
 
-	function isInvalidPartyAppendDestination(ref: SaveSlotRef, slot: SlotView | null): boolean {
+	function isInvalidPartyAppendDestination(
+		ref: SaveSlotRef,
+		slot: SlotView | null,
+		pane: BoxPaneState | undefined
+	): boolean {
+		const partyCount = saveWorkspaceForPane(pane)?.state.workspace.summary.partyCount;
 		return (
 			ref.zone === 'party' &&
 			slot?.kind === 'empty' &&
-			loadedSave !== null &&
-			ref.slot > loadedSave.workspace.summary.partyCount
+			partyCount !== undefined &&
+			ref.slot > partyCount
 		);
 	}
 
@@ -1691,7 +1609,7 @@
 		}
 
 		const pending = pendingSlotOperation;
-		const ownerPane = destination.zone === 'party' ? paneForParty() : destinationPane;
+		const ownerPane = destinationPane;
 		const destinationSlot = slotForRef(destination, ownerPane);
 
 		if (isSamePendingDestination(pending.source, destination, ownerPane)) {
@@ -1708,9 +1626,20 @@
 			return;
 		}
 
-		if (isInvalidPartyAppendDestination(destination, destinationSlot)) {
+		if (isInvalidPartyAppendDestination(destination, destinationSlot, ownerPane)) {
 			showToast('error', 'That Party Slot cannot be used yet.');
 			statusMessage = 'That Party Slot cannot be used yet.';
+			return;
+		}
+
+		const activeSaveId = loadedSave?.file.id;
+		const unsupportedSaveOwner =
+			(carryState?.sourceOwner.type === 'save-file' &&
+				carryState.sourceOwner.id !== activeSaveId) ||
+			(ownerPane?.source.type === 'save-file' && ownerPane.source.id !== activeSaveId);
+		if (unsupportedSaveOwner) {
+			showToast('error', 'Moving Pokemon between Save Files needs engine transfer support.');
+			statusMessage = 'Cross-save movement is not available yet.';
 			return;
 		}
 
@@ -1719,18 +1648,26 @@
 			return;
 		}
 
-		if (
-			carryState?.sourceOwner.type === 'save-file' &&
-			(ownerPane?.source.id !== loadedSave?.file.id ||
-				carryState.sourceOwner.id !== loadedSave?.file.id)
-		) {
-			showToast('error', 'Moving Pokemon between Save Files needs engine transfer support.');
-			statusMessage = 'Cross-save movement is not available yet.';
+		if (carryState?.sourceOwner.type === 'pokemon-storage') {
+			await applyStorageToSaveOperation(pending, destination, ownerPane);
 			return;
 		}
 
-		if (carryState?.sourceOwner.type === 'pokemon-storage') {
-			await applyStorageToSaveOperation(pending, destination, ownerPane);
+		if (carryState?.sourceOwner.type === 'save-file' && ownerPane?.source.type === 'save-file') {
+			if (carryState.sourceOwner.id !== ownerPane.source.id) {
+				showToast('error', 'Moving Pokemon between Save Files needs engine transfer support.');
+				statusMessage = 'Cross-save movement is not available yet.';
+				return;
+			}
+			const workspace = saveWorkspaceForPane(ownerPane)?.state;
+			if (!workspace) {
+				showToast('error', 'The source Save File is no longer available.');
+				return;
+			}
+			await applySlotOperation(
+				{ kind: pending.kind, source: pending.source, destination },
+				{ state: workspace, paneId: ownerPane.id }
+			);
 			return;
 		}
 
@@ -1742,17 +1679,9 @@
 		destination: SaveSlotRef,
 		destinationPane: BoxPaneState | undefined
 	) {
-		if (!loadedSave || !engine) {
+		const destinationWorkspace = saveWorkspaceForPane(destinationPane)?.state ?? null;
+		if (!destinationWorkspace || !engine) {
 			showToast('error', 'Load a Save File before changing Slots.');
-			return;
-		}
-
-		if (
-			destinationPane?.source.type !== 'save-file' ||
-			destinationPane.source.id !== loadedSave.file.id
-		) {
-			showToast('error', 'Moving Pokemon between Save Files needs engine transfer support.');
-			statusMessage = 'Cross-save movement is not available yet.';
 			return;
 		}
 
@@ -1779,12 +1708,13 @@
 		}
 
 		const activeEngine = engine;
-		const operationBox = destination.zone === 'box' ? destination.box : activePaneBox;
+		const operationBox =
+			destination.zone === 'box' ? destination.box : (destinationPane?.activeBox ?? 0);
 		busy = true;
 		importError = null;
 
 		try {
-			let workingState = loadedSave;
+			let workingState = destinationWorkspace;
 			if (shouldCreateAutomaticBackup(workingState)) {
 				statusMessage = 'Creating Backup...';
 				await storage.createBackup({
@@ -1793,7 +1723,7 @@
 					reason: 'pokemon-movement'
 				});
 				workingState = markAutomaticBackupCreated(workingState);
-				loadedSave = workingState;
+				if (loadedSave?.file.id === workingState.file.id) loadedSave = workingState;
 			}
 
 			statusMessage = 'Moving Pokemon from Storage...';
@@ -1828,7 +1758,7 @@
 				);
 			}
 
-			loadedSave = nextState;
+			if (loadedSave?.file.id === nextState.file.id) loadedSave = nextState;
 			const refreshedSavePanes = refreshSaveFilePaneWorkspaces(
 				workbenchPanes,
 				savePaneWorkspaces,
@@ -1837,10 +1767,13 @@
 			);
 			workbenchPanes = refreshedSavePanes.panes;
 			savePaneWorkspaces = refreshedSavePanes.workspaces;
-			setCachedActiveWorkspace(nextState, operationBox);
+			if (loadedSave?.file.id === nextState.file.id) {
+				setCachedActiveWorkspace(nextState, operationBox);
+			}
 			invalidateSavesCache();
 			pendingSlotOperation = null;
 			carryState = null;
+			if (destinationPane) activePaneId = destinationPane.id;
 			navigation = {
 				...navigation,
 				activeBox: destination.zone === 'box' ? destination.box : operationBox,
@@ -1848,8 +1781,15 @@
 				focus:
 					destination.zone === 'party'
 						? focusPartySlot(destination.slot)
+						: focusBoxSlot(destination.slot),
+				locationFocus:
+					destination.zone === 'party'
+						? focusPartySlot(destination.slot)
 						: focusBoxSlot(destination.slot)
 			};
+			if (destinationPane) {
+				workbenchPanes = setPaneFocus(workbenchPanes, destinationPane.id, navigation.locationFocus);
+			}
 			statusMessage =
 				pending.kind === 'move'
 					? `Moved ${sourceSlot.label} to ${locationForSlotRef(destination)}.`
@@ -1910,17 +1850,21 @@
 		if (carryState?.sourceOwner.type === 'pokemon-storage') {
 			pendingSlotOperation = null;
 			carryState = null;
+			activePaneId = destinationPane.id;
 			if (destination.zone === 'box') {
 				workbenchPanes = setPaneActiveBox(workbenchPanes, destinationPane.id, destination.box);
 			}
+			const destinationFocus =
+				destination.zone === 'party'
+					? focusPartySlot(destination.slot)
+					: focusBoxSlot(destination.slot);
 			navigation = {
 				...navigation,
 				activeBox: destination.zone === 'box' ? destination.box : activePaneBox,
-				focus:
-					destination.zone === 'party'
-						? focusPartySlot(destination.slot)
-						: focusBoxSlot(destination.slot)
+				focus: destinationFocus,
+				locationFocus: destinationFocus
 			};
+			workbenchPanes = setPaneFocus(workbenchPanes, destinationPane.id, destinationFocus);
 			statusMessage =
 				pending.kind === 'move'
 					? `Moved ${sourceSlot.label} to Pokemon Storage.`
@@ -1931,7 +1875,16 @@
 		}
 
 		if (pending.kind === 'move') {
-			await applySlotOperation({ kind: 'clear', source: pending.source });
+			const sourcePane = workbenchPanes.find((pane) => pane.id === carryState?.source.paneId);
+			const sourceWorkspace = saveWorkspaceForPane(sourcePane)?.state;
+			if (!sourcePane || !sourceWorkspace) {
+				showToast('error', 'The source Save File is no longer available.');
+				return;
+			}
+			await applySlotOperation(
+				{ kind: 'clear', source: pending.source },
+				{ state: sourceWorkspace, paneId: sourcePane.id }
+			);
 			statusMessage = `Moved ${sourceSlot.label} to Pokemon Storage.`;
 			return;
 		}
@@ -2037,13 +1990,24 @@
 					workbenchPanes = setPaneActiveBox(workbenchPanes, focusPane.id, focusRef.box);
 				}
 			}
+			const resultFocus =
+				focusRef.zone === 'party' ? focusPartySlot(focusRef.slot) : focusBoxSlot(focusRef.slot);
 			navigation = {
 				...navigation,
 				activeBox: focusRef.zone === 'box' ? focusRef.box : operationBox,
 				boxCount: Math.max(1, result.state.workspace.summary.boxCount),
-				focus:
-					focusRef.zone === 'party' ? focusPartySlot(focusRef.slot) : focusBoxSlot(focusRef.slot)
+				focus: resultFocus,
+				locationFocus: resultFocus
 			};
+			const resultPane = context?.paneId
+				? workbenchPanes.find((pane) => pane.id === context.paneId)
+				: workbenchPanes.find(
+						(pane) => pane.source.type === 'save-file' && pane.source.id === nextState.file.id
+					);
+			if (resultPane) {
+				activePaneId = resultPane.id;
+				workbenchPanes = setPaneFocus(workbenchPanes, resultPane.id, resultFocus);
+			}
 			statusMessage = result.message;
 			queueMicrotask(focusActiveControl);
 			return true;
@@ -2066,12 +2030,9 @@
 		}
 
 		const source = slotRefForFocus();
-		const sourcePaneId =
-			source.zone === 'party' ? activeSavePaneId : (activePane?.id ?? activePaneId);
-		const sourceOwner =
-			source.zone === 'party'
-				? saveFileSource(loadedSave)
-				: (activePane?.source ?? saveFileSource(loadedSave));
+		const sourcePaneId = activePane?.id ?? activePaneId;
+		const sourceOwner = activePane?.source ?? saveFileSource(loadedSave);
+		const sourceWorkspace = saveWorkspaceForPane(activePane)?.state ?? null;
 		pendingSlotOperation = {
 			kind,
 			source,
@@ -2083,40 +2044,77 @@
 			source: workbenchSlotRefForSaveRef(sourcePaneId, source),
 			sourceOwner,
 			pokemonLabel: slot.label,
+			spriteUrl: spriteUrlFor(slot),
 			sourceLabel: locationForSlotRef(source),
 			origin: {
 				entryMode: kind === 'copy' ? 'copied-in' : 'moved-in',
-				originSaveFileName: loadedSave?.file.originalFileName ?? null,
-				originGame: loadedSave?.workspace.summary.gameVersion ?? null,
-				originalTrainer: slot.originalTrainer ?? loadedSave?.workspace.summary.trainerName ?? null,
+				originSaveFileName: sourceWorkspace?.file.originalFileName ?? null,
+				originGame: sourceWorkspace?.workspace.summary.gameVersion ?? null,
+				originalTrainer:
+					slot.originalTrainer ?? sourceWorkspace?.workspace.summary.trainerName ?? null,
 				trainerId: null,
 				enteredAt: new Date().toISOString()
 			}
 		};
 		pokemonEditorApplyRequest += 1;
 		pokemonEditor = null;
+		pokemonEditorPaneId = null;
 		pokemonEditorFeedback = null;
 		const sourceFocus = summonedSlotLauncher?.focus ?? activeSlotFocus ?? focusBoxSlot(0);
 		summonedWorkflow.closeAll();
 		navigation = {
 			...navigation,
-			focus: sourceFocus
+			focus: sourceFocus,
+			locationFocus: sourceFocus
 		};
 		queueMicrotask(focusActiveControl);
 	}
 
-	function cancelPendingSlotOperation() {
+	async function cancelPendingSlotOperation() {
 		if (!pendingSlotOperation) {
 			return;
 		}
 
-		const source = pendingSlotOperation.source;
+		const source = carryState?.source;
 		pendingSlotOperation = null;
 		carryState = null;
-		navigation = {
-			...navigation,
-			focus: source.zone === 'party' ? focusPartySlot(source.slot) : focusBoxSlot(source.slot)
-		};
+		const sourcePane = source
+			? workbenchPanes.find((pane) => pane.id === source.paneId)
+			: undefined;
+		const fallbackPane = sourcePane ?? activePane ?? workbenchPanes[0];
+		if (fallbackPane) {
+			activePaneId = fallbackPane.id;
+			const requestedFocus = source
+				? source.zone === 'party'
+					? focusPartySlot(source.slot)
+					: focusBoxSlot(source.slot)
+				: fallbackPane.focus;
+			const sourceFocus =
+				requestedFocus.zone === 'party' && !paneHasParty(fallbackPane)
+					? projectSlotCoordinate(requestedFocus, 'box')
+					: requestedFocus;
+			const sourceBox =
+				source?.zone === 'box' ? (source.box ?? fallbackPane.activeBox) : fallbackPane.activeBox;
+			workbenchPanes = setPaneFocus(
+				setPaneActiveBox(workbenchPanes, fallbackPane.id, sourceBox),
+				fallbackPane.id,
+				sourceFocus
+			);
+			navigation = {
+				...navigation,
+				activeBox: sourceBox,
+				boxCount: Math.max(1, fallbackPane.boxCount),
+				focus: sourceFocus,
+				locationFocus: sourceFocus
+			};
+			if (fallbackPane.source.type === 'save-file' && source?.zone === 'box') {
+				if (loadedSave?.file.id === fallbackPane.source.id) {
+					await loadWorkspaceForSave(loadedSave, sourceBox, fallbackPane.id);
+				} else {
+					await refreshPaneWorkspace(fallbackPane.id, sourceBox);
+				}
+			}
+		}
 		statusMessage = 'Slot action cancelled.';
 		queueMicrotask(focusActiveControl);
 	}
@@ -2147,10 +2145,7 @@
 
 		const source = slotRefForLauncher(launcher);
 		const sourcePane = workbenchPanes.find((pane) => pane.id === launcher.paneId);
-		const sourceOwner =
-			source.zone === 'party'
-				? saveFileSource(loadedSave)
-				: (sourcePane?.source ?? pokemonStorageSource());
+		const sourceOwner = sourcePane?.source ?? pokemonStorageSource();
 		clearSlotConfirmation = {
 			source,
 			sourceOwner,
@@ -2207,14 +2202,17 @@
 		if (pending.source.zone === 'box') {
 			workbenchPanes = setPaneActiveBox(workbenchPanes, pending.paneId, pending.source.box);
 		}
+		const clearedFocus =
+			pending.source.zone === 'party'
+				? focusPartySlot(pending.source.slot)
+				: focusBoxSlot(pending.source.slot);
 		navigation = {
 			...navigation,
 			activeBox: pending.source.zone === 'box' ? pending.source.box : navigation.activeBox,
-			focus:
-				pending.source.zone === 'party'
-					? focusPartySlot(pending.source.slot)
-					: focusBoxSlot(pending.source.slot)
+			focus: clearedFocus,
+			locationFocus: clearedFocus
 		};
+		workbenchPanes = setPaneFocus(workbenchPanes, pending.paneId, clearedFocus);
 		queueMicrotask(focusActiveControl);
 	}
 
@@ -2242,8 +2240,7 @@
 
 	async function clearSaveFileSlot(pending: ClearSlotConfirmation): Promise<boolean> {
 		const pane = workbenchPanes.find((candidate) => candidate.id === pending.paneId);
-		const workspace =
-			pending.source.zone === 'party' ? loadedSave : (saveWorkspaceForPane(pane)?.state ?? null);
+		const workspace = saveWorkspaceForPane(pane)?.state ?? null;
 		if (!workspace || workspace.file.id !== pending.sourceOwner.id) {
 			showToast('error', 'The source Save File is no longer available.');
 			return false;
@@ -2272,10 +2269,6 @@
 	}
 
 	function activateFocusedControl(focus = navigation.focus) {
-		if (focus.zone === 'partyToggle') {
-			document.getElementById('party-toggle')?.click();
-		}
-
 		if (focus.zone === 'paneControls') {
 			document.getElementById(focusIdForNavigation(focus))?.click();
 		}
@@ -2307,9 +2300,15 @@
 
 	function installActiveSavePane(save: WorkspaceState, activeBox = 0) {
 		const clampedBox = Math.min(activeBox, Math.max(0, save.workspace.summary.boxCount - 1));
+		const existingPane = workbenchPanes.find((pane) => pane.id === activeSavePaneId);
+		const preservedFocus =
+			existingPane?.source.type === 'save-file' && existingPane.source.id === save.file.id
+				? existingPane.focus
+				: focusBoxSlot(0);
 		const fixedPane = createBoxPane(activeSavePaneId, saveFileSource(save), {
 			boxCount: save.workspace.summary.boxCount,
-			activeBox: clampedBox
+			activeBox: clampedBox,
+			focus: preservedFocus
 		});
 		const hadActiveSavePane = workbenchPanes.some((pane) => pane.id === activeSavePaneId);
 		const rightPanes = hadActiveSavePane
@@ -2326,9 +2325,9 @@
 			[activeSavePaneId]: { state: save, loadedBox: clampedBox }
 		};
 		activePaneId = activeSavePaneId;
-		navigation = selectActiveBox(
-			createInitialNavigationState(save.workspace.summary.boxCount),
-			clampedBox
+		navigation = setLocationFocus(
+			selectActiveBox(createInitialNavigationState(save.workspace.summary.boxCount), clampedBox),
+			preservedFocus
 		);
 	}
 
@@ -2381,7 +2380,8 @@
 			...navigation,
 			boxCount: Math.max(1, type === 'pokemon-storage' ? pokemonStorageBoxCount : boxCount),
 			activeBox: openedPane?.activeBox ?? 0,
-			focus: openedPane?.focus ?? focusBoxSlot(0)
+			focus: openedPane?.focus ?? focusBoxSlot(0),
+			locationFocus: openedPane?.focus ?? focusBoxSlot(0)
 		};
 		sourcePickerTargetPaneId = null;
 		boxMenuTarget = null;
@@ -2450,7 +2450,8 @@
 			...navigation,
 			boxCount: Math.max(1, switchedPane?.boxCount ?? targetBoxCount),
 			activeBox: switchedPane?.activeBox ?? 0,
-			focus: switchedPane?.focus ?? focusBoxSlot(0)
+			focus: switchedPane?.focus ?? focusBoxSlot(0),
+			locationFocus: switchedPane?.focus ?? focusBoxSlot(0)
 		};
 		sourcePickerTargetPaneId = null;
 		boxMenuTarget = null;
@@ -2482,7 +2483,7 @@
 	}
 
 	function closePane(paneId: string) {
-		if (paneId === activeSavePaneId) {
+		if (pendingSlotOperation || paneId === activeSavePaneId) {
 			return;
 		}
 
@@ -2494,8 +2495,7 @@
 			const nextPane = workbenchPanes[0];
 			const nextFocus: SlotFocus = nextPane
 				? focusSurvivingPaneAfterClose(closingPane, nextPane, {
-						partyAvailable,
-						partyCollapsed
+						partyAvailable: paneHasParty(nextPane)
 					})
 				: { zone: 'box', slot: 0 };
 			activePaneId = nextPane?.id ?? 'pane-pokemon-storage';
@@ -2503,7 +2503,8 @@
 				...navigation,
 				activeBox: nextPane?.activeBox ?? 0,
 				boxCount: Math.max(1, nextPane?.boxCount ?? placeholderBoxCount),
-				focus: nextFocus
+				focus: nextFocus,
+				locationFocus: nextFocus
 			};
 			if (nextPane) workbenchPanes = setPaneFocus(workbenchPanes, nextPane.id, nextFocus);
 			queueMicrotask(focusActiveControl);
@@ -2519,7 +2520,8 @@
 			{
 				...navigation,
 				boxCount: Math.max(1, pane.boxCount),
-				focus: pane.focus
+				focus: pane.focus,
+				locationFocus: pane.focus
 			},
 			Math.min(pane.activeBox, Math.max(1, pane.boxCount) - 1)
 		);
@@ -2560,6 +2562,17 @@
 		}
 
 		return normalizeBoxSlots(createBoxSlotViews(paneWorkspace.state.workspace.boxSlots));
+	}
+
+	function paneHasParty(pane: BoxPaneState | undefined): boolean {
+		return pane?.source.type === 'save-file' && saveWorkspaceForPane(pane) !== null;
+	}
+
+	function panePartySlots(pane: BoxPaneState | undefined): SlotView[] {
+		const paneWorkspace = saveWorkspaceForPane(pane);
+		return paneWorkspace
+			? createPartySlotViews(paneWorkspace.state.workspace.partySlots)
+			: placeholderPartySlots;
 	}
 
 	function saveWorkspaceForPane(pane: BoxPaneState | undefined): SavePaneWorkspace | null {
@@ -2716,11 +2729,12 @@
 		let context: PokemonActionContext | null = null;
 
 		if (source.zone === 'party') {
-			if (loadedSave) {
+			const paneWorkspace = saveWorkspaceForPane(activePane);
+			if (paneWorkspace) {
 				context = {
 					target: {
 						owner: 'save-file',
-						workspace: loadedSave,
+						workspace: paneWorkspace.state,
 						source,
 						activeBox: activePaneBox
 					},
@@ -2979,7 +2993,8 @@
 		pokemonCreationRequest += 1;
 		pokemonCreation = {
 			destination: slotRefForFocus(),
-			location: activeSlotPositionLabel
+			location: activeSlotPositionLabel,
+			paneId: focusedSlotPane?.id ?? activePaneId
 		};
 		pokemonCreationFeedback = null;
 		openRelatedWorkflow('pokemon-creation');
@@ -3009,7 +3024,8 @@
 		}
 
 		const activeEngine = engine;
-		let workingState = loadedSave;
+		const destinationPane = workbenchPanes.find((pane) => pane.id === view.paneId);
+		let workingState = saveWorkspaceForPane(destinationPane)?.state ?? null;
 		if (!workingState) {
 			pokemonCreationFeedback = 'Load a Save File before creating Pokemon.';
 			return;
@@ -3018,7 +3034,7 @@
 			pokemonCreationFeedback = 'The PKHeX Engine is not ready.';
 			return;
 		}
-		if (slotForRef(view.destination)?.kind !== 'empty') {
+		if (slotForRef(view.destination, destinationPane)?.kind !== 'empty') {
 			pokemonCreationFeedback = 'Create Pokemon needs an empty destination Slot.';
 			return;
 		}
@@ -3036,7 +3052,7 @@
 					reason: 'pokemon-creation'
 				});
 				workingState = markAutomaticBackupCreated(workingState);
-				loadedSave = workingState;
+				if (loadedSave?.file.id === workingState.file.id) loadedSave = workingState;
 			}
 
 			statusMessage = 'Creating Pokemon...';
@@ -3044,7 +3060,7 @@
 				workingState.bytes,
 				workingState.file.originalFileName ?? undefined,
 				operation.operation,
-				activePaneBox
+				destinationPane?.activeBox ?? activePaneBox
 			);
 			if (!result.ok) {
 				throw result.error;
@@ -3061,16 +3077,19 @@
 				await persistWorkspace(nextState);
 			}
 
-			loadedSave = nextState;
+			if (loadedSave?.file.id === nextState.file.id) loadedSave = nextState;
+			const destinationBox = destinationPane?.activeBox ?? activePaneBox;
 			const refreshedSavePanes = refreshSaveFilePaneWorkspaces(
 				workbenchPanes,
 				savePaneWorkspaces,
 				nextState,
-				activePaneBox
+				destinationBox
 			);
 			workbenchPanes = refreshedSavePanes.panes;
 			savePaneWorkspaces = refreshedSavePanes.workspaces;
-			setCachedActiveWorkspace(nextState, activePaneBox);
+			if (loadedSave?.file.id === nextState.file.id) {
+				setCachedActiveWorkspace(nextState, destinationBox);
+			}
 			invalidateSavesCache();
 
 			const createdSlot = slotViewForRefFromWorkspace(
@@ -3084,14 +3103,19 @@
 				pokemonCreation = null;
 				pokemonCreationFeedback = null;
 				summonedWorkflow.closeAll();
+				const destinationFocus =
+					view.destination.zone === 'party'
+						? focusPartySlot(view.destination.slot)
+						: focusBoxSlot(view.destination.slot);
+				activePaneId = view.paneId;
 				navigation = {
 					...navigation,
-					focus:
-						view.destination.zone === 'party'
-							? focusPartySlot(view.destination.slot)
-							: focusBoxSlot(view.destination.slot)
+					activeBox: view.destination.zone === 'box' ? view.destination.box : destinationBox,
+					focus: destinationFocus,
+					locationFocus: destinationFocus
 				};
 				statusMessage = message;
+				workbenchPanes = setPaneFocus(workbenchPanes, view.paneId, destinationFocus);
 				showToast('success', message);
 				queueMicrotask(focusActiveControl);
 			}
@@ -3115,10 +3139,11 @@
 			return;
 		}
 
+		const paneWorkspace = saveWorkspaceForPane(focusedSlotPane);
 		const result = createPokemonEditorState(
 			{
 				owner: 'save-file',
-				saveFileId: loadedSave?.file.id ?? null,
+				saveFileId: paneWorkspace?.state.file.id ?? null,
 				slotRef: slotRefForFocus(),
 				location: activeSlotPositionLabel
 			},
@@ -3132,6 +3157,7 @@
 
 		pokemonEditorApplyRequest += 1;
 		pokemonEditor = result.state;
+		pokemonEditorPaneId = focusedSlotPane?.id ?? null;
 		pokemonEditorFeedback = null;
 		openRelatedWorkflow('pokemon-editor');
 		pokemonSpeciesFormProjection = null;
@@ -3146,6 +3172,7 @@
 	function closePokemonEditor() {
 		pokemonEditorApplyRequest += 1;
 		pokemonEditor = null;
+		pokemonEditorPaneId = null;
 		pokemonEditorFeedback = null;
 		pokemonSpeciesFormRequest += 1;
 		pokemonSpeciesFormProjection = null;
@@ -3168,7 +3195,7 @@
 		statusMessage = 'Checking Pokemon legality...';
 
 		const result = await requestLegalityReport({
-			workspace: loadedSave,
+			workspace: saveWorkspaceForPane(focusedSlotPane)?.state ?? null,
 			engine,
 			slot,
 			source,
@@ -3231,7 +3258,8 @@
 	async function previewPokemonSpeciesFormEdit(target: { speciesId: number; form: number }) {
 		const editor = pokemonEditor;
 		const activeEngine = engine;
-		const workingState = loadedSave;
+		const editorPane = workbenchPanes.find((pane) => pane.id === pokemonEditorPaneId);
+		const workingState = saveWorkspaceForPane(editorPane)?.state ?? null;
 		if (editor?.source.owner === 'pokemon-storage') {
 			pokemonSpeciesFormProjection = null;
 			pokemonSpeciesFormError =
@@ -3314,10 +3342,12 @@
 	async function verifyPokemonEditorSource(
 		state: PokemonEditorState
 	): Promise<PokemonEditorSourceVerification> {
+		const editorPane = workbenchPanes.find((pane) => pane.id === pokemonEditorPaneId);
 		return {
 			ok:
 				state.source.owner === 'save-file' &&
-				isSamePokemonEditorSourceIdentity(state, slotForRef(state.source.slotRef))
+				state.source.saveFileId === editorPane?.source.id &&
+				isSamePokemonEditorSourceIdentity(state, slotForRef(state.source.slotRef, editorPane))
 		};
 	}
 
@@ -3327,16 +3357,26 @@
 	}
 
 	async function ensurePokemonEditorBackup() {
-		if (!loadedSave) return saveFileUnavailable();
-		if (!shouldCreateAutomaticBackup(loadedSave)) return { ok: true } as const;
+		const editorPane = workbenchPanes.find((pane) => pane.id === pokemonEditorPaneId);
+		const editorWorkspace = saveWorkspaceForPane(editorPane)?.state ?? null;
+		if (!editorPane || !editorWorkspace) return saveFileUnavailable();
+		if (!shouldCreateAutomaticBackup(editorWorkspace)) return { ok: true } as const;
 
 		statusMessage = 'Creating Backup...';
 		await storage.createBackup({
-			saveFileId: loadedSave.file.id,
-			bytes: loadedSave.bytes,
+			saveFileId: editorWorkspace.file.id,
+			bytes: editorWorkspace.bytes,
 			reason: 'pokemon-editing'
 		});
-		loadedSave = markAutomaticBackupCreated(loadedSave);
+		const backedUpWorkspace = markAutomaticBackupCreated(editorWorkspace);
+		if (loadedSave?.file.id === backedUpWorkspace.file.id) loadedSave = backedUpWorkspace;
+		savePaneWorkspaces = {
+			...savePaneWorkspaces,
+			[editorPane.id]: {
+				state: backedUpWorkspace,
+				loadedBox: editorPane.activeBox
+			}
+		};
 		return { ok: true } as const;
 	}
 
@@ -3345,16 +3385,17 @@
 	): Promise<PokemonEditorMutationResult> {
 		const operation = createPokemonEditOperation(state);
 		if (!operation.ok) return operation;
-		if (!loadedSave) return saveFileUnavailable();
+		const editorPane = workbenchPanes.find((pane) => pane.id === pokemonEditorPaneId);
+		const workingState = saveWorkspaceForPane(editorPane)?.state ?? null;
+		if (!editorPane || !workingState) return saveFileUnavailable();
 		if (!engine) return engineUnavailable();
 
 		statusMessage = 'Applying Pokemon edits...';
-		const workingState = loadedSave;
 		const mutation = await engine.applyPokemonEditOperation(
 			workingState.bytes,
 			workingState.file.originalFileName ?? undefined,
 			operation.operation,
-			activePaneBox
+			editorPane.activeBox
 		);
 		if (!mutation.ok) {
 			return {
@@ -3401,16 +3442,20 @@
 	}
 
 	function installPokemonEditorWorkspace(nextState: WorkspaceState) {
-		loadedSave = nextState;
+		const editorPane = workbenchPanes.find((pane) => pane.id === pokemonEditorPaneId);
+		const editorBox = editorPane?.activeBox ?? activePaneBox;
+		if (loadedSave?.file.id === nextState.file.id) loadedSave = nextState;
 		const refreshed = refreshSaveFilePaneWorkspaces(
 			workbenchPanes,
 			savePaneWorkspaces,
 			nextState,
-			activePaneBox
+			editorBox
 		);
 		workbenchPanes = refreshed.panes;
 		savePaneWorkspaces = refreshed.workspaces;
-		setCachedActiveWorkspace(nextState, activePaneBox);
+		if (loadedSave?.file.id === nextState.file.id) {
+			setCachedActiveWorkspace(nextState, editorBox);
+		}
 		invalidateSavesCache();
 	}
 
@@ -3594,12 +3639,13 @@
 		} catch (error) {
 			importError = getErrorMessage(error);
 			statusMessage = 'Could not restore the most recent Save File.';
+			showToast('error', importError);
 		} finally {
 			busy = false;
 		}
 	}
 
-	async function loadWorkspaceForSave(save: WorkspaceState, box: number) {
+	async function loadWorkspaceForSave(save: WorkspaceState, box: number, paneId = activePaneId) {
 		const request = (workspaceLoadRequest += 1);
 		busy = true;
 		importError = null;
@@ -3612,19 +3658,27 @@
 			);
 			if (
 				request === workspaceLoadRequest &&
-				activePaneBox === box &&
+				activePaneId === paneId &&
+				workbenchPanes.some(
+					(pane) =>
+						pane.id === paneId &&
+						pane.source.type === 'save-file' &&
+						pane.source.id === save.file.id &&
+						pane.activeBox === box
+				) &&
 				loadedSave?.file.id === save.file.id
 			) {
 				loadedSave = { ...save, workspace };
 				savePaneWorkspaces = {
 					...savePaneWorkspaces,
-					[activePaneId]: { state: loadedSave, loadedBox: box }
+					[paneId]: { state: loadedSave, loadedBox: box }
 				};
 				setCachedActiveWorkspace(loadedSave, box);
 			}
 		} catch (error) {
 			if (request === workspaceLoadRequest) {
 				importError = getErrorMessage(error);
+				showToast('error', importError);
 			}
 		} finally {
 			if (request === workspaceLoadRequest) {
@@ -3640,16 +3694,27 @@
 		}
 
 		if (loadedSave && pane.source.id === loadedSave.file.id && pane.id === activePaneId) {
-			savePaneWorkspaces = {
-				...savePaneWorkspaces,
-				[paneId]: { state: loadedSave, loadedBox: box }
-			};
+			await loadWorkspaceForSave(loadedSave, box, paneId);
 			return;
 		}
+
+		const request = (paneWorkspaceRequests[paneId] ?? 0) + 1;
+		paneWorkspaceRequests[paneId] = request;
+		const sourceId = pane.source.id;
+		paneWorkspaceLoadingRequests = { ...paneWorkspaceLoadingRequests, [paneId]: request };
 
 		try {
 			const state = await loadWorkspaceStateForSaveFile(pane.source.id, box);
 			if (!state) {
+				return;
+			}
+			const currentPane = workbenchPanes.find((candidate) => candidate.id === paneId);
+			if (
+				paneWorkspaceRequests[paneId] !== request ||
+				currentPane?.source.type !== 'save-file' ||
+				currentPane.source.id !== sourceId ||
+				currentPane.activeBox !== box
+			) {
 				return;
 			}
 
@@ -3671,8 +3736,22 @@
 					: candidate
 			);
 		} catch (error) {
-			showToast('error', getErrorMessage(error));
-			statusMessage = 'Could not load that Save File pane.';
+			const currentPane = workbenchPanes.find((candidate) => candidate.id === paneId);
+			if (
+				paneWorkspaceRequests[paneId] === request &&
+				currentPane?.source.type === 'save-file' &&
+				currentPane.source.id === sourceId &&
+				currentPane.activeBox === box
+			) {
+				showToast('error', getErrorMessage(error));
+				statusMessage = 'Could not load that Save File pane.';
+			}
+		} finally {
+			if (paneWorkspaceLoadingRequests[paneId] === request) {
+				const remaining = { ...paneWorkspaceLoadingRequests };
+				delete remaining[paneId];
+				paneWorkspaceLoadingRequests = remaining;
+			}
 		}
 	}
 
@@ -3765,6 +3844,7 @@
 			if (request === workspaceLoadRequest) {
 				importError = getErrorMessage(error);
 				statusMessage = 'Import failed. Current active Save File was not changed.';
+				showToast('error', importError);
 			}
 		} finally {
 			if (request === workspaceLoadRequest) {
@@ -3842,13 +3922,6 @@
 			typeof error.message === 'string'
 		);
 	}
-
-	function carryStatusLabel(carry: CarryState) {
-		const action = carry.mode === 'move' ? 'Move' : 'Copy';
-		const label =
-			carry.pokemonLabel.length > 18 ? `${carry.pokemonLabel.slice(0, 15)}...` : carry.pokemonLabel;
-		return `${action} ${label}`;
-	}
 </script>
 
 <svelte:head>
@@ -3857,11 +3930,12 @@
 
 <svelte:window onkeydown={handleAppKeydown} />
 
-<div class="status-announcer" role="status" aria-live="polite">{toolbarStatus}</div>
+<div class="status-announcer" role="status" aria-live="polite">{statusMessage}</div>
 <input
 	id="quick-save-import"
 	class="source-picker-import"
 	type="file"
+	accept=".sav,.dat,.bin,application/octet-stream"
 	aria-label="Quick save import"
 	disabled={busy}
 	onchange={(event) => {
@@ -3873,135 +3947,78 @@
 />
 
 <section
-	class="boxes-route"
+	class="boxes-route pksx-density-container"
 	aria-label="Boxes workspace"
 	data-destination-root="boxes"
 	data-initial-state={initialStateReady ? 'ready' : 'loading'}
 	data-active-save-file-id={loadedSave?.file.id ?? ''}
 	inert={destinationInputSuspended}
 >
-	{#if importError}
-		<StatusStrip variant="error" label="Import error" message={importError} />
-	{/if}
-
-	<section class="storage-workspace" aria-label="Party and box storage">
-		<BoxSidebar
-			boxes={boxNavItems}
-			boxSlotCount={BOX_SLOT_COUNT}
-			sourceLabel={activePane?.source.label ?? 'Pokemon Storage'}
-			sourceKind={activePane?.source.type ?? 'pokemon-storage'}
-			onSelectBox={selectBox}
-		/>
-
-		<div class="workspace-column">
-			<div class="workbench-toolbar" aria-label="Collection panes">
-				<div class="single-source-label">
-					<strong
-						>{multiPaneWorkbench
-							? 'Collections'
-							: (activePane?.source.label ?? 'Save File')}</strong
-					>
-				</div>
-				<div class={['toolbar-status-strip', carryState && 'carry-status']}>
-					{toolbarStatus}
-				</div>
-			</div>
-
-			{#if partyAvailable}
-				<div
-					id="party-grid"
-					class={['party-zone', partyCollapsed && 'collapsed']}
-					role="grid"
-					tabindex="0"
-					aria-label="Party"
-					aria-activedescendant={navigation.focus.zone === 'party' ? activeFocusId : undefined}
-					aria-rowcount={PARTY_SLOT_COUNT}
-					aria-colcount="1"
+	<section class="storage-workspace pksx-density" aria-label="Party and box storage">
+		<div
+			class="box-pane-strip"
+			class:single-pane={workbenchPanes.length === 1}
+			class:many-panes={workbenchPanes.length >= 3}
+		>
+			{#each workbenchPanes as pane (pane.id)}
+				{@const paneActive = pane.id === activePaneId}
+				{@const paneBusy =
+					(busy && paneActive) || paneWorkspaceLoadingRequests[pane.id] !== undefined}
+				{@const paneFixed = pane.id === activeSavePaneId}
+				{@const paneControlCount = paneControlCountFor(pane)}
+				{@const paneBox = pane.activeBox}
+				{@const paneParty = pane.focus.zone === 'party' && paneHasParty(pane)}
+				{@const paneSlots = paneParty ? panePartySlots(pane) : paneBoxSlots(pane, paneBox)}
+				{@const paneColumns = paneParty ? PARTY_COLUMNS : BOX_COLUMNS}
+				{@const paneRows = paneParty ? PARTY_ROWS : BOX_ROWS}
+				<section
+					class={['box-pane', paneActive && 'active-pane']}
+					aria-label={`${pane.source.label}, ${paneParty ? 'Party' : boxNameFor(paneBox)}`}
+					aria-busy={paneBusy ? 'true' : undefined}
 				>
-					<div class="zone-header party-header">
-						<button
-							id="party-toggle"
-							class="party-toggle"
-							class:controller-focused={navigation.focus.zone === 'partyToggle'}
-							type="button"
-							aria-expanded={!partyCollapsed}
-							aria-controls="party-list"
-							onfocus={() => (navigation = { ...navigation, focus: focusPartyToggle() })}
-							onclick={togglePartyCollapsed}
-						>
-							<span class="party-chevron" aria-hidden="true">▾</span>
-							<strong>Party</strong>
-							<span class="party-meta">6 / 6 · on hand · {partyCollapsed ? 'show' : 'hide'}</span>
-						</button>
-					</div>
-					<div id="party-list" class="party-list">
-						{#each partySlots as slot (slot.slot)}
-							{@const partyRef = { zone: 'party' as const, slot: slot.slot }}
-							<div
-								class={['slot-cell', isFocused('party', slot.slot) && 'selected']}
-								role="row"
-								aria-hidden={partyCollapsed ? 'true' : undefined}
+					<div class="pane-header">
+						<div class="pane-source-row">
+							<button
+								id={collectionControlId(pane.id)}
+								data-pane-control-index="0"
+								type="button"
+								class="source-chip"
+								aria-label={`Open Box Menu for ${pane.source.label}`}
+								aria-disabled={pendingSlotOperation ? 'true' : undefined}
+								tabindex={pendingSlotOperation ? -1 : undefined}
+								onpointerdown={(event) => {
+									if (pendingSlotOperation) event.preventDefault();
+								}}
+								onfocus={() => {
+									if (pendingSlotOperation) {
+										queueMicrotask(focusActiveControl);
+										return;
+									}
+									activatePane(pane);
+									navigation = {
+										...navigation,
+										focus: focusPaneControl(0, paneControlCount),
+										locationFocus: pane.focus
+									};
+								}}
+								onclick={() => {
+									if (pendingSlotOperation) return;
+									activePaneId = pane.id;
+									openBoxMenu(pane);
+								}}
 							>
-								<StorageSlot
-									id={`party-slot-${slot.slot}`}
-									{slot}
-									zone="party"
-									focused={isFocused('party', slot.slot)}
-									dualType={slotHasDualType(slot, -1)}
-									style={slotStyle(slot, -1)}
-									rowIndex={slot.slot + 1}
-									colIndex={1}
-									spriteUrl={spriteUrlFor(slot)}
-									collapsed={partyCollapsed}
-									destinationState={destinationStateFor(partyRef, slot)}
-									onFocusSlot={() => focusParty(slot.slot)}
-									onChooseSlot={pendingSlotOperation
-										? () => {
-												void completePendingSlotOperation(partyRef);
-											}
-										: undefined}
-								/>
-							</div>
-						{/each}
-					</div>
-				</div>
-			{/if}
-
-			<div
-				class="box-pane-strip"
-				class:single-pane={workbenchPanes.length === 1}
-				class:many-panes={workbenchPanes.length >= 3}
-			>
-				{#each workbenchPanes as pane (pane.id)}
-					{@const paneActive = pane.id === activePaneId}
-					{@const paneFixed = pane.id === activeSavePaneId}
-					{@const paneControlCount = paneControlCountFor(pane)}
-					{@const paneBox = pane.activeBox}
-					{@const paneSlots = paneBoxSlots(pane, paneBox)}
-					<div
-						id={paneActive ? 'box-grid' : `box-grid-${pane.id}`}
-						class={['box-zone', paneActive && 'active-pane']}
-						role="grid"
-						tabindex={paneActive ? 0 : -1}
-						aria-label={`${pane.source.label} ${boxNameFor(paneBox)}`}
-						aria-activedescendant={paneActive && navigation.focus.zone === 'box'
-							? activeFocusId
-							: undefined}
-						aria-rowcount="5"
-						aria-colcount={BOX_COLUMNS}
-						onfocus={() => activatePane(pane)}
-						onfocusin={() => {
-							if (!pendingSlotOperation && pane.id !== activePaneId) activatePane(pane);
-						}}
-					>
-						{#if paneControlCount > 0 || workbenchPanes.length > 1}
-							<div class="pane-source-row">
+								<span>{pane.source.type === 'pokemon-storage' ? 'APP' : 'SAVE'}</span>
+								<strong>{pane.source.label}</strong>
+								<em>▾</em>
+							</button>
+							{#if paneBusy}<span class="pane-busy">Working</span>{/if}
+							{#if !paneFixed && workbenchPanes.length > 1}
 								<button
-									id={collectionControlId(pane.id)}
-									data-pane-control-index="0"
+									id={`close-pane-${pane.id}`}
+									data-pane-control-index="1"
 									type="button"
-									class="source-chip"
-									aria-label={`Open Box Menu for ${pane.source.label}`}
+									class="pane-close"
+									aria-label={`Close ${pane.source.label} pane`}
 									aria-disabled={pendingSlotOperation ? 'true' : undefined}
 									tabindex={pendingSlotOperation ? -1 : undefined}
 									onpointerdown={(event) => {
@@ -4015,121 +4032,111 @@
 										activatePane(pane);
 										navigation = {
 											...navigation,
-											focus: focusPaneControl(0, paneControlCount)
+											focus: focusPaneControl(1, paneControlCount),
+											locationFocus: pane.focus
 										};
 									}}
 									onclick={() => {
 										if (pendingSlotOperation) return;
-										activePaneId = pane.id;
-										openBoxMenu(pane);
+										closePane(pane.id);
 									}}
 								>
-									<span>{pane.source.type === 'pokemon-storage' ? 'APP' : 'SAVE'}</span>
-									<strong>{pane.source.label}</strong>
-									<em>▾</em>
+									×
 								</button>
-								{#if stateTagForPane(pane)}
-									<span class="pane-state-tag">{stateTagForPane(pane)}</span>
-								{/if}
-								{#if !paneFixed && workbenchPanes.length > 1}
-									<button
-										id={`close-pane-${pane.id}`}
-										data-pane-control-index="1"
-										type="button"
-										class="pane-close"
-										aria-label={`Close ${pane.source.label} pane`}
-										onfocus={() => {
-											activatePane(pane);
-											navigation = {
-												...navigation,
-												focus: focusPaneControl(1, paneControlCount)
-											};
-										}}
-										onclick={() => closePane(pane.id)}
-									>
-										×
-									</button>
-								{/if}
-							</div>
-						{/if}
-						<div class="zone-header box-header">
+							{/if}
+						</div>
+						<div class="location-header">
 							<BoxSourceControls
 								source={{
-									...activeBoxSource,
 									key: pane.source.type,
 									label: pane.source.label,
-									activeBoxLabel: boxNameFor(paneBox),
+									activeBoxLabel: paneParty ? 'Party' : boxNameFor(paneBox),
 									activeBoxNumber: paneBox + 1,
 									boxCount:
-										pane.source.type === 'pokemon-storage' ? pokemonStorageBoxCount : boxCount,
-									occupied: paneSlots.filter((slot) => slot.kind === 'pokemon').length
+										pane.source.type === 'pokemon-storage' ? pokemonStorageBoxCount : pane.boxCount,
+									occupied: paneSlots.filter((slot) => slot.kind === 'pokemon').length,
+									capacity: paneParty ? PARTY_SLOT_COUNT : BOX_SLOT_COUNT,
+									location: paneParty ? 'party' : 'box'
 								}}
-								onPreviousBox={() => {
-									selectPaneBox(pane, paneBox - 1);
-								}}
-								onNextBox={() => {
-									selectPaneBox(pane, paneBox + 1);
-								}}
+								onPreviousBox={() => changePaneLocation(pane, 'previousBox')}
+								onNextBox={() => changePaneLocation(pane, 'nextBox')}
 							/>
 						</div>
-						<div class="filter-row" aria-hidden="true">
-							<span>{pane.source.type === 'pokemon-storage' ? 'storage' : 'workspace'}</span>
-							<span>sort · slot</span>
-							<span>{pane.source.type === 'pokemon-storage' ? 'auto-saved' : 'local'}</span>
-						</div>
-						<div class="box-grid">
-							{#each paneSlots as slot (slot.slot)}
-								{@const position = getBoxSlotPosition(slot.slot)}
-								{@const boxRef = { zone: 'box' as const, box: paneBox, slot: slot.slot }}
-								<div class={['slot-cell', paneActive && isFocused('box', slot.slot) && 'selected']}>
-									<StorageSlot
-										id={paneActive
-											? `box-${paneBox}-slot-${slot.slot}`
-											: `${pane.id}-box-${paneBox}-slot-${slot.slot}`}
-										{slot}
-										zone="box"
-										focused={paneActive && isFocused('box', slot.slot)}
-										dualType={slotHasDualType(slot, paneBox)}
-										style={slotStyle(slot, paneBox)}
-										rowIndex={position.row + 1}
-										colIndex={position.column + 1}
-										spriteUrl={spriteUrlFor(slot)}
-										destinationState={pendingSlotOperation
-											? destinationStateFor(boxRef, slot, pane)
-											: null}
-										onFocusSlot={() => {
-											activatePane(pane);
-											focusBox(slot.slot);
-										}}
-										onChooseSlot={pendingSlotOperation
-											? () => {
-													activatePane(pane);
-													void completePendingSlotOperation(boxRef, pane);
-												}
-											: undefined}
-									/>
-								</div>
-							{/each}
-						</div>
-						<div class="box-footer">
-							{#if controllerConnected || pendingSlotOperation}
-								<span><kbd>A</kbd> {pendingSlotOperation ? 'Place here' : 'Pick'}</span>
-								{#if pendingSlotOperation}<span><kbd>Y</kbd> Move / Copy</span>{/if}
-								<span><kbd>B</kbd> {pendingSlotOperation ? 'Cancel' : 'Back'}</span>
-							{/if}
-							<strong>
-								{#if paneActive && activeSlotFocus?.zone === 'box'}
-									{@const pos = getBoxSlotPosition(activeSlotFocus.slot)}
-									SLOT {activeSlotFocus.slot + 1} · ROW {String.fromCharCode(65 + pos.row)} / COL
-									{pos.column + 1}
-								{:else}
-									{pane.source.label}
-								{/if}
-							</strong>
-						</div>
 					</div>
-				{/each}
-			</div>
+					<div
+						id={paneActive ? 'box-grid' : `box-grid-${pane.id}`}
+						class={['location-grid', paneParty && 'party-grid']}
+						role="grid"
+						tabindex={paneActive ? 0 : -1}
+						aria-label={`${pane.source.label} ${paneParty ? 'Party' : boxNameFor(paneBox)}`}
+						aria-activedescendant={paneActive && isSlotFocus(navigation.focus)
+							? activeFocusId
+							: undefined}
+						aria-rowcount={paneRows}
+						aria-colcount={paneColumns}
+						onfocus={() => activatePane(pane)}
+						onfocusin={() => {
+							if (!pendingSlotOperation && pane.id !== activePaneId) activatePane(pane);
+						}}
+					>
+						{#each Array.from(Array(paneRows).keys()) as row (row)}
+							<div class="slot-row" role="row">
+								{#each paneSlots.slice(row * paneColumns, (row + 1) * paneColumns) as slot (slot.slot)}
+									{@const position = paneParty
+										? getPartySlotPosition(slot.slot)
+										: getBoxSlotPosition(slot.slot)}
+									{@const slotRef = paneParty
+										? { zone: 'party' as const, slot: slot.slot }
+										: { zone: 'box' as const, box: paneBox, slot: slot.slot }}
+									<div
+										class={[
+											'slot-cell',
+											paneActive && isFocused(slotRef.zone, slot.slot) && 'selected'
+										]}
+									>
+										<StorageSlot
+											id={paneActive
+												? paneParty
+													? `party-slot-${slot.slot}`
+													: `box-${paneBox}-slot-${slot.slot}`
+												: `${pane.id}-${paneParty ? 'party' : `box-${paneBox}`}-slot-${slot.slot}`}
+											{slot}
+											zone={slotRef.zone}
+											focused={paneActive && isFocused(slotRef.zone, slot.slot)}
+											dualType={slotHasDualType(slot, paneParty ? -1 : paneBox)}
+											style={slotStyle(slot, paneParty ? -1 : paneBox)}
+											rowIndex={position.row + 1}
+											colIndex={position.column + 1}
+											spriteUrl={spriteUrlFor(slot)}
+											carried={paneActive && isFocused(slotRef.zone, slot.slot) && carryState
+												? {
+														label: carryState.pokemonLabel,
+														mode: carryState.mode,
+														spriteUrl: carriedSpriteUrl
+													}
+												: null}
+											destinationState={pendingSlotOperation
+												? destinationStateFor(slotRef, slot, pane)
+												: null}
+											onFocusSlot={() => {
+												activatePane(pane);
+												if (paneParty) focusParty(slot.slot);
+												else focusBox(slot.slot);
+											}}
+											onChooseSlot={pendingSlotOperation
+												? () => {
+														activatePane(pane);
+														void completePendingSlotOperation(slotRef, pane);
+													}
+												: undefined}
+										/>
+									</div>
+								{/each}
+							</div>
+						{/each}
+					</div>
+				</section>
+			{/each}
 		</div>
 
 		<DetailRail
@@ -4139,7 +4146,7 @@
 			slotHueStyle={slotStyle(focusedSlot, activePaneBox)}
 			spriteUrl={spriteUrlFor(focusedSlot)}
 			{saveSummary}
-			activeBoxName={boxNameFor(activePaneBox)}
+			activeBoxName={boxNameFor(summonedSlotBox ?? focusedSlotPane?.activeBox ?? activePaneBox)}
 			positionLabel={carryState
 				? `${activeSlotPositionLabel} · ${carryState.mode === 'move' ? 'Drop' : 'Copy'} target`
 				: activeSlotPositionLabel}
@@ -4303,6 +4310,11 @@
 		font-weight: 500;
 	}
 
+	:global(.app-shell:has(.boxes-route)) {
+		height: 100dvh;
+		overflow: hidden;
+	}
+
 	@media (min-width: 1025px) {
 		:global(html),
 		:global(body) {
@@ -4335,175 +4347,106 @@
 
 	.boxes-route {
 		flex: 1 1 auto;
+		min-width: 0;
 		min-height: 0;
 		display: flex;
-		flex-direction: column;
-		gap: 12px;
+		container: boxes-route pksx-density / size;
+		overflow: hidden;
 	}
 
 	.storage-workspace {
 		flex: 1 1 auto;
+		width: auto;
+		height: auto;
+		min-width: 0;
 		min-height: 0;
 		display: grid;
-		grid-template-columns: 158px minmax(0, 1fr) 304px;
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: minmax(334px, 1fr) minmax(150px, 260px);
 		align-items: stretch;
-		gap: 12px;
-		padding: 0;
-		overflow: visible;
-		background: transparent;
-		box-shadow: none;
-	}
-
-	.workspace-column {
-		position: relative;
-		z-index: 10;
-		min-width: 0;
-		min-height: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-		overflow-x: hidden;
-		overflow-y: auto;
-	}
-
-	.workbench-toolbar {
-		display: flex;
-		align-items: center;
-		justify-content: flex-start;
-		gap: 10px;
-		padding: 8px 14px 8px 8px;
-		border-radius: var(--pksx-radius-lg);
-		background: transparent;
-		box-shadow: none;
-	}
-
-	.single-source-label {
-		min-width: 0;
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		color: var(--ink-soft);
-		font-size: 0.76rem;
-	}
-
-	.single-source-label strong {
-		color: var(--ink);
-	}
-
-	.toolbar-status-strip {
-		flex: 0 1 auto;
-		min-width: 0;
-		max-width: 220px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		padding: 4px 7px;
-		border-radius: var(--pksx-radius-sm);
-		background: color-mix(in srgb, var(--paper-hi), var(--gold) 18%);
-		box-shadow: inset 0 0 0 1px var(--rule);
-		color: var(--ink-soft);
-		font:
-			750 0.58rem var(--pksx-font-mono),
-			monospace;
-	}
-
-	.toolbar-status-strip.carry-status {
-		background: color-mix(in srgb, var(--ok), var(--paper-hi) 76%);
-		color: var(--ink);
-	}
-
-	.party-zone,
-	.box-zone {
-		min-width: 0;
-		min-height: 0;
-		padding: 12px;
-		border: 0;
-		border-radius: var(--pksx-radius-xl);
-		background: var(--paper-hi);
-		box-shadow: var(--shadow-deep);
-		color: var(--ink);
-		outline: none;
-	}
-
-	.box-zone {
-		flex: 1 1 auto;
-		container-type: inline-size;
-		display: flex;
-		flex-direction: column;
-		overflow-x: hidden;
-		overflow-y: auto;
-	}
-
-	.party-zone {
-		flex: 0 0 auto;
-		overflow: visible;
+		justify-content: center;
+		gap: var(--pksx-space-1);
+		overflow: auto;
 	}
 
 	.box-pane-strip {
-		flex: 1 1 auto;
+		min-width: 0;
 		min-height: 0;
 		display: flex;
 		align-items: stretch;
-		gap: 12px;
-		overflow-x: auto;
-		overflow-y: hidden;
-		padding-bottom: 4px;
+		gap: var(--pksx-space-1);
+		overflow: auto hidden;
 		scroll-snap-type: x proximity;
 	}
 
 	.box-pane-strip.single-pane {
-		display: block;
-		overflow-x: visible;
-		overflow-y: hidden;
-		padding-bottom: 0;
+		justify-content: center;
+		overflow: hidden;
 	}
 
-	.box-pane-strip.many-panes {
-		padding-right: 2px;
-	}
-
-	.box-pane-strip .box-zone {
-		flex: 0 0 min(520px, 100%);
-		border-radius: var(--pksx-radius-lg);
-		box-shadow: var(--shadow);
+	.box-pane {
+		container: box-pane / size;
+		flex: 0 0 min(640px, 100%);
+		width: 100%;
+		height: 100%;
+		min-width: 0;
+		min-height: 0;
+		display: grid;
+		grid-template-rows: var(--pksx-control-height) minmax(0, 1fr);
+		gap: var(--pksx-space-1);
+		padding: var(--pksx-space-1);
+		border-radius: var(--pksx-radius-large);
+		background: var(--paper-hi);
+		box-shadow: var(--shadow-deep);
+		color: var(--ink);
 		scroll-snap-align: start;
 	}
 
-	.box-pane-strip.single-pane .box-zone {
-		flex: 1 1 auto;
+	.single-pane .box-pane {
+		flex-basis: min(800px, 100%);
+		max-width: 800px;
 	}
 
-	.box-pane-strip .box-zone:not(.active-pane) {
+	.box-pane:not(.active-pane) {
 		background: color-mix(in srgb, var(--paper-hi), var(--paper-deep) 42%);
 		box-shadow: var(--shadow-sm);
 	}
 
-	.pane-source-row {
+	.pane-header {
+		min-width: 0;
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		margin-bottom: 9px;
+		gap: var(--pksx-space-1);
+	}
+
+	.pane-source-row {
+		flex: 1 1 33%;
+		max-width: 33%;
+		min-width: 0;
+		display: flex;
+		align-items: center;
+		gap: var(--pksx-space-1);
 	}
 
 	.source-chip {
+		width: 100%;
 		min-width: 0;
+		height: var(--pksx-control-height);
 		display: inline-flex;
 		align-items: center;
-		gap: 7px;
-		padding: 6px 8px;
-		border-radius: var(--pksx-radius-md);
+		gap: var(--pksx-space-1);
+		padding: 0 var(--pksx-space-2);
+		border-radius: var(--pksx-radius-medium);
 		background: var(--paper);
-		box-shadow: inset 0 0 0 1px var(--rule);
+		box-shadow: inset 0 0 0 var(--pksx-border-width) var(--rule);
 		color: var(--ink);
 		text-align: left;
 	}
 
 	.source-chip span,
-	.pane-state-tag {
+	.pane-busy {
 		flex: 0 0 auto;
-		font:
-			750 0.55rem var(--pksx-font-mono),
-			monospace;
+		font: 750 var(--pksx-type-caption) / 1.05 var(--pksx-font-mono);
 	}
 
 	.source-chip span {
@@ -4512,10 +4455,11 @@
 
 	.source-chip strong {
 		min-width: 0;
+		max-width: 18ch;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		font-size: 0.78rem;
+		font-size: var(--pksx-type-label);
 	}
 
 	.source-chip em {
@@ -4523,181 +4467,108 @@
 		font-style: normal;
 	}
 
-	.pane-state-tag {
-		padding: 4px 6px;
-		border-radius: 4px;
-		background: color-mix(in srgb, var(--gold), transparent 68%);
-		color: var(--ink);
+	.pane-busy {
+		color: var(--rust);
 	}
 
 	.pane-close {
 		flex: 0 0 auto;
-		width: 28px;
-		height: 28px;
-		margin-left: auto;
-		border-radius: var(--pksx-radius-sm);
+		width: var(--pksx-small-control-height);
+		height: var(--pksx-small-control-height);
+		padding: 0;
+		border-radius: var(--pksx-radius-small);
 		background: var(--paper);
-		box-shadow: inset 0 0 0 1px var(--rule);
+		box-shadow: inset 0 0 0 var(--pksx-border-width) var(--rule);
 		color: var(--ink-soft);
-		font-size: 1rem;
+		font-size: var(--pksx-type-title);
 		font-weight: 800;
 	}
 
-	.box-zone:focus-visible,
-	.party-zone:focus-visible {
-		outline: 3px solid color-mix(in srgb, var(--rust), transparent 65%);
-		outline-offset: 3px;
-	}
-
-	.zone-header {
-		min-height: auto;
+	.location-header {
+		min-width: 0;
+		flex: 1 1 67%;
 		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 12px;
-		padding: 0;
-		margin-bottom: 10px;
 	}
 
-	.zone-header span {
-		margin: 0;
-		color: var(--ink-soft);
-		font-size: 0.68rem;
-		font-weight: 600;
-		letter-spacing: 0.02em;
-	}
-
-	.party-header {
-		margin-bottom: 9px;
-	}
-
-	.party-zone.collapsed .party-header {
-		margin-bottom: 0;
-	}
-
-	.party-toggle {
-		flex: 1 1 auto;
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		min-height: 36px;
-		padding: 4px 8px;
-		border-radius: var(--pksx-radius-sm);
-		background: transparent;
-		box-shadow: none;
-		color: var(--ink);
-		text-align: left;
-	}
-
-	.party-toggle .party-chevron {
-		display: inline-block;
-		color: var(--ink-soft);
-		font-size: 0.8rem;
-		transition: transform 160ms ease;
-	}
-
-	.party-zone.collapsed .party-chevron {
-		transform: rotate(-90deg);
-	}
-
-	.party-toggle .party-meta {
-		margin-left: auto;
-		color: var(--ink-soft);
-		font-size: 0.68rem;
-		font-weight: 600;
-		letter-spacing: 0.02em;
-	}
-
-	.party-list {
-		display: grid;
-		grid-template-columns: repeat(6, minmax(52px, 80px));
-		grid-auto-rows: auto;
-		justify-content: center;
-		gap: 6px;
-	}
-
-	.party-zone.collapsed .party-list {
-		display: none;
-	}
-
-	.party-toggle:hover {
-		background: var(--rust-wash);
-		color: var(--rust);
-	}
-
-	.party-toggle.controller-focused,
-	.party-toggle:focus-visible {
-		outline: 3px solid color-mix(in srgb, var(--rust), transparent 55%);
-		outline-offset: 1px;
-	}
-
-	.filter-row {
-		display: flex;
-		justify-content: flex-end;
-		gap: 5px;
-		margin-bottom: 10px;
-	}
-
-	.filter-row span {
-		padding: 3px 9px;
-		border: 1px solid var(--rule);
-		border-radius: 6px;
-		background: var(--paper-deep);
-		color: var(--ink-soft);
-		font:
-			600 0.62rem var(--pksx-font-mono),
-			monospace;
-	}
-
-	.box-grid {
-		--box-slot-size: clamp(52px, calc((100cqw - 30px) / 6), 80px);
-		flex: 0 0 auto;
+	.location-grid {
+		--slot-size: max(
+			var(--pksx-slot-minimum),
+			min(
+				calc((100cqw - var(--pksx-border-width) * 5) / 6),
+				calc(
+					(
+							100cqh - var(--pksx-control-height) - var(--pksx-space-unit) -
+								var(--pksx-border-width) * 4
+						) /
+						5
+				)
+			)
+		);
+		min-width: 0;
 		min-height: 0;
 		display: grid;
-		grid-template-columns: repeat(6, var(--box-slot-size));
-		grid-template-rows: repeat(5, var(--box-slot-size));
-		grid-auto-rows: var(--box-slot-size);
+		grid-template-columns: repeat(6, var(--slot-size));
+		grid-template-rows: repeat(5, var(--slot-size));
+		align-content: center;
 		justify-content: center;
-		align-content: start;
-		gap: 6px;
-		overflow: visible;
-		padding: 4px;
+		gap: var(--pksx-border-width);
+		padding: 0;
+		overflow: auto;
+		outline: none;
 	}
 
-	.box-pane-strip:not(.single-pane) .box-grid {
-		--box-slot-size: clamp(58px, calc((100cqw - 30px) / 6), 80px);
+	.location-grid.party-grid {
+		--slot-size: max(
+			var(--pksx-slot-minimum),
+			min(
+				112px,
+				calc((100cqw - var(--pksx-border-width) * 2) / 3),
+				calc(
+					(
+							100cqh - var(--pksx-control-height) - var(--pksx-space-unit) -
+								var(--pksx-border-width)
+						) /
+						2
+				)
+			)
+		);
+		grid-template-columns: repeat(3, var(--slot-size));
+		grid-template-rows: repeat(2, var(--slot-size));
+	}
+
+	.slot-row {
+		display: contents;
 	}
 
 	.slot-cell {
 		position: relative;
-		width: 100%;
-		aspect-ratio: 1;
+		width: var(--slot-size);
+		height: var(--slot-size);
 		min-width: 0;
 		min-height: 0;
 	}
 
 	.slot-cell.selected {
-		z-index: 120;
+		z-index: 2;
 	}
 
-	.box-footer {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		margin-top: 10px;
-		padding-top: 10px;
-		border-top: 1px solid var(--rule);
-		color: var(--ink-soft);
-		font-size: 0.72rem;
-		font-weight: 650;
+	.storage-workspace :global(.detail-rail) {
+		width: 100%;
+		max-width: 260px;
+		height: 100%;
+		justify-self: center;
+		overflow: auto;
 	}
 
-	.box-footer strong {
-		margin-left: auto;
-		color: var(--ink-mute);
-		font:
-			650 0.65rem var(--pksx-font-mono),
-			monospace;
+	@container boxes-route (orientation: landscape) {
+		.storage-workspace {
+			grid-template-columns: minmax(360px, 800px) minmax(150px, 260px);
+			grid-template-rows: minmax(0, 1fr);
+		}
+
+		.storage-workspace :global(.detail-rail) {
+			max-width: 260px;
+		}
 	}
 
 	.source-picker-backdrop {
@@ -4806,90 +4677,5 @@
 		font-style: normal;
 		font-size: 0.76rem;
 		line-height: 1.35;
-	}
-
-	@media (max-width: 1120px) {
-		.storage-workspace {
-			grid-template-columns: minmax(0, 1fr) 280px;
-		}
-	}
-
-	@media (max-width: 1024px) {
-		.storage-workspace,
-		.box-zone,
-		.box-grid {
-			overflow: visible;
-			min-height: 0;
-		}
-
-		.workspace-column {
-			overflow-x: hidden;
-			overflow-y: auto;
-			min-height: 0;
-		}
-
-		.party-zone {
-			overflow: visible;
-		}
-
-		.box-header {
-			justify-content: center;
-		}
-
-		.workspace-column {
-			order: 1;
-			position: static;
-			max-height: none;
-		}
-
-		.workbench-toolbar {
-			flex-wrap: wrap;
-		}
-
-		.storage-workspace {
-			display: flex;
-			flex-direction: column;
-			min-height: 0;
-		}
-
-		.party-zone,
-		.box-zone {
-			border-radius: var(--pksx-radius-lg);
-			padding: 10px;
-		}
-
-		.box-pane-strip .box-zone {
-			flex: 0 0 min(92vw, 420px);
-			scroll-snap-align: start;
-		}
-
-		.box-pane-strip.single-pane .box-zone {
-			flex: 1 1 auto;
-		}
-
-		.party-list {
-			grid-template-columns: repeat(6, minmax(44px, 80px));
-			gap: 6px;
-		}
-
-		.box-grid {
-			--box-slot-size: clamp(42px, calc((100cqw - 30px) / 6), 70px);
-			align-content: start;
-		}
-
-		.box-grid .slot-cell {
-			aspect-ratio: 1;
-		}
-	}
-
-	@media (max-width: 520px) {
-		.filter-row,
-		.box-footer span:nth-child(2) {
-			display: none;
-		}
-
-		.box-grid {
-			gap: 6px;
-		}
 	}
 </style>

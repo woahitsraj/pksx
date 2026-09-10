@@ -11,19 +11,33 @@
 </script>
 
 <div class="box-source-controls" aria-label="Collection controls">
-	<button type="button" class="box-arrow" aria-label="Previous box" onclick={onPreviousBox}
-		>‹</button
+	<button
+		type="button"
+		class="box-arrow"
+		aria-label="Previous Location"
+		onpointerdown={(event) => event.preventDefault()}
+		onclick={onPreviousBox}>‹</button
 	>
 
 	<div class="box-title">
 		<h2>{source.activeBoxLabel}</h2>
 		<span>
-			<em>BOX {String(source.activeBoxNumber).padStart(2, '0')}/{source.boxCount}</em>
+			<em
+				>{source.location === 'party'
+					? 'PARTY'
+					: `BOX ${String(source.activeBoxNumber).padStart(2, '0')}/${source.boxCount}`}</em
+			>
 			<b>{source.occupied} / {source.capacity} occupied</b>
 		</span>
 	</div>
 
-	<button type="button" class="box-arrow" aria-label="Next box" onclick={onNextBox}>›</button>
+	<button
+		type="button"
+		class="box-arrow"
+		aria-label="Next Location"
+		onpointerdown={(event) => event.preventDefault()}
+		onclick={onNextBox}>›</button
+	>
 </div>
 
 <style>
@@ -33,53 +47,54 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 12px;
+		gap: var(--pksx-space-2);
 	}
 
 	.box-title {
 		min-width: 0;
 		display: grid;
-		gap: 2px;
+		gap: var(--pksx-border-width);
 		justify-items: center;
 		text-align: center;
 	}
 
 	.box-title h2 {
 		margin: 0;
-		font-size: 1.45rem;
-		line-height: 1;
+		font-size: var(--pksx-type-title);
+		line-height: 1.05;
 	}
 
 	.box-title span {
 		display: flex;
 		flex-wrap: wrap;
 		justify-content: center;
-		gap: 8px;
+		gap: var(--pksx-space-1);
 		color: var(--ink-mute);
-		font:
-			650 0.62rem var(--pksx-font-mono),
-			monospace;
+		font: 650 var(--pksx-type-caption) / 1.05 var(--pksx-font-mono);
 		letter-spacing: 0.04em;
 	}
 
 	.box-title em {
 		font-style: normal;
+		white-space: nowrap;
 	}
 
 	.box-title b {
 		font-weight: 700;
+		white-space: nowrap;
 	}
 
 	.box-arrow {
 		flex: 0 0 auto;
-		width: 38px;
-		min-height: 38px;
+		width: var(--pksx-small-control-height);
+		height: var(--pksx-small-control-height);
+		min-height: var(--pksx-small-control-height);
 		padding: 0;
-		border-radius: var(--pksx-radius-md);
+		border-radius: var(--pksx-radius-medium);
 		background: var(--paper-hi);
 		box-shadow: var(--shadow-sm);
 		color: var(--ink);
-		font-size: 1.2rem;
+		font-size: var(--pksx-type-title);
 		font-weight: 700;
 	}
 
