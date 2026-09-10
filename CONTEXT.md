@@ -392,7 +392,7 @@ _Avoid_: setting, option, config
 - **Controller Focus** clamps at a **Focus Zone** edge unless that edge defines an explicit transition to another **Focus Zone**.
 - Each **Box Pane** is one **Focus Zone** containing its **Box Source** control and the visible **Slots** in its current **Location**.
 - Switching between **Locations** in a **Box Pane** preserves the focused **Slot** coordinate when possible and clamps it to the destination grid.
-- Settings and the **Save File** destination each have one **Focus Zone** containing vertical stops in a scrolling container; Left and Right move within a row, while Up and Down leave it.
+- Settings, Trainer, and Bag each have one **Focus Zone** containing vertical stops in a scrolling container; Left and Right move within a row, while Up and Down leave it.
 - Each destination remembers its **Controller Focus** target for the current session; this memory does not survive reload.
 - A **Menu** opens from the current **Controller Focus** and returns to it when dismissed.
 - At most one **Menu** is open at a time; a **Menu** cannot open while another **Menu**, a **Pokemon Editor**, or the **Backup Browser** is open, or during a **Carry**.
@@ -400,7 +400,7 @@ _Avoid_: setting, option, config
 - The **Slot Menu** acts on the **Slot** under **Controller Focus**.
 - The **Box Menu** acts on the active **Box Source**: **Export**, create a **Backup**, switch it, open another, or close it.
 - The **Box Menu** opens from the control that names the active **Box Source**, which is a **Controller Focus** target.
-- The **Save File Menu** opens the focused **Save File** in the Save File destination or deletes it from **Saves**.
+- The **Save File Menu** opens the focused **Save File** in Trainer or Bag, or deletes it from **Saves**.
 - **Export** from the **Box Menu** writes the **Workspace** bytes.
 - The **Main Menu** lists every destination, including the **Backup Browser**, in a fixed order and never hides or dims one.
 - Choosing an entry in the **Main Menu** closes it; returning from that destination does not reopen it.
