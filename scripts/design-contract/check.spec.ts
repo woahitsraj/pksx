@@ -8,6 +8,13 @@ function names(path: string, source: string) {
 	return checkDesignContract(path, source).map(({ contract, name }) => `${contract} ${name}`);
 }
 
+const sharedEditableFloor = `.pksx-density :where(
+	input:not([type='button']):not([type='checkbox']):not([type='file']):not([type='hidden']):not([type='radio']):not([type='reset']):not([type='submit']),
+	select,
+	textarea,
+	[contenteditable]:not([contenteditable='false' i])
+) { font-size: max(16px, var(--pksx-type-editable)) !important; }`;
+
 describe('responsive design contract', () => {
 	it.each([
 		'@media (width >= 40rem) { .x { display: grid } }',
@@ -24,13 +31,68 @@ describe('responsive design contract', () => {
 			@media (min-height: 560px) { :root { --pksx-height-band: tall; } }
 			:root[data-pksx-height-band-lock='short'] { --pksx-height-band: short; }
 			:root[data-pksx-height-band-lock='tall'] { --pksx-height-band: tall; }
+			${sharedEditableFloor}
 			@container card (orientation: landscape) { .x { display: grid; } }
 			@media (prefers-reduced-motion: reduce) { .x { transition: none; } }
 		`;
 		expect(names('src/routes/layout.css', source)).toEqual([]);
 	});
 
+	it('[DENSITY-1] requires the complete shared editable-floor authority', () => {
+		const heightBand = `:root { --pksx-height-band: short; }
+			@media (min-height: 560px) { :root { --pksx-height-band: tall; } }
+			:root[data-pksx-height-band-lock='short'] { --pksx-height-band: short; }
+			:root[data-pksx-height-band-lock='tall'] { --pksx-height-band: tall; }`;
+		expect(names('src/routes/layout.css', heightBand)).toContain('DENSITY-1 editable-floor');
+		expect(
+			names(
+				'src/routes/layout.css',
+				`${heightBand} .pksx-density :where(input, select, textarea) { font-size: max(16px, var(--pksx-type-editable)) !important; }`
+			)
+		).toContain('DENSITY-1 editable-floor');
+	});
+
 	it('[RESP-1] requires the structurally exact Height Band authority', () => {
+		const missingShortBase = checkDesignContract(
+			'src/routes/layout.css',
+			`@media (min-height: 560px) { :root { --pksx-height-band: tall; } }
+			:root[data-pksx-height-band-lock='short'] { --pksx-height-band: short; }
+			:root[data-pksx-height-band-lock='tall'] { --pksx-height-band: tall; }`
+		);
+		expect(missingShortBase.map(({ message }) => message)).toContain(
+			'Exactly one constrained-first Short base assignment is required.'
+		);
+		const duplicateShortBase = checkDesignContract(
+			'src/routes/layout.css',
+			`:root { --pksx-height-band: short; }
+			:root { --pksx-height-band: short; }
+			@media (min-height: 560px) { :root { --pksx-height-band: tall; } }
+			:root[data-pksx-height-band-lock='short'] { --pksx-height-band: short; }
+			:root[data-pksx-height-band-lock='tall'] { --pksx-height-band: tall; }`
+		);
+		expect(duplicateShortBase.map(({ message }) => message)).toContain(
+			'Exactly one constrained-first Short base assignment is required.'
+		);
+		const missingLock = checkDesignContract(
+			'src/routes/layout.css',
+			`:root { --pksx-height-band: short; }
+			@media (min-height: 560px) { :root { --pksx-height-band: tall; } }
+			:root[data-pksx-height-band-lock='short'] { --pksx-height-band: short; }`
+		);
+		expect(missingLock.map(({ message }) => message)).toContain(
+			'Exactly one Tall focus-lock assignment is required.'
+		);
+		const duplicateLock = checkDesignContract(
+			'src/routes/layout.css',
+			`:root { --pksx-height-band: short; }
+			@media (min-height: 560px) { :root { --pksx-height-band: tall; } }
+			:root[data-pksx-height-band-lock='short'] { --pksx-height-band: short; }
+			:root[data-pksx-height-band-lock='tall'] { --pksx-height-band: tall; }
+			:root[data-pksx-height-band-lock='tall'] { --pksx-height-band: tall; }`
+		);
+		expect(duplicateLock.map(({ message }) => message)).toContain(
+			'Exactly one Tall focus-lock assignment is required.'
+		);
 		expect(names('src/routes/layout.css', ':root { --pksx-height-band: short; }')).toContain(
 			'RESP-1 viewport-query'
 		);
@@ -138,11 +200,19 @@ describe('density design contract', () => {
 		const source = `
 			<button class="standard">Standard</button>
 			<button class="small" data-pksx-control-category="small">Small</button>
+			<button class="small-exact" data-pksx-control-category="small">Exact small</button>
 			<button class="slot" data-pksx-control-category="slot">Slot</button>
+			<button class="card" data-pksx-control-category="card">Card</button>
+			<button class="icon" data-pksx-control-category="icon-only">Icon</button>
+			<button class="composition" data-pksx-control-category="composition">Composition</button>
 			<style>
 				.standard { block-size: var(--pksx-control-height); font-size: var(--pksx-type-label); }
 				.small { min-height: var(--pksx-small-control-height); font-size: var(--pksx-type-caption); }
+				.small-exact { height: var(--pksx-small-control-height); }
 				.slot { height: 100%; font-size: var(--pksx-type-label); }
+				.card { min-height: 80px; }
+				.icon { height: 20px; }
+				.composition { block-size: auto; }
 			</style>`;
 		expect(names('src/Example.svelte', source)).toEqual([]);
 	});
@@ -166,6 +236,36 @@ describe('density design contract', () => {
 			names(
 				'src/Example.svelte',
 				'<button class="action" data-pksx-control-category="small">Go</button><style>.action { height: 1px; }</style>'
+			)
+		).toContain('DENSITY-1 control-owner');
+		expect(
+			names(
+				'src/Example.svelte',
+				'<button data-pksx-control-category="small">Go</button><style>button { height: 1px; max-height: var(--pksx-small-control-height); }</style>'
+			)
+		).toContain('DENSITY-1 control-owner');
+		expect(
+			names(
+				'src/Example.svelte',
+				'<button data-pksx-control-category="small">Go</button><style>button { height: var(--pksx-small-control-height); max-height: 1px; }</style>'
+			)
+		).toContain('DENSITY-1 control-owner');
+		expect(
+			names(
+				'src/Example.svelte',
+				'<button class="action" data-pksx-control-category="small">Go</button><style>.action:hover { height: var(--pksx-small-control-height); }</style>'
+			)
+		).toContain('DENSITY-1 control-owner');
+		expect(
+			names(
+				'src/Example.svelte',
+				'<button class="action" data-pksx-control-category="small">Go</button><style>.action { min-height: var(--pksx-small-control-height); } .action:hover { height: 1px; }</style>'
+			)
+		).toContain('DENSITY-1 control-owner');
+		expect(
+			names(
+				'src/Example.svelte',
+				'<button class="action">Go</button><style>@media (prefers-reduced-motion: reduce) { .action { min-height: var(--pksx-control-height); } }</style>'
 			)
 		).toContain('DENSITY-1 control-owner');
 	});
@@ -225,5 +325,23 @@ describe('density design contract', () => {
 				'<input data-pksx-control-category="composition" /><style>input { font: 12px / var(--pksx-type-editable) sans-serif !important; }</style>'
 			)
 		).toEqual(expect.arrayContaining(['DENSITY-1 type-token', 'DENSITY-1 editable-floor']));
+		expect(
+			names(
+				'src/Example.svelte',
+				'<label class="label"><input class="field" data-pksx-control-category="composition" /></label><style>.label { font-size: var(--pksx-type-label); } .field { font: inherit !important; }</style>'
+			)
+		).toContain('DENSITY-1 editable-floor');
+		expect(
+			names(
+				'src/Example.svelte',
+				'<input class="field" data-pksx-control-category="composition" /><style>.field { font: inherit; }</style>'
+			)
+		).toEqual([]);
+		expect(names('src/other.css', '.field { font: inherit !important; }')).toContain(
+			'DENSITY-1 editable-floor'
+		);
+		expect(
+			names('src/other.css', '.field { font-size: var(--pksx-type-label) !important; }')
+		).toContain('DENSITY-1 editable-floor');
 	});
 });

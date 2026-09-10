@@ -38,13 +38,19 @@ type ElementRecord = {
 	tag: string;
 	id: string | null;
 	classes: Set<string>;
+	definiteClasses: Set<string>;
+	unknownClass: boolean;
+	unknownId: boolean;
 	ancestors: ElementIdentity[];
 	category: string | null;
 	editable: boolean;
 	offset: number;
 };
 
-type ElementIdentity = Pick<ElementRecord, 'tag' | 'id' | 'classes'>;
+type ElementIdentity = Pick<
+	ElementRecord,
+	'tag' | 'id' | 'classes' | 'definiteClasses' | 'unknownClass' | 'unknownId'
+>;
 
 const layoutFeatures =
 	/(?:^|[^a-z-])(?:min-|max-)?(?:device-)?(?:width|height|aspect-ratio|orientation)\b/i;
@@ -73,6 +79,11 @@ const blockProperties = new Set([
 	'min-block-size',
 	'max-block-size'
 ]);
+const exactBlockProperties = new Set(['height', 'block-size']);
+const minimumBlockProperties = new Set(['min-height', 'min-block-size']);
+const maximumBlockProperties = new Set(['max-height', 'max-block-size']);
+const canonicalEditableFloorSelector =
+	".pksx-density :where(input:not([type='button']):not([type='checkbox']):not([type='file']):not([type='hidden']):not([type='radio']):not([type='reset']):not([type='submit']),select,textarea,[contenteditable]:not([contenteditable='false' i]))";
 
 const baseValues = new Map([
 	['--pksx-type-caption', '10px'],
@@ -181,6 +192,8 @@ function collectElements(ast: AstNode): ElementRecord[] {
 		const classAttribute = attributes.find(
 			(item) => item.type === 'Attribute' && item.name === 'class'
 		);
+		const staticClass = staticAttribute(node, 'class');
+		const definiteClasses = new Set(staticClass?.split(/\s+/).filter(Boolean) ?? []);
 		const classes = new Set(
 			literalStrings(classAttribute?.value).flatMap((value) => value.split(/\s+/).filter(Boolean))
 		);
@@ -200,7 +213,15 @@ function collectElements(ast: AstNode): ElementRecord[] {
 			tag === 'select' ||
 			tag === 'textarea' ||
 			(hasContenteditable && contenteditable?.toLowerCase() !== 'false');
-		const identity = { tag, id: staticAttribute(node, 'id'), classes };
+		const idAttribute = attributes.find((item) => item.type === 'Attribute' && item.name === 'id');
+		const identity = {
+			tag,
+			id: staticAttribute(node, 'id'),
+			classes,
+			definiteClasses,
+			unknownClass: Boolean(classAttribute && staticClass === null && classes.size === 0),
+			unknownId: Boolean(idAttribute && staticAttribute(node, 'id') === null)
+		};
 		if (['button', 'input', 'select', 'textarea'].includes(tag) || editable) {
 			elements.push({
 				...identity,
@@ -241,14 +262,25 @@ function isCanonicalHeightBandMedia(filePath: string, node: AstNode, cssSource: 
 	);
 }
 
-function selectorListMatchesIdentity(selectorList: AstNode, identity: ElementIdentity): boolean {
+function normalizedSelector(cssSource: string, selector: AstNode) {
+	return textFor(cssSource, selector)
+		.replace(/\s+/g, ' ')
+		.replace(/\s*([(),])\s*/g, '$1')
+		.trim();
+}
+
+function selectorListMatchesIdentity(
+	selectorList: AstNode,
+	identity: ElementIdentity,
+	definite = false
+): boolean {
 	const complexes = Array.isArray(selectorList.children)
 		? (selectorList.children as AstNode[])
 		: [];
 	return complexes.some((complex) => {
 		const relatives = Array.isArray(complex.children) ? (complex.children as AstNode[]) : [];
 		const subject = relatives.at(-1);
-		return subject ? compoundMatchesIdentity(subject, identity) : false;
+		return subject ? compoundMatchesIdentity(subject, identity, definite) : false;
 	});
 }
 
@@ -307,38 +339,58 @@ function fontSizeFromShorthand(value: string) {
 	);
 }
 
-function compoundMatchesIdentity(compound: AstNode, identity: ElementIdentity) {
+function compoundMatchesIdentity(compound: AstNode, identity: ElementIdentity, definite = false) {
 	const selectors = Array.isArray(compound.selectors) ? (compound.selectors as AstNode[]) : [];
 	for (const selector of selectors) {
 		if (selector.type === 'TypeSelector' && selector.name !== '*' && selector.name !== identity.tag)
 			return false;
-		if (selector.type === 'ClassSelector' && !identity.classes.has(selector.name ?? ''))
+		if (
+			selector.type === 'ClassSelector' &&
+			!(definite ? identity.definiteClasses : identity.classes).has(selector.name ?? '') &&
+			(definite || !identity.unknownClass)
+		)
 			return false;
-		if (selector.type === 'IdSelector' && selector.name !== identity.id) return false;
+		if (
+			selector.type === 'IdSelector' &&
+			selector.name !== identity.id &&
+			(definite || !identity.unknownId)
+		)
+			return false;
+		if (selector.type === 'AttributeSelector' && definite) return false;
 		if (
 			selector.type === 'PseudoClassSelector' &&
 			['global', 'is', 'where'].includes(selector.name ?? '')
 		) {
-			if (!selector.args || !selectorListMatchesIdentity(selector.args as AstNode, identity))
+			if (
+				!selector.args ||
+				!selectorListMatchesIdentity(selector.args as AstNode, identity, definite)
+			)
 				return false;
 		}
 		if (selector.type === 'PseudoClassSelector' && selector.name === 'not') {
+			if (definite) return false;
 			const args = selector.args as AstNode | undefined;
 			if (args && containsIdentitySelector(args) && selectorListMatchesIdentity(args, identity))
 				return false;
 		}
+		if (
+			definite &&
+			selector.type === 'PseudoClassSelector' &&
+			!['global', 'is', 'where', 'not'].includes(selector.name ?? '')
+		)
+			return false;
 	}
 	return true;
 }
 
-function selectorMatches(selectorList: AstNode, element: ElementRecord) {
+function selectorMatches(selectorList: AstNode, element: ElementRecord, definite = false) {
 	const complexes = Array.isArray(selectorList.children)
 		? (selectorList.children as AstNode[])
 		: [];
 	return complexes.some((complex) => {
 		const relatives = Array.isArray(complex.children) ? (complex.children as AstNode[]) : [];
 		const subject = relatives.at(-1);
-		if (!subject || !compoundMatchesIdentity(subject, element)) return false;
+		if (!subject || !compoundMatchesIdentity(subject, element, definite)) return false;
 		return relatives.slice(0, -1).every((relative) => {
 			const selectors = Array.isArray(relative.selectors) ? (relative.selectors as AstNode[]) : [];
 			if (
@@ -346,8 +398,10 @@ function selectorMatches(selectorList: AstNode, element: ElementRecord) {
 					(selector) => selector.type === 'PseudoClassSelector' && selector.name === 'global'
 				)
 			)
-				return true;
-			return element.ancestors.some((ancestor) => compoundMatchesIdentity(relative, ancestor));
+				return !definite;
+			return element.ancestors.some((ancestor) =>
+				compoundMatchesIdentity(relative, ancestor, definite)
+			);
 		});
 	});
 }
@@ -424,11 +478,17 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 	}
 
 	const elements = filePath.endsWith('.svelte') ? collectElements(ast) : [];
-	const standardControlOwners = new Set<ElementRecord>();
-	const smallControlOwners = new Set<ElementRecord>();
+	const standardControlFloors = new Set<ElementRecord>();
+	const standardControlExactSizes = new Set<ElementRecord>();
+	const smallControlFloors = new Set<ElementRecord>();
+	const smallControlExactSizes = new Set<ElementRecord>();
+	const conflictingControlSizes = new Set<ElementRecord>();
 	const reportMissingControlOwners = () => {
 		for (const element of elements) {
-			if (element.category === 'small' && !smallControlOwners.has(element)) {
+			const hasSmallOwner =
+				(smallControlFloors.has(element) || smallControlExactSizes.has(element)) &&
+				!conflictingControlSizes.has(element);
+			if (element.category === 'small' && !hasSmallOwner) {
 				report(
 					'DENSITY-1',
 					'control-owner',
@@ -436,7 +496,10 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 					'Small controls must derive a block dimension from --pksx-small-control-height.'
 				);
 			}
-			if (!element.category && !standardControlOwners.has(element)) {
+			const hasStandardOwner =
+				(standardControlFloors.has(element) || standardControlExactSizes.has(element)) &&
+				!conflictingControlSizes.has(element);
+			if (!element.category && !hasStandardOwner) {
 				report(
 					'DENSITY-1',
 					'control-owner',
@@ -513,7 +576,7 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 						node.start ?? 0,
 						`Inline writes to ${property} are forbidden.`
 					);
-				if (property === 'font-size' || blockProperties.has(property))
+				if (property === 'font' || property === 'font-size' || blockProperties.has(property))
 					report(
 						'DENSITY-1',
 						'control-owner',
@@ -525,7 +588,7 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 		const markupEnd = css?.start ?? source.length;
 		const markup = source.slice(0, markupEnd);
 		for (const match of markup.matchAll(
-			/style\s*=\s*["'][^"']*(--pksx-(?:type-[\w-]+|(?:small-)?control-height)|font-size|(?:min-|max-)?(?:block-size|height))\s*:/g
+			/style\s*=\s*["'][^"']*(--pksx-(?:type-[\w-]+|(?:small-)?control-height)|font(?:-size)?|(?:min-|max-)?(?:block-size|height))\s*:/g
 		)) {
 			report(
 				'DENSITY-1',
@@ -541,23 +604,77 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 		return diagnostics;
 	}
 	if (filePath === 'src/routes/layout.css') {
-		const authorities: AstNode[] = [];
-		visit(css, (node) => {
+		const shortBases: AstNode[] = [];
+		const tallThresholds: AstNode[] = [];
+		const shortLocks: AstNode[] = [];
+		const tallLocks: AstNode[] = [];
+		const editableFloors: AstNode[] = [];
+		visit(css, (node, ancestors) => {
 			if (
 				node.type === 'Atrule' &&
 				node.name?.toLowerCase() === 'media' &&
+				!ancestors.some((item) => item.type === 'Atrule') &&
 				isCanonicalHeightBandMedia(filePath, node, cssSource)
 			)
-				authorities.push(node);
+				tallThresholds.push(node);
+			if (node.type !== 'Declaration') return;
+			const rule = [...ancestors].reverse().find((item) => item.type === 'Rule');
+			if (!rule?.prelude || ancestors.some((item) => item.type === 'Atrule')) return;
+			const selector = textFor(cssSource, rule.prelude as AstNode).trim();
+			const value = String(node.value ?? '').trim();
+			if (node.property === '--pksx-height-band') {
+				if (selector === ':root' && value === 'short') shortBases.push(node);
+				if (selector === ":root[data-pksx-height-band-lock='short']" && value === 'short')
+					shortLocks.push(node);
+				if (selector === ":root[data-pksx-height-band-lock='tall']" && value === 'tall')
+					tallLocks.push(node);
+			}
+			if (
+				node.property === 'font-size' &&
+				normalizedSelector(cssSource, rule.prelude as AstNode) === canonicalEditableFloorSelector &&
+				value === 'max(16px, var(--pksx-type-editable)) !important'
+			)
+				editableFloors.push(node);
 		});
-		if (authorities.length !== 1) {
-			report(
-				'RESP-1',
-				'viewport-query',
-				((authorities[1] ?? authorities[0])?.start ?? cssOffset) - cssOffset,
-				'Exactly one structurally valid 560px Height Band authority is required.'
-			);
-		}
+		const requireOne = (
+			contract: ContractId,
+			name: DesignContractDiagnostic['name'],
+			nodes: AstNode[],
+			message: string
+		) => {
+			if (nodes.length === 1) return;
+			report(contract, name, ((nodes[1] ?? nodes[0])?.start ?? cssOffset) - cssOffset, message);
+		};
+		requireOne(
+			'RESP-1',
+			'viewport-query',
+			shortBases,
+			'Exactly one constrained-first Short base assignment is required.'
+		);
+		requireOne(
+			'RESP-1',
+			'viewport-query',
+			tallThresholds,
+			'Exactly one structurally valid 560px Tall threshold is required.'
+		);
+		requireOne(
+			'RESP-1',
+			'height-band-owner',
+			shortLocks,
+			'Exactly one Short focus-lock assignment is required.'
+		);
+		requireOne(
+			'RESP-1',
+			'height-band-owner',
+			tallLocks,
+			'Exactly one Tall focus-lock assignment is required.'
+		);
+		requireOne(
+			'DENSITY-1',
+			'editable-floor',
+			editableFloors,
+			'Exactly one shared 16px editable-floor authority is required.'
+		);
 	}
 	visit(css, (node, ancestors) => {
 		if (node.type === 'Atrule') {
@@ -610,9 +727,9 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 		}
 		if (node.type !== 'Declaration') return;
 		const property = node.property ?? '';
-		const value = String(node.value ?? '')
-			.replace(/\s*!important\s*$/, '')
-			.trim();
+		const rawValue = String(node.value ?? '').trim();
+		const important = /\s!important\s*$/i.test(rawValue);
+		const value = rawValue.replace(/\s*!important\s*$/i, '').trim();
 		const rule = [...ancestors].reverse().find((item) => item.type === 'Rule');
 		const selector = rule?.prelude ? textFor(cssSource, rule.prelude as AstNode) : '';
 		const offset = (node.start ?? 0) - cssOffset;
@@ -621,18 +738,22 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 			const media = ancestors.find(
 				(item) => item.type === 'Atrule' && item.name?.toLowerCase() === 'media'
 			);
+			const nestedAuthority = ancestors.some((item) => item.type === 'Atrule' && item !== media);
 			const allowed =
 				filePath === 'src/routes/layout.css' &&
-				((selector.trim() === ':root' && value === 'short' && !media) ||
+				((selector.trim() === ':root' && value === 'short' && !media && !nestedAuthority) ||
 					(selector.trim() === ':root' &&
 						value === 'tall' &&
-						String(media?.prelude).replace(/\s+/g, ' ').trim() === '(min-height: 560px)') ||
+						String(media?.prelude).replace(/\s+/g, ' ').trim() === '(min-height: 560px)' &&
+						!nestedAuthority) ||
 					(selector.trim() === ":root[data-pksx-height-band-lock='short']" &&
 						value === 'short' &&
-						!media) ||
+						!media &&
+						!nestedAuthority) ||
 					(selector.trim() === ":root[data-pksx-height-band-lock='tall']" &&
 						value === 'tall' &&
-						!media));
+						!media &&
+						!nestedAuthority));
 			if (!allowed)
 				report(
 					'RESP-1',
@@ -676,9 +797,15 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 		const matched = rule?.prelude
 			? elements.filter((element) => selectorMatches(rule.prelude as AstNode, element))
 			: [];
+		const definitelyMatched = rule?.prelude
+			? elements.filter((element) => selectorMatches(rule.prelude as AstNode, element, true))
+			: [];
+		const potentiallyEditable =
+			matched.some((element) => element.editable) ||
+			(filePath.endsWith('.css') && important && Boolean(selector));
 		if (
 			property === 'font-size' &&
-			matched.some((element) => element.editable) &&
+			potentiallyEditable &&
 			!/^var\(--pksx-type-editable\)$/.test(value) &&
 			!canonicalEditable.test(value)
 		) {
@@ -691,10 +818,11 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 		}
 		if (
 			property === 'font' &&
-			matched.some((element) => element.editable) &&
-			shorthandSize !== 'inherit' &&
-			shorthandSize !== 'var(--pksx-type-editable)' &&
-			!(shorthandSize && canonicalEditable.test(shorthandSize))
+			potentiallyEditable &&
+			((shorthandSize === 'inherit' && important) ||
+				(shorthandSize !== 'inherit' &&
+					shorthandSize !== 'var(--pksx-type-editable)' &&
+					!(shorthandSize && canonicalEditable.test(shorthandSize))))
 		) {
 			report(
 				'DENSITY-1',
@@ -704,12 +832,19 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 			);
 		}
 		if (blockProperties.has(property) && matched.length > 0) {
+			const unconditional = !ancestors.some((item) => item.type === 'Atrule');
 			if (value === 'var(--pksx-control-height)') {
-				for (const element of matched) standardControlOwners.add(element);
+				if (unconditional && minimumBlockProperties.has(property))
+					for (const element of definitelyMatched) standardControlFloors.add(element);
+				if (unconditional && exactBlockProperties.has(property))
+					for (const element of definitelyMatched) standardControlExactSizes.add(element);
 				return;
 			}
 			if (value === 'var(--pksx-small-control-height)') {
-				for (const element of matched) smallControlOwners.add(element);
+				if (unconditional && minimumBlockProperties.has(property))
+					for (const element of definitelyMatched) smallControlFloors.add(element);
+				if (unconditional && exactBlockProperties.has(property))
+					for (const element of definitelyMatched) smallControlExactSizes.add(element);
 				if (matched.some((element) => !['small', 'icon-only'].includes(element.category ?? '')))
 					report(
 						'DENSITY-1',
@@ -718,6 +853,9 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 						'Small controls require a small or icon-only control category.'
 					);
 				return;
+			}
+			if (exactBlockProperties.has(property) || maximumBlockProperties.has(property)) {
+				for (const element of matched) conflictingControlSizes.add(element);
 			}
 			if (matched.some((element) => !element.category || !customCategories.has(element.category))) {
 				report(
