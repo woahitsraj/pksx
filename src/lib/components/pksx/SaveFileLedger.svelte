@@ -697,10 +697,7 @@
 			{:else}
 				<div class="ledger-screen">
 					<header class="workspace-identity">
-						<div>
-							<p class="eyebrow">Save File</p>
-							<h1 id={titleId}>{destinationLabel}</h1>
-						</div>
+						<h1 id={titleId}>{destinationLabel}</h1>
 						<p class="workspace-file">
 							<span class="filename" title={view.originalFilename}>{view.originalFilename}</span>
 							<span>{view.summary.gameVersion}</span>
@@ -756,7 +753,7 @@
 									aria-label="Trainer and Money"
 									data-testid="trainer-ledger-scrollport"
 								>
-									{#if trainerVisible}
+									{#if trainerVisible || moneyVisible}
 										<section class="details-section" aria-labelledby="ledger-trainer-title">
 											<header class="details-heading">
 												<p class="section-number">01</p>
@@ -830,7 +827,12 @@
 													aria-describedby={genderError ? 'trainer-gender-error' : undefined}
 												>
 													<span>Gender</span>
-													<div class="segmented" role="group" aria-label="Trainer gender">
+													<div
+														class="segmented"
+														role="group"
+														aria-label="Trainer gender"
+														aria-describedby={genderError ? 'trainer-gender-error' : undefined}
+													>
 														<button
 															type="button"
 															data-ledger-control
@@ -1513,7 +1515,6 @@
 		font-size: var(--pksx-type-body, 13px);
 	}
 
-	.eyebrow,
 	.section-number,
 	.field-row > span,
 	.add-command label > span,

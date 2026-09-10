@@ -1462,6 +1462,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		const group = host.querySelector<HTMLElement>('[role="group"][aria-label="Trainer gender"]')!;
 		expect(row.getAttribute('aria-invalid')).toBe('true');
 		expect(row.getAttribute('aria-describedby')).toBe('trainer-gender-error');
+		expect(group.getAttribute('aria-describedby')).toBe('trainer-gender-error');
 		for (const choice of ['trainer-gender-male', 'trainer-gender-female']) {
 			expect(target(choice).getAttribute('aria-describedby')).toBe('trainer-gender-error');
 		}
@@ -1823,14 +1824,27 @@ describe('SaveFileLedger states and feedback', () => {
 		projection.trainerProfile.genderSupported = false;
 		render({ ...publicFixtureView, projection }, { destination: 'trainer' });
 
-		expect(host.querySelector('[aria-labelledby="ledger-trainer-title"]')).toBeNull();
+		const trainer = host.querySelector<HTMLElement>('[aria-labelledby="ledger-trainer-title"]')!;
+		expect(trainer).not.toBeNull();
+		expect(Array.from(trainer.querySelectorAll('dt'), (term) => term.textContent)).toEqual([
+			'Trainer ID',
+			'Play time'
+		]);
+		expect(Array.from(trainer.querySelectorAll('dd'), (value) => value.textContent)).toEqual([
+			String(publicFixtureView.summary.trainerId),
+			publicFixtureView.summary.playTime
+		]);
+		expect(target('trainer-name')).toBeNull();
+		expect(target('trainer-gender-male')).toBeNull();
 		expect(host.querySelector('[aria-labelledby="ledger-money-title"]')).not.toBeNull();
 		expect(host.querySelector('[aria-labelledby="ledger-bag-title"]')).toBeNull();
+		expect(host.querySelector('.workspace-identity .eyebrow')).toBeNull();
 
 		await clearMounted();
 		render({ ...publicFixtureView, projection }, { destination: 'bag' });
 		expect(host.querySelector('[aria-labelledby="ledger-bag-title"]')).not.toBeNull();
 		expect(host.querySelector('[aria-labelledby="ledger-money-title"]')).toBeNull();
+		expect(host.querySelector('.workspace-identity .eyebrow')).toBeNull();
 	});
 
 	test('exposes pending immediately without prose and delays the localized spinner', async () => {
