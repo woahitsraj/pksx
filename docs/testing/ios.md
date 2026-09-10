@@ -6,8 +6,8 @@ visible controller highlights, menu controls, shortcuts, and the mobile layout.
 
 ## One-time setup
 
-Install the full Xcode app, select it as the active developer directory, and accept its
-license. Then install an iOS simulator runtime:
+Install Xcode 26 or later with a Swift 6.2 or later toolchain, select it as the active
+developer directory, and accept its license. Then install an iOS simulator runtime:
 
 ```sh
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
@@ -15,7 +15,7 @@ sudo xcodebuild -license accept
 xcodebuild -downloadPlatform iOS
 ```
 
-Confirm that at least one iPhone simulator is available:
+Confirm that at least one iPhone simulator running iOS 26 or later is available:
 
 ```sh
 xcrun simctl list devices available
@@ -31,8 +31,8 @@ pnpm install
 pnpm test:ios
 ```
 
-Set `PKSX_IOS_SIMULATOR` to a simulator UDID if you do not want to use the first
-available iPhone:
+Set `PKSX_IOS_SIMULATOR` to an iOS 26 or later simulator UDID when the first available
+iPhone runs an older iOS version:
 
 ```sh
 PKSX_IOS_SIMULATOR=YOUR-SIMULATOR-UDID pnpm test:ios
