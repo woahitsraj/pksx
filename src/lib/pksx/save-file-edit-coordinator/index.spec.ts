@@ -664,7 +664,7 @@ describe('Save File edit coordinator', () => {
 				harness.workspaces.set(input.saveFileId, stored);
 				return stored;
 			})
-			.mockImplementationOnce(async (input) => {
+			.mockImplementationOnce(async () => {
 				harness.workspaces.set(state.file.id, {
 					saveFileId: state.file.id,
 					bytes: replacement.bytes,
