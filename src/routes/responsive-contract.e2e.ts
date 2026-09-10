@@ -16,6 +16,7 @@ type Destination = {
 	path: string;
 	key: 'boxes' | 'trainer' | 'bag' | 'saves' | 'settings';
 	scrollOwner: string;
+	initialFocus: string;
 };
 
 const emeraldFixturePath = path.resolve(
@@ -58,21 +59,41 @@ const floorAndTargetCases: BudgetCase[] = [
 ];
 
 const destinations: Destination[] = [
-	{ name: 'Boxes', path: '/', key: 'boxes', scrollOwner: '.storage-workspace' },
+	{
+		name: 'Boxes',
+		path: '/',
+		key: 'boxes',
+		scrollOwner: '.storage-workspace',
+		initialFocus: 'box-0-slot-0'
+	},
 	{
 		name: 'Trainer',
 		path: '/trainer',
 		key: 'trainer',
-		scrollOwner: '[data-testid="trainer-ledger-scrollport"]'
+		scrollOwner: '[data-testid="trainer-ledger-scrollport"]',
+		initialFocus: 'trainer-name'
 	},
 	{
 		name: 'Bag',
 		path: '/bag',
 		key: 'bag',
-		scrollOwner: '[data-testid="bag-ledger-scrollport"]'
+		scrollOwner: '[data-testid="bag-ledger-scrollport"]',
+		initialFocus: 'item-Items-18-decrease'
 	},
-	{ name: 'Saves', path: '/saves', key: 'saves', scrollOwner: '.saves-scrollport' },
-	{ name: 'Settings', path: '/settings', key: 'settings', scrollOwner: '.settings-scrollport' }
+	{
+		name: 'Saves',
+		path: '/saves',
+		key: 'saves',
+		scrollOwner: '.saves-scrollport',
+		initialFocus: 'active-save-file'
+	},
+	{
+		name: 'Settings',
+		path: '/settings',
+		key: 'settings',
+		scrollOwner: '.settings-scrollport',
+		initialFocus: 'theme-light'
+	}
 ];
 
 const editableSelector =
@@ -117,7 +138,7 @@ async function importPublicSave(page: Page) {
 
 async function expectDestinationContract(page: Page, destination: Destination, budget: BudgetCase) {
 	const result = await page.evaluate(
-		({ rootSelector, ownerSelector, expectedInsets, expectedSafe }) => {
+		({ rootSelector, ownerSelector, expectedInsets, expectedSafe, expectedInitialFocus }) => {
 			const route = document.querySelector<HTMLElement>(rootSelector);
 			const shell = document.querySelector<HTMLElement>('.app-shell');
 			const owner = route?.querySelector<HTMLElement>(ownerSelector);
@@ -164,6 +185,11 @@ async function expectDestinationContract(page: Page, destination: Destination, b
 				focus.id ||
 				focus.getAttribute('aria-label') ||
 				focus.tagName;
+			const controllerIdentity = focus.getAttribute('aria-activedescendant') || identity;
+			const expectedIdentity =
+				expectedInitialFocus === 'active-save-file'
+					? route.querySelector<HTMLElement>('.save-card[aria-current="true"]')?.id
+					: expectedInitialFocus;
 			const within = (
 				target: ReturnType<typeof rect>,
 				boundary: ReturnType<typeof rect> | typeof safe
@@ -181,6 +207,11 @@ async function expectDestinationContract(page: Page, destination: Destination, b
 				errors.push(`[BUDGET-1] route ${JSON.stringify(routeRect)} escapes Safe Canvas`);
 			if (!route.contains(focus))
 				errors.push(`[FOCUS-1] focused target ${identity} is outside the route`);
+			if (!expectedIdentity) errors.push('[FOCUS-4] active Save File has no destination target');
+			else if (controllerIdentity !== expectedIdentity)
+				errors.push(
+					`[FOCUS-4] initial target is ${controllerIdentity}, expected ${expectedIdentity}`
+				);
 			if (focusRect.width <= 0 || focusRect.height <= 0)
 				errors.push(
 					`[FOCUS-1] focused target ${identity} has no rendered area ${JSON.stringify(focusRect)}`
@@ -249,7 +280,8 @@ async function expectDestinationContract(page: Page, destination: Destination, b
 			rootSelector: `[data-destination-root="${destination.key}"]`,
 			ownerSelector: destination.scrollOwner,
 			expectedInsets: budget.insets,
-			expectedSafe: budget.safe
+			expectedSafe: budget.safe,
+			expectedInitialFocus: destination.initialFocus
 		}
 	);
 
@@ -274,6 +306,11 @@ async function expectDensityContract(root: Locator, context: string) {
 				owner.className ||
 				owner.tagName;
 			const tokens = {
+				caption: parseFloat(style.getPropertyValue('--pksx-type-caption')),
+				label: parseFloat(style.getPropertyValue('--pksx-type-label')),
+				body: parseFloat(style.getPropertyValue('--pksx-type-body')),
+				title: parseFloat(style.getPropertyValue('--pksx-type-title')),
+				display: parseFloat(style.getPropertyValue('--pksx-type-display')),
 				control: parseFloat(style.getPropertyValue('--pksx-control-height')),
 				smallControl: parseFloat(style.getPropertyValue('--pksx-small-control-height')),
 				space: parseFloat(style.getPropertyValue('--pksx-space-unit')),
@@ -315,6 +352,20 @@ async function expectDensityContract(root: Locator, context: string) {
 			if (!Number.isFinite(value) || value < minimum || value > maximum)
 				failures.push(
 					`[DENSITY-1] ${result.ownerIdentity} ${name} is ${value}px, expected ${minimum}-${maximum}px`
+				);
+		}
+		const semanticType = {
+			caption: 10,
+			label: 12,
+			body: 13,
+			title: 16,
+			display: 24
+		} as const;
+		for (const [name, expected] of Object.entries(semanticType)) {
+			const actual = result.tokens[name as keyof typeof semanticType];
+			if (actual !== expected)
+				failures.push(
+					`[DENSITY-1] ${result.ownerIdentity} ${name} type is ${actual}px, expected ${expected}px`
 				);
 		}
 		for (const control of result.controls) {
@@ -467,7 +518,7 @@ async function anonymizeTrainerEvidence(
 	await trainerName.press('Enter');
 	await expect(
 		trainerName,
-		'[DENSITY-1] target evidence must display the committed sample Trainer identity'
+		'[SAVEFILE-1] target evidence must display the committed sample Trainer identity'
 	).toHaveValue('SAMPLE');
 	await expect(trainerName).not.toHaveAttribute('aria-disabled', 'true', { timeout: 30_000 });
 }
@@ -479,6 +530,17 @@ async function attachTargetScreenshot(
 	destination: Destination
 ) {
 	if (testInfo.project.name !== 'chromium' || !budget.target) return;
+	if (destination.key === 'saves') {
+		const publicSaveCard = page.locator('.save-card').filter({ hasText: '011020251345.sav' });
+		await expect(
+			publicSaveCard,
+			'[SAVEFILE-1] target evidence must render the imported public Save card'
+		).toBeVisible();
+		await expect(
+			page.locator('.save-card[aria-busy="true"]'),
+			'[SAVEFILE-1] target evidence must show settled Save card details'
+		).toHaveCount(0);
+	}
 	const fileName = `responsive-${budget.name}-${destination.key}.png`;
 	const screenshotPath = testInfo.outputPath(fileName);
 	await page.screenshot({ path: screenshotPath });
@@ -508,18 +570,16 @@ for (const budget of floorAndTargetCases) {
 				const root = await openDestination(page, destination, budget);
 				await expectDestinationContract(page, destination, budget);
 				await expectDensityContract(root, `${destination.name} ${budget.name}`);
-				if (budget.portrait) {
-					await expectFixtureEditables(root, destination, `${destination.name} ${budget.name}`);
-					if (destination.key === 'boxes')
-						await expectBoxSlotsAndReachability(root, `${destination.name} ${budget.name}`);
-					await expectEditableFontFloor(root, `${destination.name} ${budget.name}`, true);
-					if (destination.key === 'bag') {
-						const addItem = root.getByRole('button', { name: 'Add Item' }).first();
-						await expect(addItem).toBeEnabled({ timeout: 30_000 });
-						await addItem.click();
-						await expectEditableFontFloor(root, `${destination.name} open Add Item`, true);
-						await root.getByRole('button', { name: 'Cancel' }).click();
-					}
+				await expectFixtureEditables(root, destination, `${destination.name} ${budget.name}`);
+				if (budget.portrait && destination.key === 'boxes')
+					await expectBoxSlotsAndReachability(root, `${destination.name} ${budget.name}`);
+				await expectEditableFontFloor(root, `${destination.name} ${budget.name}`, true);
+				if (destination.key === 'bag') {
+					const addItem = root.getByRole('button', { name: 'Add Item' }).first();
+					await expect(addItem).toBeEnabled({ timeout: 30_000 });
+					await addItem.click();
+					await expectEditableFontFloor(root, `${destination.name} open Add Item`, true);
+					await root.getByRole('button', { name: 'Cancel' }).click();
 				}
 				await anonymizeTrainerEvidence(root, testInfo, budget, destination);
 				await attachTargetScreenshot(page, testInfo, budget, destination);
@@ -688,11 +748,15 @@ test('[LARGE-1][SURFACE-1] large caps and representative surfaces use bounded ge
 		const workspaceElement = document.querySelector<HTMLElement>('.storage-workspace')!;
 		const workspace = workspaceElement.getBoundingClientRect();
 		const pane = document.querySelector<HTMLElement>('.box-pane')!.getBoundingClientRect();
+		const paneWidths = Array.from(document.querySelectorAll<HTMLElement>('.box-pane')).map(
+			(pane) => pane.getBoundingClientRect().width
+		);
 		const rail = document.querySelector<HTMLElement>('.detail-rail')!.getBoundingClientRect();
 		const style = getComputedStyle(workspaceElement);
 		return {
 			paneCount: document.querySelectorAll('.box-pane').length,
-			paneWidth: pane.width,
+			paneWidth: paneWidths[0],
+			paneWidths,
 			railWidth: rail.width,
 			leftSpend: pane.left - workspace.left,
 			rightSpend: workspace.right - rail.right,
@@ -741,11 +805,15 @@ test('[LARGE-1][SURFACE-1] large caps and representative surfaces use bounded ge
 		const workspaceElement = document.querySelector<HTMLElement>('.storage-workspace')!;
 		const workspace = workspaceElement.getBoundingClientRect();
 		const pane = document.querySelector<HTMLElement>('.box-pane')!.getBoundingClientRect();
+		const paneWidths = Array.from(document.querySelectorAll<HTMLElement>('.box-pane')).map(
+			(pane) => pane.getBoundingClientRect().width
+		);
 		const rail = document.querySelector<HTMLElement>('.detail-rail')!.getBoundingClientRect();
 		const style = getComputedStyle(workspaceElement);
 		return {
 			paneCount: document.querySelectorAll('.box-pane').length,
-			paneWidth: pane.width,
+			paneWidth: paneWidths[0],
+			paneWidths,
 			railWidth: rail.width,
 			leftSpend: pane.left - workspace.left,
 			rightSpend: workspace.right - rail.right,
@@ -758,10 +826,12 @@ test('[LARGE-1][SURFACE-1] large caps and representative surfaces use bounded ge
 			}
 		};
 	});
-	expect(
-		boxes.paneWidth,
-		'[LARGE-1] each explicitly opened Box Pane must be at most 640px'
-	).toBeLessThanOrEqual(640);
+	for (const [index, paneWidth] of boxes.paneWidths.entries()) {
+		expect(
+			paneWidth,
+			`[LARGE-1] explicitly opened Box Pane ${index + 1} must be at most 640px`
+		).toBeLessThanOrEqual(640);
+	}
 	expect(
 		boxes.railWidth,
 		'[LARGE-1] two-pane Active Slot Detail Rail must be at most 260px'
