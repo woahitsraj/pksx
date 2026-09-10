@@ -87,6 +87,22 @@ describe('local responsive rules', () => {
 		).toEqual([]);
 	});
 
+	it('resolves a single unconditional alias assignment in its declaring scope', () => {
+		for (const source of [
+			'function classify() { return viewport.innerWidth > 640; } let viewport; viewport = globalThis.window;',
+			"function force() { root.setAttribute('data-pksx-height-band-lock', 'tall'); } let root; root = document.documentElement;",
+			'let viewport; function classify() { return viewport.innerWidth > 640; } viewport = globalThis.window;',
+			"function setup() { let root; function force() { root.dataset.pksxHeightBandLock = 'tall'; } root = document.documentElement; }"
+		])
+			expect(messages(source)[0]?.message).toContain('[RESP-1]');
+		expect(
+			messages(`function inspect() { return viewport.innerWidth; } let viewport; viewport = element;
+			function animate() { matchMedia(query); } let query; query = '(prefers-reduced-motion: reduce)';
+			function local(viewport) { return viewport.innerWidth; }
+			function cyclic() { return first.innerWidth; } let first, second; first = second; second = first;`)
+		).toEqual([]);
+	});
+
 	it('[DENSITY-1] rejects runtime token writes', () => {
 		expect(messages("element.style.setProperty('--pksx-type-body', '12px')")[0]?.message).toContain(
 			'[DENSITY-1]'

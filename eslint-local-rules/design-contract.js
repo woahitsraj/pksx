@@ -72,6 +72,22 @@ function staticBindings(context) {
 		}
 		return null;
 	};
+	const singleAssignment = (binding) => {
+		const writes = binding.references.filter((reference) => reference.isWrite());
+		if (writes.length !== 1) return null;
+		const reference = writes[0];
+		const assignment = reference.identifier.parent;
+		const statement = assignment?.parent;
+		const block = binding.scope.block;
+		return reference.from === binding.scope &&
+			assignment?.type === 'AssignmentExpression' &&
+			assignment.operator === '=' &&
+			assignment.left === reference.identifier &&
+			statement?.type === 'ExpressionStatement' &&
+			(statement.parent === block || statement.parent === block.body)
+			? reference.writeExpr
+			: null;
+	};
 	const propertyName = (node) =>
 		!node.computed && node.property.type === 'Identifier'
 			? node.property.name
@@ -100,9 +116,11 @@ function staticBindings(context) {
 			if (values.has(key)) return values.get(key);
 			if (binding?.defs.length) {
 				const declaration = binding.defs.find((definition) => definition.type === 'Variable')?.node;
-				if (!declaration?.init || resolving.has(binding)) return null;
+				if (!declaration || resolving.has(binding)) return null;
+				const source = declaration.init ?? singleAssignment(binding);
+				if (!source) return null;
 				resolving.add(binding);
-				bindValue(declaration.id, resolve(declaration.init));
+				bindValue(declaration.id, resolve(source));
 				resolving.delete(binding);
 				return values.get(binding) ?? null;
 			}
@@ -145,7 +163,9 @@ function staticBindings(context) {
 		isGlobal: (node) => !variable(node)?.defs.length,
 		propertyName,
 		bindValue,
-		bind: (pattern, source, onProperty) => bindValue(pattern, resolve(source), onProperty)
+		bind: (pattern, source, onProperty) => {
+			if (source) bindValue(pattern, resolve(source), onProperty);
+		}
 	};
 }
 
