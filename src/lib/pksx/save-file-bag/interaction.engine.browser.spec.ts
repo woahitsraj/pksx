@@ -127,6 +127,10 @@ function deferred<T>() {
 	return { promise, resolve };
 }
 
+function commitContext(reason: 'enter' | 'blur', isEditing = () => true) {
+	return { reason, isEditing };
+}
+
 function target(identity: string) {
 	return host.querySelector<HTMLElement>(`[data-destination-focus="${identity}"]`)!;
 }
@@ -581,7 +585,7 @@ describe('Save File Bag with a real public fixture', () => {
 		const firstQuantity =
 			item.quantity === item.maxQuantity ? item.quantity - 1 : item.quantity + 1;
 		props.onItemQuantityInput?.(pocket.key, item.id, String(firstQuantity));
-		props.onItemQuantityCommit?.(pocket.key, item.id, 'enter');
+		props.onItemQuantityCommit?.(pocket.key, item.id, commitContext('enter'));
 		await vi.waitFor(() =>
 			expect(harness.currentPendingTargets()).toContain(`item-${pocket.key}-${item.id}-quantity`)
 		);
@@ -602,7 +606,7 @@ describe('Save File Bag with a real public fixture', () => {
 			itemId: null,
 			quantity: '1'
 		});
-		props.onItemQuantityCommit?.(pocket.key, item.id, 'enter');
+		props.onItemQuantityCommit?.(pocket.key, item.id, commitContext('enter'));
 		await vi.waitFor(() => expect(harness.currentPendingTargets().length).toBeGreaterThan(0));
 		const recoveryBasis = harness.currentWorkspace();
 		const recoveryBytes = recoveryBasis.bytes.slice();
@@ -660,7 +664,7 @@ describe('Save File Bag with a real public fixture', () => {
 				: acceptedAfterRetry.quantity + 1;
 		props = harness.currentLedgerProps();
 		props.onItemQuantityInput?.(pocket.key, item.id, String(finalQuantity));
-		props.onItemQuantityCommit?.(pocket.key, item.id, 'enter');
+		props.onItemQuantityCommit?.(pocket.key, item.id, commitContext('enter'));
 		await waitForItem(harness, pocket.key, item.id, finalQuantity);
 		expect(await storage.listBackups(workspace.file.id)).toHaveLength(1);
 		expect(fixtureBytes).toEqual(unchangedFixture);

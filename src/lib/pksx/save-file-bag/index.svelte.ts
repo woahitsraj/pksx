@@ -2,6 +2,8 @@ import type { EngineApi, InventoryItemProjection, SaveFileEditOperation } from '
 import type {
 	SaveFileLedgerCatalogue,
 	SaveFileLedgerCommand,
+	SaveFileLedgerCommitContext,
+	SaveFileLedgerCommitOutcome,
 	SaveFileLedgerProps
 } from '$lib/components/pksx/save-file-ledger/types';
 import type { WorkspaceState } from '$lib/pksx/backup-workflow';
@@ -65,6 +67,7 @@ type CommitContext =
 			submitted: string;
 			version: number;
 			label: string;
+			isEditing?: () => boolean;
 	  }
 	| {
 			kind: 'add' | 'remove';
@@ -121,12 +124,16 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 		};
 	}
 
-	function onItemQuantityCommit(pocketKey: string, itemId: number, reason: 'enter' | 'blur') {
-		if (options.getEditingUnavailable()) return;
+	function onItemQuantityCommit(
+		pocketKey: string,
+		itemId: number,
+		context: SaveFileLedgerCommitContext
+	): SaveFileLedgerCommitOutcome | Promise<SaveFileLedgerCommitOutcome> {
+		if (options.getEditingUnavailable()) return 'complete';
 		const item = findItem(options.getWorkspace(), pocketKey, itemId);
 		if (!item) {
 			clearQuantityDraft(pocketKey, itemId);
-			return;
+			return 'complete';
 		}
 		const key = quantityDraftKey(pocketKey, itemId);
 		const draft = quantityDrafts[key] ?? {
@@ -134,22 +141,31 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 			error: null,
 			version: 0
 		};
-		if (reason === 'blur' && draft.error) {
+		if (context.reason === 'blur' && draft.error) {
 			setQuantityDraft(pocketKey, itemId, String(item.quantity), draft.error, draft.version);
-			return;
+			return 'invalid';
 		}
 		const parsed = parseQuantity(draft.value, item.maxQuantity);
 		if (!parsed.ok) {
 			setQuantityDraft(
 				pocketKey,
 				itemId,
-				reason === 'blur' ? String(item.quantity) : draft.value,
+				context.reason === 'blur' ? String(item.quantity) : draft.value,
 				parsed.message,
 				draft.version
 			);
-			return;
+			return 'invalid';
 		}
-		commitQuantity(pocketKey, item, parsed.value, reason, draft.value, draft.version);
+		const admitted = commitQuantity(
+			pocketKey,
+			item,
+			parsed.value,
+			context.reason,
+			draft.value,
+			draft.version,
+			context.isEditing
+		);
+		return admitted === false ? 'complete' : admitted;
 	}
 
 	function onItemQuantityAbandon(pocketKey: string, itemId: number) {
@@ -171,7 +187,7 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 			return false;
 		}
 		const next = Math.max(1, Math.min(item.maxQuantity, parsed.value + step));
-		return commitQuantity(pocketKey, item, next, 'operator', draftValue, version);
+		return commitQuantity(pocketKey, item, next, 'operator', draftValue, version) !== false;
 	}
 
 	function commitQuantity(
@@ -180,11 +196,12 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 		value: number,
 		mode: 'enter' | 'blur' | 'operator',
 		submitted: string,
-		version: number
+		version: number,
+		isEditing?: () => boolean
 	) {
 		if (value === item.quantity) {
 			clearQuantityDraft(pocketKey, item.id);
-			return true;
+			return 'complete' as const;
 		}
 		return enqueue(
 			{
@@ -194,7 +211,8 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 				mode,
 				submitted,
 				version,
-				label: item.name
+				label: item.name,
+				...(isEditing ? { isEditing } : {})
 			},
 			bagPendingKeys.quantity(pocketKey, item.id),
 			{ inventory: [{ kind: 'set', pocket: pocketKey, itemId: item.id, quantity: value }] }
@@ -225,7 +243,7 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 			command = { ...next, quantityError: parsed.message };
 			return;
 		}
-		enqueue(
+		void enqueue(
 			{
 				kind: 'add',
 				pocketKey: next.pocketKey,
@@ -254,7 +272,7 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 			onCommandChange(null);
 			return;
 		}
-		enqueue(
+		void enqueue(
 			{
 				kind: 'remove',
 				pocketKey: next.pocketKey,
@@ -269,26 +287,30 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 		);
 	}
 
-	function enqueue(context: CommitContext, key: string, operation: SaveFileEditOperation) {
+	function enqueue(
+		context: CommitContext,
+		key: string,
+		operation: SaveFileEditOperation
+	): false | Promise<SaveFileLedgerCommitOutcome> {
 		if (options.getEditingUnavailable()) return false;
 		const requestOrigin = options.getOrigin();
 		if (options.coordinator.isPending(requestOrigin, key)) return false;
-		void options.coordinator
+		return options.coordinator
 			.enqueueEdit(requestOrigin, { key, operation })
 			.then((result) => settle(requestOrigin, context, result))
 			.catch((error: unknown) => {
 				if (!disposed && sameOrigin(requestOrigin, options.getOrigin())) {
 					options.rejectEditing(errorMessage(error));
 				}
+				return 'complete';
 			});
-		return true;
 	}
 
 	function settle(
 		requestOrigin: SaveFileEditOrigin,
 		context: CommitContext,
 		result: SaveFileEditResult
-	) {
+	): SaveFileLedgerCommitOutcome {
 		if (disposed) {
 			if (
 				!result.ok &&
@@ -299,31 +321,32 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 			) {
 				options.toast.error(`${operationLabel(context)} could not be saved. ${result.message}`);
 			}
-			return;
+			return 'complete';
 		}
-		if (!sameOrigin(requestOrigin, options.getOrigin())) return;
+		if (!sameOrigin(requestOrigin, options.getOrigin())) return 'complete';
 		if (result.ok) {
 			options.acceptWorkspace(result.workspace);
 			clearSettledState(context);
-			return;
+			return 'complete';
 		}
 		if (result.code === 'stale-workspace' || result.code === 'save-file-deleted') {
 			options.rejectEditing(result.message);
-			return;
+			return 'complete';
 		}
 		if (result.workspace) options.acceptWorkspace(result.workspace);
 		else {
 			options.rejectEditing(result.message);
-			return;
+			return 'complete';
 		}
 		if (result.code === 'invalid-save-file-edit') {
 			retainValidationFailure(context, result.message);
-			return;
+			return 'invalid';
 		}
 		if (context.kind === 'quantity') clearQuantityIfCurrent(context);
 		if (result.code !== 'queued-operation-cancelled') {
 			options.toast.error(`${operationLabel(context)} could not be saved. ${result.message}`);
 		}
+		return 'complete';
 	}
 
 	function clearSettledState(context: CommitContext) {
@@ -343,7 +366,9 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 			setQuantityDraft(
 				context.pocketKey,
 				context.itemId,
-				context.mode === 'enter' ? context.submitted : String(item?.quantity ?? ''),
+				context.mode === 'enter' && context.isEditing?.()
+					? context.submitted
+					: String(item?.quantity ?? ''),
 				message,
 				context.version
 			);

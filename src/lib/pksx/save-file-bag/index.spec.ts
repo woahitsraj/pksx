@@ -216,6 +216,10 @@ async function settled() {
 	await Promise.resolve();
 }
 
+function commitContext(reason: 'enter' | 'blur', isEditing = () => true) {
+	return { reason, isEditing };
+}
+
 function sameOrigin(left: SaveFileEditOrigin, right: SaveFileEditOrigin) {
 	return left.saveFileId === right.saveFileId && left.workspaceId === right.workspaceId;
 }
@@ -252,12 +256,17 @@ describe('Save File Bag controller', () => {
 		await settled();
 
 		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '9');
-		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'enter');
+		const outcome = controller.ledgerProps.onItemQuantityCommit?.(
+			'Items',
+			1,
+			commitContext('enter')
+		);
+		expect(outcome).toBeInstanceOf(Promise);
 		expect(enqueueEdit).toHaveBeenLastCalledWith(firstOrigin, {
 			key: bagPendingKeys.quantity('Items', 1),
 			operation: { inventory: [{ kind: 'set', pocket: 'Items', itemId: 1, quantity: 9 }] }
 		});
-		await settled();
+		await expect(outcome).resolves.toBe('complete');
 
 		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '12');
 		expect(controller.ledgerProps.onItemQuantityStep?.('Items', 1, 1, '12')).toBe(true);
@@ -276,8 +285,14 @@ describe('Save File Bag controller', () => {
 		await settled();
 		results.push(pending.promise);
 		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '7');
-		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'enter');
-		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'blur');
+		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, commitContext('enter'));
+		expect(
+			controller.ledgerProps.onItemQuantityCommit?.(
+				'Items',
+				1,
+				commitContext('blur', () => false)
+			)
+		).toBe('complete');
 		expect(controller.ledgerProps.onItemQuantityStep?.('Items', 1, 1, '7')).toBe(false);
 		expect(enqueueEdit).toHaveBeenCalledOnce();
 		expect(toast.error).not.toHaveBeenCalled();
@@ -313,7 +328,13 @@ describe('Save File Bag controller', () => {
 			error: 'Quantity must be a whole number between 1 and 99.'
 		});
 		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '0');
-		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'blur');
+		expect(
+			controller.ledgerProps.onItemQuantityCommit?.(
+				'Items',
+				1,
+				commitContext('blur', () => false)
+			)
+		).toBe('invalid');
 		expect(controller.ledgerProps.drafts?.itemQuantities?.['Items:1']).toEqual({
 			value: '2',
 			error: 'Quantity must be a whole number between 1 and 99.'
@@ -325,7 +346,9 @@ describe('Save File Bag controller', () => {
 		const { controller, enqueueEdit } = harness();
 		await settled();
 		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '2');
-		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'enter');
+		expect(controller.ledgerProps.onItemQuantityCommit?.('Items', 1, commitContext('enter'))).toBe(
+			'complete'
+		);
 		expect(enqueueEdit).not.toHaveBeenCalled();
 		expect(controller.ledgerProps.drafts?.itemQuantities?.['Items:1']).toBeUndefined();
 	});
@@ -424,7 +447,7 @@ describe('Save File Bag controller', () => {
 		await settled();
 		results.push(pending.promise);
 		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '7');
-		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'enter');
+		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, commitContext('enter'));
 		controller.dispose();
 
 		pending.resolve({
@@ -449,7 +472,7 @@ describe('Save File Bag controller', () => {
 		await settled();
 		results.push(pending.promise);
 		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '7');
-		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'enter');
+		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, commitContext('enter'));
 		controller.dispose();
 		setOrigin({ saveFileId: 'save-1', workspaceId: 'workspace-2' });
 
@@ -478,13 +501,23 @@ describe('Save File Bag controller', () => {
 			workspace: accepted
 		});
 		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '7');
-		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'enter');
-		await settled();
+		const activeOutcome = controller.ledgerProps.onItemQuantityCommit?.(
+			'Items',
+			1,
+			commitContext('enter')
+		);
+		await expect(activeOutcome).resolves.toBe('invalid');
 		expect(controller.ledgerProps.drafts?.itemQuantities?.['Items:1']).toEqual({
 			value: '7',
 			error: 'The quantity is invalid.'
 		});
-		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'blur');
+		expect(
+			controller.ledgerProps.onItemQuantityCommit?.(
+				'Items',
+				1,
+				commitContext('blur', () => false)
+			)
+		).toBe('invalid');
 		expect(enqueueEdit).toHaveBeenCalledTimes(1);
 		expect(controller.ledgerProps.drafts?.itemQuantities?.['Items:1']).toEqual({
 			value: '2',
@@ -495,10 +528,46 @@ describe('Save File Bag controller', () => {
 			value: '8',
 			error: null
 		});
-		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'blur');
+		const blurOutcome = controller.ledgerProps.onItemQuantityCommit?.(
+			'Items',
+			1,
+			commitContext('blur', () => false)
+		);
 		expect(enqueueEdit).toHaveBeenCalledTimes(2);
-		await settled();
+		await expect(blurOutcome).resolves.toBe('complete');
 		expect(controller.ledgerProps.drafts?.itemQuantities?.['Items:1']).toBeUndefined();
+		expect(toast.error).not.toHaveBeenCalled();
+	});
+
+	test('restores an Engine-rejected quantity when its edit session ends before settlement', async () => {
+		const pending = deferred<SaveFileEditResult>();
+		let editing = true;
+		const { controller, results, toast, accepted } = harness();
+		await settled();
+		results.push(pending.promise);
+		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '7');
+		const outcome = controller.ledgerProps.onItemQuantityCommit?.(
+			'Items',
+			1,
+			commitContext('enter', () => editing)
+		);
+		expect(outcome).toBeInstanceOf(Promise);
+
+		editing = false;
+		pending.resolve({
+			ok: false,
+			status: 'rejected',
+			origin: firstOrigin,
+			code: 'invalid-save-file-edit',
+			message: 'The quantity is invalid.',
+			workspace: accepted
+		});
+
+		await expect(outcome).resolves.toBe('invalid');
+		expect(controller.ledgerProps.drafts?.itemQuantities?.['Items:1']).toEqual({
+			value: '2',
+			error: 'The quantity is invalid.'
+		});
 		expect(toast.error).not.toHaveBeenCalled();
 	});
 
@@ -563,7 +632,7 @@ describe('Save File Bag controller', () => {
 		await settled();
 		results.push(pending.promise);
 		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '8');
-		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'enter');
+		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, commitContext('enter'));
 		controller.ledgerProps.onCommandChange?.({
 			kind: 'remove-item',
 			pocketKey: 'Items',
@@ -598,7 +667,7 @@ describe('Save File Bag controller', () => {
 			message: 'Reload the Save File.'
 		});
 		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '8');
-		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'enter');
+		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, commitContext('enter'));
 		controller.ledgerProps.onCommandChange?.({
 			kind: 'remove-item',
 			pocketKey: 'Items',
@@ -630,7 +699,7 @@ describe('Save File Bag controller', () => {
 		});
 
 		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '5');
-		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'enter');
+		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, commitContext('enter'));
 		expect(enqueueEdit).toHaveBeenCalledOnce();
 		controller.ledgerProps.onRetryCatalogue?.('Items');
 		expect(controller.ledgerProps.catalogues?.Items).toEqual({
