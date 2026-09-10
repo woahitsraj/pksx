@@ -13,6 +13,7 @@ describe('CapacitorSavesStorage', () => {
 	let failWorkspaceReads: number;
 	let failWorkspaceWrites: number;
 	let failWorkspaceDeletes: number;
+	let partialBackupWrites: number;
 	let catalogWriteFailure: 'after' | 'partial' | null;
 	let failCatalogReads: number;
 	let failCatalogReadback: boolean;
@@ -24,6 +25,7 @@ describe('CapacitorSavesStorage', () => {
 		failWorkspaceReads = 0;
 		failWorkspaceWrites = 0;
 		failWorkspaceDeletes = 0;
+		partialBackupWrites = 0;
 		catalogWriteFailure = null;
 		failCatalogReads = 0;
 		failCatalogReadback = false;
@@ -62,6 +64,11 @@ describe('CapacitorSavesStorage', () => {
 				return value instanceof Uint8Array ? new Uint8Array(value) : null;
 			},
 			async writeBytes(path, value) {
+				if (path.startsWith('backups/') && partialBackupWrites > 0) {
+					partialBackupWrites -= 1;
+					files.set(path, new Uint8Array(value.slice(0, 1)));
+					throw new Error('partial Backup write');
+				}
 				files.set(path, new Uint8Array(value));
 				if (path.startsWith('workspaces/') && failWorkspaceWrites > 0) {
 					failWorkspaceWrites -= 1;
@@ -607,6 +614,66 @@ describe('CapacitorSavesStorage', () => {
 
 		expect([...files.keys()].filter((path) => path.startsWith('backups/'))).toEqual([orphanPath]);
 		expect(await recreated.listBackups(saveFile.id)).toHaveLength(1);
+	});
+
+	it('repairs a truncated uncatalogued automatic Backup on the same adapter retry', async () => {
+		const baseline = new Uint8Array([1, 2, 3]);
+		const saveFile = await storage.importSave({ bytes: baseline, originalFileName: null });
+		const workspace = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: baseline,
+			dirty: false,
+			automaticBackupCreated: false
+		});
+		const input = {
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			expectedUpdatedAt: workspace.updatedAt,
+			reason: 'save-file-editing' as const
+		};
+		partialBackupWrites = 1;
+		failBackupDeletes = 1;
+
+		await expect(storage.ensureAutomaticBackup(input)).rejects.toThrow(
+			'backup cleanup unavailable'
+		);
+		await expect(storage.ensureAutomaticBackup(input)).resolves.toMatchObject({
+			established: true
+		});
+
+		const [backup] = await storage.listBackups(saveFile.id);
+		expect(await storage.getBackupBytes(backup.id)).toEqual(baseline);
+		expect((await storage.getWorkspace(saveFile.id))?.automaticBackupCreated).toBe(true);
+		const recreated = new CapacitorSavesStorage({ fileStore });
+		expect(await recreated.listBackups(saveFile.id)).toEqual([backup]);
+		expect(await recreated.getBackupBytes(backup.id)).toEqual(baseline);
+	});
+
+	it('does not overwrite mismatched bytes for a catalogued automatic Backup identity', async () => {
+		const baseline = new Uint8Array([1, 2, 3]);
+		const saveFile = await storage.importSave({ bytes: baseline, originalFileName: null });
+		const backupId = stableAutomaticBackupId({
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			persistedRevision: saveFile.importedAt,
+			bytes: baseline
+		});
+		await storage.createBackup({
+			id: backupId,
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([9, 9, 9]),
+			reason: 'save-file-editing'
+		});
+
+		await expect(
+			storage.ensureAutomaticBackup({
+				saveFileId: saveFile.id,
+				importedAt: saveFile.importedAt,
+				expectedUpdatedAt: null,
+				reason: 'save-file-editing'
+			})
+		).rejects.toThrow('automatic Backup bytes do not match their identity');
+		expect(await storage.getBackupBytes(backupId)).toEqual(new Uint8Array([9, 9, 9]));
 	});
 
 	it('preserves reconciled automatic Backup metadata and distinguishes a byte-identical Restore', async () => {

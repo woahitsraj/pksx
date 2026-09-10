@@ -273,7 +273,7 @@ export class CapacitorSavesStorage implements SavesStorage {
 			) {
 				throw new Error('The automatic Backup identity belongs to different content.');
 			}
-			if (existingBytes && !bytesEqual(existingBytes, bytes)) {
+			if (existingBackup && existingBytes && !bytesEqual(existingBytes, bytes)) {
 				throw new Error('The automatic Backup bytes do not match their identity.');
 			}
 			if (!existingBackup) {
@@ -294,7 +294,7 @@ export class CapacitorSavesStorage implements SavesStorage {
 			catalog.workspaces[input.saveFileId] = metadata;
 			await this.#journal.commit(snapshot, catalog, {
 				workspaceBytes: new Map([[input.saveFileId, bytes]]),
-				stagedBytes: existingBytes ? [] : [{ path: backupPath, bytes }]
+				stagedBytes: existingBackup && existingBytes ? [] : [{ path: backupPath, bytes }]
 			});
 			return {
 				workspace: { ...storedWorkspaceMetadata(metadata), bytes: copyBytes(bytes) },
