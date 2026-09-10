@@ -328,6 +328,20 @@ describe('SaveFileLedger public fixture presentation', () => {
 });
 
 describe('SaveFileLedger semantic focus graph', () => {
+	test('starts on an existing item when its pocket catalogue has failed', () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		render(publicFixtureView, {
+			catalogues: {
+				...publicCatalogues,
+				[pocket.key]: { status: 'failed', message: 'Catalogue unavailable.' }
+			}
+		});
+
+		expect(
+			host.querySelector<HTMLElement>('[data-destination-initial]')?.dataset.destinationFocus
+		).toBe(`item-${pocket.key}-${pocket.items[0].id}-decrease`);
+	});
+
 	test('keeps one semantic row order within each destination', async () => {
 		render(publicFixtureView, { destination: 'trainer' });
 		const rowOrder = () =>
@@ -923,6 +937,24 @@ describe('SaveFileLedger semantic focus graph', () => {
 		await tick();
 		await tick();
 		expect(document.activeElement).toBe(target(`pocket-${pocket.key}-add`));
+	});
+
+	test('uses the first later editable pocket target after route Retry', async () => {
+		const [failedPocket, editablePocket] = publicFixtureView.projection.inventory.pockets;
+		const harness = render(
+			{ status: 'load-failed', message: 'Could not read the Save File.' },
+			{
+				catalogues: {
+					...publicCatalogues,
+					[failedPocket.key]: { status: 'failed', message: 'Catalogue unavailable.' }
+				},
+				props: { getSessionFocusIdentity: () => 'item-missing-999-remove' }
+			}
+		);
+		await expectFocused('load-retry');
+		harness.setView(projectionWithItems(failedPocket.key, []));
+
+		await expectFocused(`pocket-${editablePocket.key}-add`);
 	});
 
 	test('restores local focus after retrying recovery and another target change', async () => {

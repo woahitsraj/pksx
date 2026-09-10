@@ -728,9 +728,10 @@
 			if (catalogue.status === 'ready' && !pocket.full && availableOptions(pocket.key).length > 0) {
 				return addIdentity(pocket.key);
 			}
-			if (catalogue.status === 'failed' || (catalogue.status === 'loading' && catalogue.retrying))
-				return retryIdentity(pocket.key);
 			if (pocket.items[0]) return itemIdentity(pocket.key, pocket.items[0].id, 'decrease');
+		}
+		for (const pocket of pockets) {
+			if (catalogueFor(pocket.key).status === 'failed') return retryIdentity(pocket.key);
 		}
 		return pockets[0] ? jumpIdentity(pockets[0].key) : '';
 	}
@@ -1497,9 +1498,12 @@
 																				onblur={(event) =>
 																					handleDraftBlur(
 																						event,
-																						(reason) =>
-																							onItemQuantityCommit?.(pocket.key, item.id, reason) ??
-																							'complete'
+																						(context) =>
+																							onItemQuantityCommit?.(
+																								pocket.key,
+																								item.id,
+																								context
+																							) ?? 'complete'
 																					)}
 																			/>
 																			<button
