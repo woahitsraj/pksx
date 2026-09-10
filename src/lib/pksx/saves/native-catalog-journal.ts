@@ -1,3 +1,4 @@
+import { stableAutomaticBackupId } from './automatic-backup';
 import type {
 	BackupId,
 	BackupMetadata,
@@ -234,7 +235,29 @@ export class NativeCatalogJournal {
 		const references = new Set<string>();
 		const snapshot = await this.#resolve();
 		collectCatalogReferences(snapshot.catalog, references, snapshot.modern);
+		await this.#collectPendingAutomaticBackupReferences(snapshot, references);
 		return references;
+	}
+
+	async #collectPendingAutomaticBackupReferences(
+		snapshot: NativeCatalogSnapshot,
+		references: Set<string>
+	) {
+		for (const saveFile of snapshot.catalog.saves) {
+			const workspace = snapshot.catalog.workspaces[saveFile.id];
+			if (workspace?.automaticBackupCreated) continue;
+			const bytes = workspace
+				? await this.readWorkspace(snapshot, saveFile.id)
+				: await this.#fileStore.readBytes(saveBytesPath(saveFile.id));
+			if (!bytes) continue;
+			const backupId = stableAutomaticBackupId({
+				saveFileId: saveFile.id,
+				importedAt: saveFile.importedAt,
+				persistedRevision: workspace?.updatedAt ?? saveFile.importedAt,
+				bytes
+			});
+			references.add(backupBytesPath(backupId));
+		}
 	}
 
 	async #sweepFlatDirectory(directory: 'saves' | 'backups', references: Set<string>) {

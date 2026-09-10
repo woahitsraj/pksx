@@ -693,6 +693,42 @@ describe('CapacitorSavesStorage', () => {
 		expect((await storage.getWorkspace(saveFile.id))?.automaticBackupCreated).toBe(true);
 	});
 
+	it('preserves a complete pending automatic Backup through recreation and terminal deletion', async () => {
+		const baseline = new Uint8Array([1, 2, 3]);
+		const saveFile = await storage.importSave({ bytes: baseline, originalFileName: null });
+		const workspace = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: baseline,
+			dirty: false,
+			automaticBackupCreated: false
+		});
+		const input = {
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			expectedUpdatedAt: workspace.updatedAt,
+			reason: 'save-file-editing' as const
+		};
+		completeBackupWriteFailures = 1;
+		failBackupDeletes = 1;
+		await expect(storage.ensureAutomaticBackup(input)).rejects.toThrow(
+			'backup cleanup unavailable'
+		);
+
+		const recreated = new CapacitorSavesStorage({ fileStore });
+		await recreated.listSaves();
+		deniedBackupWrites = 1;
+		await expect(recreated.ensureAutomaticBackup(input)).resolves.toMatchObject({
+			established: true
+		});
+		expect(deniedBackupWrites).toBe(1);
+		const [backup] = await recreated.listBackups(saveFile.id);
+		expect(await recreated.getBackupBytes(backup.id)).toEqual(baseline);
+
+		await recreated.deleteSave(saveFile.id);
+		expect(await recreated.getSave(saveFile.id)).toBeNull();
+		expect([...files.keys()].filter((path) => path.startsWith('backups/'))).toEqual([]);
+	});
+
 	it('does not overwrite mismatched bytes for a catalogued automatic Backup identity', async () => {
 		const baseline = new Uint8Array([1, 2, 3]);
 		const saveFile = await storage.importSave({ bytes: baseline, originalFileName: null });
