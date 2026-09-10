@@ -103,7 +103,6 @@
 	import SlotActionMenu from '$lib/components/pksx/SlotActionMenu.svelte';
 	import StorageSlot from '$lib/components/pksx/StorageSlot.svelte';
 	import TakeoverFrame from '$lib/components/pksx/TakeoverFrame.svelte';
-	import ToastRegion from '$lib/components/pksx/ToastRegion.svelte';
 	import type { SlotView } from '$lib/components/pksx/types';
 	import {
 		createPokemonCreationOperation,
@@ -170,14 +169,9 @@
 		type SummonedWorkflowLauncher
 	} from '$lib/pksx/summoned-workflow';
 	import { getSummonedWorkflowHost } from '$lib/pksx/summoned-workflow/host.svelte';
+	import { getToastHost } from '$lib/pksx/toast/host.svelte';
 	import { createBoxMenuCommands, type BoxMenuCommandKey } from '$lib/pksx/box-menu';
 	import { createSlotMenuCommands, type SlotMenuCommandKey } from '$lib/pksx/slot-menu';
-
-	type ToastView = {
-		id: string;
-		tone: 'info' | 'success' | 'error';
-		message: string;
-	};
 
 	type ClearSlotConfirmation = {
 		source: SaveSlotRef;
@@ -229,6 +223,7 @@
 	const storage = getSavesStorage();
 	const workspaceService = getActiveWorkspaceService();
 	const summonedWorkflow = getSummonedWorkflowHost();
+	const toastHost = getToastHost();
 
 	const slotPalette = [16, 28, 48, 100, 140, 180, 195, 210, 220, 260, 280, 295, 330, 52];
 
@@ -492,7 +487,6 @@
 	let clearSlotConfirmation = $state<ClearSlotConfirmation | null>(null);
 	let clearSlotConfirmFocusIndex = $state(0);
 	let boxMenuTarget = $state<BoxMenuTarget | null>(null);
-	let toasts = $state<ToastView[]>([]);
 	let workbenchPanes = $state<BoxPaneState[]>([
 		createBoxPane('pane-pokemon-storage', pokemonStorageSource(), { boxCount: placeholderBoxCount })
 	]);
@@ -502,7 +496,6 @@
 	let saveFiles = $state<StoredSaveFile[]>([]);
 	let savePaneWorkspaces = $state<Record<string, SavePaneWorkspace>>({});
 	let pokemonStorage = $state<StoredPokemonStorage | null>(null);
-	let nextToastId = 1;
 	let engine: EngineApi | null = null;
 	let workspaceLoadRequest = 0;
 	let paneSwitchRequest = 0;
@@ -1632,7 +1625,7 @@
 		} catch (error) {
 			importError = getErrorMessage(error);
 			statusMessage = 'Export failed.';
-			showToast('error', importError);
+			toastHost.error(importError);
 		} finally {
 			busy = false;
 		}
@@ -1653,11 +1646,11 @@
 			if (!resolveBoxMenuSaveTarget(target)) return;
 			invalidateSavesCache();
 			statusMessage = `Backup saved for ${resolved.workspace.state.file.originalFileName ?? 'Save File'}.`;
-			showToast('success', statusMessage);
+			toastHost.success(statusMessage);
 			closeBoxMenu();
 		} catch (error) {
 			statusMessage = getErrorMessage(error);
-			showToast('error', statusMessage);
+			toastHost.error(statusMessage);
 		} finally {
 			busy = false;
 		}
@@ -1816,13 +1809,13 @@
 		}
 
 		if (pending.kind === 'copy' && destinationSlot?.kind === 'pokemon') {
-			showToast('error', 'Copy needs an empty destination Slot.');
+			toastHost.error('Copy needs an empty destination Slot.');
 			statusMessage = 'Copy needs an empty destination Slot.';
 			return;
 		}
 
 		if (isInvalidPartyAppendDestination(destination, destinationSlot, ownerPane)) {
-			showToast('error', 'That Party Slot cannot be used yet.');
+			toastHost.error('That Party Slot cannot be used yet.');
 			statusMessage = 'That Party Slot cannot be used yet.';
 			return;
 		}
@@ -1833,7 +1826,7 @@
 				carryState.sourceOwner.id !== activeSaveId) ||
 			(ownerPane?.source.type === 'save-file' && ownerPane.source.id !== activeSaveId);
 		if (unsupportedSaveOwner) {
-			showToast('error', 'Moving Pokemon between Save Files is not available yet.');
+			toastHost.error('Moving Pokemon between Save Files is not available yet.');
 			statusMessage = 'Cross-save movement is not available yet.';
 			return;
 		}
@@ -1850,13 +1843,13 @@
 
 		if (carryState?.sourceOwner.type === 'save-file' && ownerPane?.source.type === 'save-file') {
 			if (carryState.sourceOwner.id !== ownerPane.source.id) {
-				showToast('error', 'Moving Pokemon between Save Files is not available yet.');
+				toastHost.error('Moving Pokemon between Save Files is not available yet.');
 				statusMessage = 'Cross-save movement is not available yet.';
 				return;
 			}
 			const workspace = saveWorkspaceForPane(ownerPane)?.state;
 			if (!workspace) {
-				showToast('error', 'The source Save File is no longer available.');
+				toastHost.error('The source Save File is no longer available.');
 				return;
 			}
 			await applySlotOperation(
@@ -1876,7 +1869,7 @@
 	) {
 		const destinationWorkspace = saveWorkspaceForPane(destinationPane)?.state ?? null;
 		if (!destinationWorkspace || !engine) {
-			showToast('error', 'Load a Save File before changing Slots.');
+			toastHost.error('Load a Save File before changing Slots.');
 			return;
 		}
 
@@ -1885,19 +1878,19 @@
 		const destinationSlot = slotForRef(destination, destinationPane);
 
 		if (!sourceSlot || sourceSlot.kind !== 'pokemon') {
-			showToast('error', 'Move and Copy need an occupied source Slot.');
+			toastHost.error('Move and Copy need an occupied source Slot.');
 			statusMessage = 'Slot change failed.';
 			return;
 		}
 
 		if (!sourceSlot.entityBytesBase64) {
-			showToast('error', 'This Pokemon Storage entry was saved before transfer data existed.');
+			toastHost.error('This Pokemon Storage entry was saved before transfer data existed.');
 			statusMessage = 'Pokemon Storage entry cannot be moved back into a Save File.';
 			return;
 		}
 
 		if (destinationSlot?.kind === 'pokemon') {
-			showToast('error', 'Moving from Pokemon Storage needs an empty destination Slot.');
+			toastHost.error('Moving from Pokemon Storage needs an empty destination Slot.');
 			statusMessage = 'Moving from Pokemon Storage needs an empty destination Slot.';
 			return;
 		}
@@ -1980,13 +1973,13 @@
 				pending.kind === 'move'
 					? `Moved ${sourceSlot.label} to ${locationForSlotRef(destination)}.`
 					: `Copied ${sourceSlot.label} to ${locationForSlotRef(destination)}.`;
-			showToast('success', statusMessage);
+			toastHost.success(statusMessage);
 			queueMicrotask(focusActiveControl);
 		} catch (error) {
 			const message = getErrorMessage(error);
 			importError = null;
 			statusMessage = 'Slot change failed.';
-			showToast('error', message);
+			toastHost.error(message);
 		} finally {
 			busy = false;
 		}
@@ -2004,13 +1997,13 @@
 		const destinationSlot = slotForRef(destination, destinationPane);
 
 		if (!sourceSlot || sourceSlot.kind !== 'pokemon') {
-			showToast('error', 'Move and Copy need an occupied source Slot.');
+			toastHost.error('Move and Copy need an occupied source Slot.');
 			statusMessage = 'Slot change failed.';
 			return;
 		}
 
 		if (destinationSlot?.kind === 'pokemon' && pending.kind === 'copy') {
-			showToast('error', 'Copy needs an empty destination Slot.');
+			toastHost.error('Copy needs an empty destination Slot.');
 			statusMessage = 'Copy needs an empty destination Slot.';
 			return;
 		}
@@ -2055,7 +2048,7 @@
 				pending.kind === 'move'
 					? `Moved ${sourceSlot.label} to Pokemon Storage.`
 					: `Copied ${sourceSlot.label} to Pokemon Storage.`;
-			showToast('success', statusMessage);
+			toastHost.success(statusMessage);
 			queueMicrotask(focusActiveControl);
 			return;
 		}
@@ -2064,7 +2057,7 @@
 			const sourcePane = workbenchPanes.find((pane) => pane.id === carryState?.source.paneId);
 			const sourceWorkspace = saveWorkspaceForPane(sourcePane)?.state;
 			if (!sourcePane || !sourceWorkspace) {
-				showToast('error', 'The source Save File is no longer available.');
+				toastHost.error('The source Save File is no longer available.');
 				return;
 			}
 			await applySlotOperation(
@@ -2078,7 +2071,7 @@
 		pendingSlotOperation = null;
 		carryState = null;
 		statusMessage = `Copied ${sourceSlot.label} to Pokemon Storage.`;
-		showToast('success', statusMessage);
+		toastHost.success(statusMessage);
 		queueMicrotask(focusActiveControl);
 	}
 
@@ -2088,13 +2081,13 @@
 	): Promise<boolean> {
 		const operationState = context?.state ?? loadedSave;
 		if (!operationState) {
-			showToast('error', 'Load a Save File before changing Slots.');
+			toastHost.error('Load a Save File before changing Slots.');
 			return false;
 		}
 
 		const activeEngine = engine;
 		if (!activeEngine) {
-			showToast('error', 'Pokemon data is still loading. Try again.');
+			toastHost.error('Pokemon data is still loading. Try again.');
 			return false;
 		}
 
@@ -2138,7 +2131,7 @@
 			if (!result.ok) {
 				statusMessage = result.reason === 'noop' ? result.message : 'Slot change failed.';
 				if (result.reason !== 'noop') {
-					showToast('error', result.message);
+					toastHost.error(result.message);
 				} else {
 					pendingSlotOperation = null;
 				}
@@ -2191,7 +2184,7 @@
 			const message = getErrorMessage(error);
 			importError = null;
 			statusMessage = 'Slot change failed.';
-			showToast('error', message);
+			toastHost.error(message);
 			return false;
 		} finally {
 			busy = false;
@@ -2404,11 +2397,11 @@
 			);
 			pokemonStorage = await storage.putPokemonStorage(nextStorage);
 			statusMessage = `Cleared ${pending.pokemonLabel} from ${pending.location}.`;
-			showToast('success', statusMessage);
+			toastHost.success(statusMessage);
 			return true;
 		} catch (error) {
 			statusMessage = 'Slot change failed.';
-			showToast('error', getErrorMessage(error));
+			toastHost.error(getErrorMessage(error));
 			return false;
 		} finally {
 			busy = false;
@@ -2419,7 +2412,7 @@
 		const pane = workbenchPanes.find((candidate) => candidate.id === pending.paneId);
 		const workspace = saveWorkspaceForPane(pane)?.state ?? null;
 		if (!workspace || workspace.file.id !== pending.sourceOwner.id) {
-			showToast('error', 'The source Save File is no longer available.');
+			toastHost.error('The source Save File is no longer available.');
 			return false;
 		}
 
@@ -2427,17 +2420,6 @@
 			{ kind: 'clear', source: pending.source },
 			{ state: workspace, paneId: pending.paneId }
 		);
-	}
-
-	function showToast(tone: ToastView['tone'], message: string) {
-		const id = `toast-${nextToastId}`;
-		nextToastId += 1;
-		toasts = [...toasts, { id, tone, message }].slice(-3);
-		setTimeout(() => dismissToast(id), tone === 'error' ? 5200 : 3400);
-	}
-
-	function dismissToast(id: string) {
-		toasts = toasts.filter((toast) => toast.id !== id);
 	}
 
 	function focusActionCommand(index: number) {
@@ -2615,7 +2597,7 @@
 				targetWorkspace = { state, loadedBox: targetBox };
 			} catch (error) {
 				if (!selectionIsCurrent()) return;
-				showToast('error', getErrorMessage(error));
+				toastHost.error(getErrorMessage(error));
 				statusMessage = 'Could not load that Save File pane.';
 				return;
 			}
@@ -2945,7 +2927,7 @@
 		const context = pokemonActionContextForFocusedSlot();
 
 		if (!context) {
-			showToast('error', 'Evolution is unavailable for this source.');
+			toastHost.error('Evolution is unavailable for this source.');
 			return;
 		}
 
@@ -2970,7 +2952,7 @@
 				pokemonLabel: focusedSlot.label,
 				message: result.error.message
 			};
-			showToast('error', result.error.message);
+			toastHost.error(result.error.message);
 			return;
 		}
 
@@ -3067,7 +3049,7 @@
 				if (pokemonAction.status === 'applying') {
 					pokemonAction = { ...pokemonAction, status: 'ready' };
 				}
-				showToast('error', result.error.message);
+				toastHost.error(result.error.message);
 				return;
 			}
 
@@ -3089,7 +3071,7 @@
 				);
 				return;
 			}
-			showToast('success', `${actionLabel} applied.`);
+			toastHost.success(`${actionLabel} applied.`);
 			if (request === pokemonActionRequest) {
 				await completePokemonActions();
 			}
@@ -3101,7 +3083,7 @@
 			if (pokemonAction.status === 'applying') {
 				pokemonAction = { ...pokemonAction, status: 'ready' };
 			}
-			showToast('error', message);
+			toastHost.error(message);
 		} finally {
 			busy = false;
 		}
@@ -3132,7 +3114,7 @@
 				pokemonLabel,
 				message: preview.error.message
 			};
-			showToast('success', message);
+			toastHost.success(message);
 			await tick();
 			document.getElementById('legality-report-close')?.focus();
 			return;
@@ -3144,7 +3126,7 @@
 			report: preview.value.legalityReport
 		};
 		pokemonAction = createPokemonActionReadyState(location, pokemonLabel, preview.value);
-		showToast('success', message);
+		toastHost.success(message);
 		await tick();
 		(
 			document.querySelector<HTMLButtonElement>('.quick-fix') ??
@@ -3180,7 +3162,7 @@
 			if (!result.ok) {
 				if (pokemonAction.status === 'applying')
 					pokemonAction = { ...pokemonAction, status: 'ready' };
-				showToast('error', result.error.message);
+				toastHost.error(result.error.message);
 				return;
 			}
 
@@ -3222,7 +3204,7 @@
 					pokemonLabel: updatedSlot.label,
 					message: preview.error.message
 				};
-				showToast('error', preview.error.message);
+				toastHost.error(preview.error.message);
 				await tick();
 				document.getElementById('legality-report-close')?.focus();
 				return;
@@ -3238,7 +3220,7 @@
 				updatedSlot.label,
 				preview.value
 			);
-			showToast('success', 'Quick Fix applied to the Editor draft.');
+			toastHost.success('Quick Fix applied to the Editor draft.');
 			await tick();
 			(
 				document.querySelector<HTMLButtonElement>('.quick-fix') ??
@@ -3248,7 +3230,7 @@
 			if (request !== pokemonActionRequest) return;
 			if (pokemonAction.status === 'applying')
 				pokemonAction = { ...pokemonAction, status: 'ready' };
-			showToast('error', getErrorMessage(error));
+			toastHost.error(getErrorMessage(error));
 		} finally {
 			busy = false;
 		}
@@ -3405,7 +3387,7 @@
 		}
 
 		if (!createPokemonAvailability.available) {
-			showToast('error', createPokemonAvailability.reason);
+			toastHost.error(createPokemonAvailability.reason);
 			return;
 		}
 
@@ -3421,8 +3403,7 @@
 		const destinationPane = workbenchPanes.find((pane) => pane.id === paneId);
 		const workingState = saveWorkspaceForPane(destinationPane)?.state ?? null;
 		if (!workingState || !activeEngine) {
-			showToast(
-				'error',
+			toastHost.error(
 				workingState
 					? 'Pokemon creation is unavailable. Try again.'
 					: 'Load a Save File before creating Pokemon.'
@@ -3501,7 +3482,7 @@
 			void tick().then(focusPokemonEditorRail);
 		} catch (error) {
 			if (isCurrentPokemonCreation(request, workflow)) {
-				showToast('error', getErrorMessage(error));
+				toastHost.error(getErrorMessage(error));
 			}
 		} finally {
 			if (pokemonCreationBusyRequest === request) {
@@ -3721,7 +3702,7 @@
 				pokemonLabel: slot.label,
 				message: result.error.message
 			};
-			showToast('error', result.error.message);
+			toastHost.error(result.error.message);
 			return;
 		}
 
@@ -4024,7 +4005,7 @@
 			const operation = createPokemonEditOperation(editor);
 			if (!operation.ok) {
 				pokemonEditorFeedback = operation.message;
-				showToast('error', operation.message);
+				toastHost.error(operation.message);
 				return;
 			}
 			const result = await activeEngine.applyPokemonEditOperation(
@@ -4052,7 +4033,7 @@
 		let liveWorkspace = currentPokemonEditorWorkspace(editor, editorPane);
 		if (!liveWorkspace) {
 			pokemonEditorFeedback = 'Pokemon Editor source changed before Apply.';
-			showToast('error', pokemonEditorFeedback);
+			toastHost.error(pokemonEditorFeedback);
 			return;
 		}
 		if (shouldCreateAutomaticBackup(liveWorkspace)) {
@@ -4064,7 +4045,7 @@
 			liveWorkspace = currentPokemonEditorWorkspace(editor, editorPane);
 			if (!liveWorkspace) {
 				pokemonEditorFeedback = 'Pokemon Editor source changed before Apply.';
-				showToast('error', pokemonEditorFeedback);
+				toastHost.error(pokemonEditorFeedback);
 				return;
 			}
 			const backedUpWorkspace = markAutomaticBackupCreated(liveWorkspace);
@@ -4101,7 +4082,7 @@
 		pokemonEditorDraftDirty = false;
 		pokemonEditorScratchWorkspace = null;
 		pokemonEditorBaseBytes = null;
-		showToast('success', 'Pokemon edits applied.');
+		toastHost.success('Pokemon edits applied.');
 		void previewPokemonSpeciesFormEdit({
 			speciesId: updatedSlot.speciesId ?? 0,
 			form: updatedSlot.form ?? 0
@@ -4133,7 +4114,7 @@
 			locationFocus: destinationFocus
 		};
 		workbenchPanes = setPaneFocus(workbenchPanes, view.paneId, destinationFocus);
-		showToast('success', `${createdSlot.label} created in ${view.location}.`);
+		toastHost.success(`${createdSlot.label} created in ${view.location}.`);
 		queueMicrotask(focusActiveControl);
 	}
 
@@ -4276,7 +4257,7 @@
 	) {
 		statusMessage = result.outcome.message ?? statusMessage;
 		if (applyRequest !== pokemonEditorApplyRequest) {
-			if (result.outcome.status === 'success') showToast('success', result.outcome.message);
+			if (result.outcome.status === 'success') toastHost.success(result.outcome.message);
 			return;
 		}
 
@@ -4288,13 +4269,13 @@
 			pokemonEditorDraftDirty = false;
 			pokemonEditorScratchWorkspace = null;
 			pokemonEditorBaseBytes = null;
-			showToast('success', result.outcome.message);
+			toastHost.success(result.outcome.message);
 			void previewPokemonSpeciesFormEdit({
 				speciesId: result.state.slot.speciesId ?? 0,
 				form: result.state.slot.form ?? 0
 			});
 		} else if (result.outcome.status !== 'noop') {
-			showToast('error', result.outcome.message ?? 'Pokemon edit failed.');
+			toastHost.error(result.outcome.message ?? 'Pokemon edit failed.');
 		}
 	}
 
@@ -4307,7 +4288,7 @@
 
 		pokemonEditorFeedback = message;
 		statusMessage = 'Pokemon edit failed.';
-		showToast('error', message);
+		toastHost.error(message);
 	}
 
 	function saveFileUnavailable() {
@@ -4411,7 +4392,7 @@
 						const remaining = { ...savePaneWorkspaces };
 						delete remaining[pane.id];
 						savePaneWorkspaces = remaining;
-						showToast('error', getErrorMessage(error));
+						toastHost.error(getErrorMessage(error));
 						statusMessage = 'Could not refresh that Save File pane.';
 					}
 				} finally {
@@ -4485,7 +4466,7 @@
 		} catch (error) {
 			importError = getErrorMessage(error);
 			statusMessage = 'Could not restore the most recent Save File.';
-			showToast('error', importError);
+			toastHost.error(importError);
 		} finally {
 			busy = false;
 		}
@@ -4527,7 +4508,7 @@
 		} catch (error) {
 			if (request === workspaceLoadRequest && paneWorkspaceRequests[paneId] === paneRequest) {
 				importError = getErrorMessage(error);
-				showToast('error', importError);
+				toastHost.error(importError);
 			}
 		} finally {
 			finishPaneWorkspaceRequest(paneId, paneRequest);
@@ -4573,7 +4554,7 @@
 				currentPane.source.id === sourceId &&
 				currentPane.activeBox === box
 			) {
-				showToast('error', getErrorMessage(error));
+				toastHost.error(getErrorMessage(error));
 				statusMessage = 'Could not load that Save File pane.';
 			}
 		} finally {
@@ -4733,7 +4714,7 @@
 			if (request === workspaceLoadRequest) {
 				importError = getErrorMessage(error);
 				statusMessage = 'Import failed. Current active Save File was not changed.';
-				showToast('error', importError);
+				toastHost.error(importError);
 			}
 		} finally {
 			if (request === workspaceLoadRequest) {
@@ -5231,8 +5212,6 @@
 		/>
 	</TakeoverFrame>
 {/if}
-
-<ToastRegion {toasts} onDismiss={dismissToast} />
 
 <style>
 	.source-picker-import {

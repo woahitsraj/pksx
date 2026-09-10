@@ -8,7 +8,6 @@
 	import { onMount, tick } from 'svelte';
 	import DelayedSpinner from '$lib/components/pksx/DelayedSpinner.svelte';
 	import SaveFileMenu from '$lib/components/pksx/SaveFileMenu.svelte';
-	import ToastRegion from '$lib/components/pksx/ToastRegion.svelte';
 	import type { EngineError } from '$lib/engine';
 	import { appChrome } from '$lib/pksx/app-chrome.svelte';
 	import { isControllerKeyboardEvent } from '$lib/pksx/controller-input';
@@ -35,20 +34,16 @@
 		type SavesSnapshot
 	} from '$lib/pksx/saves-cache';
 	import { getSummonedWorkflowHost } from '$lib/pksx/summoned-workflow/host.svelte';
+	import { getToastHost } from '$lib/pksx/toast/host.svelte';
 
 	type PokemonStorageSummary = { boxCount: number; pokemonCount: number };
 	type SavesGridEntry =
 		| { kind: 'save-file'; saveFile: StoredSaveFile; index: number }
 		| { kind: 'pokemon-storage'; index: number }
 		| { kind: 'import'; index: number };
-	type ToastView = {
-		id: string;
-		tone: 'info' | 'success' | 'error';
-		message: string;
-	};
-
 	const storage = getSavesStorage();
 	const summonedWorkflow = getSummonedWorkflowHost();
+	const toastHost = getToastHost();
 	const gameNames: Record<string, string> = {
 		E: 'Pokemon Emerald',
 		COLO: 'Pokemon Colosseum',
@@ -78,9 +73,7 @@
 	let menuReturnTarget = $state<SavesTarget | null>(null);
 	let menuIndex = $state(0);
 	let deleteDescription = $state<string | null>(null);
-	let toasts = $state<ToastView[]>([]);
 	let refreshRequest = 0;
-	let nextToastId = 1;
 
 	const targets = $derived<SavesTarget[]>([
 		...saveFiles.map((saveFile) => ({ kind: 'save-file' as const, id: saveFile.id })),
@@ -229,7 +222,7 @@
 		} catch (error) {
 			if (request !== refreshRequest) return;
 			catalogLoading = false;
-			showToast('error', getErrorMessage(error));
+			toastHost.error(getErrorMessage(error));
 			if (options.focus) await focusGrid();
 		}
 	}
@@ -403,14 +396,13 @@
 				preferredTarget: { kind: 'save-file', id: stored.id },
 				focus: true
 			});
-			showToast('success', file.name + ' imported and made active.');
+			toastHost.success(file.name + ' imported and made active.');
 		} catch (error) {
 			await refreshSaves({
 				preferredTarget: { kind: 'import' },
 				focus: true
 			});
-			showToast(
-				'error',
+			toastHost.error(
 				'Import failed. Current active Save File was not changed. ' + getErrorMessage(error)
 			);
 		} finally {
@@ -460,7 +452,7 @@
 				keepFocus: true
 			});
 		} catch (error) {
-			showToast('error', 'Could not open Save File. ' + getErrorMessage(error));
+			toastHost.error('Could not open Save File. ' + getErrorMessage(error));
 			if (menuOpen) void focusMenuCommand(menuIndex);
 			else void focusGrid();
 		} finally {
@@ -512,7 +504,7 @@
 			void focusMenuCommand(0);
 		} catch (error) {
 			if (summonedWorkflow.active !== launchingWorkflow || menuSaveFileId !== saveFile.id) return;
-			showToast('error', getErrorMessage(error));
+			toastHost.error(getErrorMessage(error));
 		}
 	}
 
@@ -547,9 +539,9 @@
 			menuReturnTarget = null;
 			deleteDescription = null;
 			await refreshSaves({ force: true, preferredTarget: fallback, focus: true });
-			showToast('success', displayName(saveFile) + ' deleted.');
+			toastHost.success(displayName(saveFile) + ' deleted.');
 		} catch (error) {
-			showToast('error', 'Could not delete Save File. ' + getErrorMessage(error));
+			toastHost.error('Could not delete Save File. ' + getErrorMessage(error));
 			void focusMenuCommand(menuIndex);
 		} finally {
 			busyTarget = null;
@@ -624,16 +616,6 @@
 			gameNames[details.details.summary.gameVersion] ??
 			'Pokemon ' + details.details.summary.gameVersion
 		);
-	}
-
-	function showToast(tone: ToastView['tone'], message: string) {
-		const id = 'saves-toast-' + nextToastId++;
-		toasts = [...toasts, { id, tone, message }].slice(-3);
-		setTimeout(() => dismissToast(id), tone === 'error' ? 5200 : 3400);
-	}
-
-	function dismissToast(id: string) {
-		toasts = toasts.filter((toast) => toast.id !== id);
 	}
 
 	function getErrorMessage(error: unknown) {
@@ -836,8 +818,6 @@
 		onClose={dismissSaveFileWorkflow}
 	/>
 {/if}
-
-<ToastRegion {toasts} onDismiss={dismissToast} />
 
 <style>
 	:global(.app-shell:has(.saves-route)) {
