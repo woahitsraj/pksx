@@ -7,7 +7,8 @@
 		SaveFileLedgerCommand,
 		SaveFileLedgerCommitReason,
 		SaveFileLedgerFocusFallbacks,
-		SaveFileLedgerProps
+		SaveFileLedgerProps,
+		SaveFileLedgerView
 	} from './save-file-ledger/types';
 
 	let {
@@ -106,13 +107,18 @@
 		};
 	}
 
-	function reconcileTargets(signature: string, nextCommand: SaveFileLedgerCommand | null) {
+	function reconcileTargets(
+		signature: string,
+		nextCommand: SaveFileLedgerCommand | null,
+		viewStatus: SaveFileLedgerView['status'],
+		unavailable: boolean
+	) {
 		void signature;
 		return (node: HTMLElement) => {
 			root = node;
 			let disposed = false;
 			void tick().then(() => {
-				if (!disposed) reconcileFocus(nextCommand);
+				if (!disposed) reconcileFocus(nextCommand, viewStatus, unavailable);
 			});
 			return () => {
 				disposed = true;
@@ -120,17 +126,21 @@
 		};
 	}
 
-	function reconcileFocus(nextCommand: SaveFileLedgerCommand | null) {
+	function reconcileFocus(
+		nextCommand: SaveFileLedgerCommand | null,
+		viewStatus: SaveFileLedgerView['status'],
+		unavailable: boolean
+	) {
 		if (!root) return;
 		const active = document.activeElement;
 		const recoveryIdentity =
-			view.status === 'load-failed'
+			viewStatus === 'load-failed'
 				? 'load-retry'
-				: view.status === 'ready' && view.editingUnavailable
+				: viewStatus === 'ready' && unavailable
 					? 'editing-retry'
 					: null;
 		const recoveryContinues = Boolean(
-			recoveryIdentity || (view.status === 'loading' && recoveryWasActive)
+			recoveryIdentity || (viewStatus === 'loading' && recoveryWasActive)
 		);
 		const enteringRecovery = Boolean(recoveryIdentity && !recoveryWasActive);
 		if (enteringRecovery) {
@@ -138,7 +148,7 @@
 		}
 		if (active instanceof HTMLElement && active !== document.body && !root.contains(active)) {
 			if (recoveryContinues) recoveryWasActive = true;
-			else if (view.status === 'ready') {
+			else if (viewStatus === 'ready') {
 				recoveryWasActive = false;
 				targetBeforeRecovery = null;
 			}
@@ -155,11 +165,11 @@
 			previousCommand = nextCommand;
 			return;
 		}
-		if (view.status === 'loading' && recoveryWasActive) {
+		if (viewStatus === 'loading' && recoveryWasActive) {
 			previousCommand = nextCommand;
 			return;
 		}
-		if (view.status === 'ready' && recoveryWasActive) {
+		if (viewStatus === 'ready' && recoveryWasActive) {
 			const recoveryTarget = targetBeforeRecovery;
 			recoveryWasActive = false;
 			targetBeforeRecovery = null;
@@ -268,7 +278,7 @@
 	export function handleBack() {
 		const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		if (!active || !root?.contains(active)) return false;
-		if (active.matches('[data-ledger-draft]')) {
+		if (active.matches('[data-ledger-draft]') && active.getAttribute('aria-disabled') !== 'true') {
 			abandonDraft(active);
 			return true;
 		}
@@ -607,7 +617,7 @@
 	onfocusin={handleFocusIn}
 	onfocusout={handleFocusOut}
 	{@attach ledgerRoot}
-	{@attach reconcileTargets(targetSignature, command)}
+	{@attach reconcileTargets(targetSignature, command, view.status, editingUnavailable !== null)}
 >
 	<div class="save-file-ledger-density pksx-density">
 		<div class="save-file-ledger-container">

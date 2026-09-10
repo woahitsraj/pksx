@@ -116,6 +116,10 @@ function target(identity: string) {
 	return host.querySelector<HTMLElement>(`[data-destination-focus="${identity}"]`)!;
 }
 
+async function expectFocused(identity: string) {
+	await vi.waitFor(() => expect(document.activeElement).toBe(target(identity)));
+}
+
 function press(targetElement: HTMLElement, key: string) {
 	targetElement.dispatchEvent(
 		new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
@@ -353,29 +357,23 @@ describe('SaveFileLedger semantic focus graph', () => {
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
 		const add = target(`pocket-${pocket.key}-add`) as HTMLButtonElement;
 		add.click();
-		await tick();
-		expect(document.activeElement).toBe(target(`pocket-${pocket.key}-add-item`));
+		await expectFocused(`pocket-${pocket.key}-add-item`);
 		dispatchControllerKey('Escape');
-		await tick();
-		expect(document.activeElement).toBe(target(`pocket-${pocket.key}-add`));
+		await expectFocused(`pocket-${pocket.key}-add`);
 
 		const firstItem = pocket.items[0];
 		const remove = target(`item-${pocket.key}-${firstItem.id}-remove`) as HTMLButtonElement;
 		remove.click();
-		await tick();
-		expect(document.activeElement).toBe(
-			target(`item-${pocket.key}-${firstItem.id}-confirm-remove`)
-		);
+		await expectFocused(`item-${pocket.key}-${firstItem.id}-confirm-remove`);
 		dispatchControllerKey('Escape');
-		await tick();
-		expect(document.activeElement).toBe(target(`item-${pocket.key}-${firstItem.id}-remove`));
+		await expectFocused(`item-${pocket.key}-${firstItem.id}-remove`);
 	});
 
 	test('keeps an unrelated live draft focused when pending Add or Remove completes', async () => {
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
 		let harness = render();
 		(target(`pocket-${pocket.key}-add`) as HTMLButtonElement).click();
-		await tick();
+		await expectFocused(`pocket-${pocket.key}-add-item`);
 		const trainerName = target('trainer-name') as HTMLInputElement;
 		const trainerBlur = vi.fn();
 		trainerName.addEventListener('blur', trainerBlur);
@@ -401,7 +399,7 @@ describe('SaveFileLedger semantic focus graph', () => {
 		const removedPocketKey = removedQuantity.dataset.pocketKey!;
 		const removedItemId = Number(removedQuantity.dataset.itemId);
 		(target(`item-${removedPocketKey}-${removedItemId}-remove`) as HTMLButtonElement).click();
-		await tick();
+		await expectFocused(`item-${removedPocketKey}-${removedItemId}-confirm-remove`);
 		const quantityBlur = vi.fn();
 		liveQuantity.addEventListener('blur', quantityBlur);
 		liveQuantity.focus();
@@ -417,7 +415,7 @@ describe('SaveFileLedger semantic focus graph', () => {
 		render();
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
 		(target(`pocket-${pocket.key}-add`) as HTMLButtonElement).click();
-		await tick();
+		await expectFocused(`pocket-${pocket.key}-add-item`);
 		dispatchControllerKey('ArrowUp');
 		expect(document.activeElement).toBe(target(`pocket-${pocket.key}-jump`));
 		dispatchControllerKey('ArrowDown');
@@ -432,12 +430,13 @@ describe('SaveFileLedger semantic focus graph', () => {
 		const first = pocket.items[0];
 		const second = pocket.items[1];
 		(target(`item-${pocket.key}-${first.id}-remove`) as HTMLButtonElement).click();
-		await tick();
+		await expectFocused(`item-${pocket.key}-${first.id}-confirm-remove`);
 		(target(`item-${pocket.key}-${first.id}-confirm-remove`) as HTMLButtonElement).click();
-		await tick();
-		expect(
-			document.activeElement?.closest('[data-ledger-row]')?.getAttribute('data-ledger-row')
-		).toBe(`item-${pocket.key}-${second.id}`);
+		await vi.waitFor(() =>
+			expect(
+				document.activeElement?.closest('[data-ledger-row]')?.getAttribute('data-ledger-row')
+			).toBe(`item-${pocket.key}-${second.id}`)
+		);
 	});
 
 	test('moves to Add Item when the removed item was alone', async () => {
@@ -448,10 +447,9 @@ describe('SaveFileLedger semantic focus graph', () => {
 		const oneItemView = projectionWithItems(pocket.key, [second]);
 		render(oneItemView);
 		(target(`item-${pocket.key}-${second.id}-remove`) as HTMLButtonElement).click();
-		await tick();
+		await expectFocused(`item-${pocket.key}-${second.id}-confirm-remove`);
 		(target(`item-${pocket.key}-${second.id}-confirm-remove`) as HTMLButtonElement).click();
-		await tick();
-		expect(document.activeElement).toBe(target(`pocket-${pocket.key}-add`));
+		await expectFocused(`pocket-${pocket.key}-add`);
 	});
 
 	test('moves to the previous item when removing the last item', async () => {
@@ -462,12 +460,13 @@ describe('SaveFileLedger semantic focus graph', () => {
 		const last = pocket.items[1];
 		render(projectionWithItems(pocket.key, [previous, last]));
 		(target(`item-${pocket.key}-${last.id}-remove`) as HTMLButtonElement).click();
-		await tick();
+		await expectFocused(`item-${pocket.key}-${last.id}-confirm-remove`);
 		(target(`item-${pocket.key}-${last.id}-confirm-remove`) as HTMLButtonElement).click();
-		await tick();
-		expect(
-			document.activeElement?.closest('[data-ledger-row]')?.getAttribute('data-ledger-row')
-		).toBe(`item-${pocket.key}-${previous.id}`);
+		await vi.waitFor(() =>
+			expect(
+				document.activeElement?.closest('[data-ledger-row]')?.getAttribute('data-ledger-row')
+			).toBe(`item-${pocket.key}-${previous.id}`)
+		);
 	});
 
 	test('refreshes a surviving item index before a later removal fallback', async () => {
@@ -477,16 +476,17 @@ describe('SaveFileLedger semantic focus graph', () => {
 		const [first, second, focused, next, last] = pocket.items;
 		const harness = render(projectionWithItems(pocket.key, [first, second, focused, next, last]));
 		const focusedIdentity = `item-${pocket.key}-${focused.id}-remove`;
+		await tick();
+		await tick();
 		target(focusedIdentity).focus();
 
 		harness.setView(projectionWithItems(pocket.key, [second, focused, next, last]));
 		await tick();
-		expect(document.activeElement).toBe(target(focusedIdentity));
+		await tick();
+		await expectFocused(focusedIdentity);
 
 		harness.setView(projectionWithItems(pocket.key, [second, next, last]));
-		await tick();
-		await tick();
-		expect(document.activeElement).toBe(target(`item-${pocket.key}-${next.id}-decrease`));
+		await expectFocused(`item-${pocket.key}-${next.id}-decrease`);
 	});
 
 	test('falls back from a vanished catalogue Retry and restores focus after route editing Retry', async () => {
@@ -509,8 +509,7 @@ describe('SaveFileLedger semantic focus graph', () => {
 			...publicFixtureView,
 			editingUnavailable: { message: 'Editor service unavailable.' }
 		});
-		await tick();
-		expect(document.activeElement).toBe(target('editing-retry'));
+		await expectFocused('editing-retry');
 		harness.setView(publicFixtureView);
 		await tick();
 		await tick();
@@ -523,8 +522,7 @@ describe('SaveFileLedger semantic focus graph', () => {
 			...publicFixtureView,
 			editingUnavailable: { message: 'Editor service unavailable.' }
 		});
-		await tick();
-		expect(document.activeElement).toBe(target('editing-retry'));
+		await expectFocused('editing-retry');
 		const jump = target(`pocket-${pocket.key}-jump`);
 		jump.focus();
 		harness.setCatalogues({
@@ -809,8 +807,7 @@ describe('SaveFileLedger semantic focus graph', () => {
 			{ status: 'load-failed', message: 'Could not read the Save File again.' },
 			{ props: { getSessionFocusIdentity: () => memory.identity } }
 		);
-		await tick();
-		expect(document.activeElement).toBe(target('load-retry'));
+		await expectFocused('load-retry');
 		remounted.setView(publicFixtureView);
 		await tick();
 		await tick();
@@ -827,8 +824,7 @@ describe('SaveFileLedger semantic focus graph', () => {
 		harness.setView({ status: 'loading' });
 		await tick();
 		harness.setView({ status: 'load-failed', message: 'Could not read the Save File.' });
-		await tick();
-		expect(document.activeElement).toBe(target('load-retry'));
+		await expectFocused('load-retry');
 		harness.setView({ status: 'loading' });
 		await tick();
 		harness.setView({
@@ -836,12 +832,9 @@ describe('SaveFileLedger semantic focus graph', () => {
 			message: 'Could not read the Save File.',
 			retrying: true
 		});
-		await tick();
-		expect(document.activeElement).toBe(target('load-retry'));
+		await expectFocused('load-retry');
 		harness.setView(publicFixtureView);
-		await tick();
-		await tick();
-		expect(document.activeElement).toBe(target(itemIdentity));
+		await expectFocused(itemIdentity);
 
 		await clearMounted();
 		const unavailable = render(
@@ -851,12 +844,9 @@ describe('SaveFileLedger semantic focus graph', () => {
 			},
 			{ props: { getSessionFocusIdentity: () => itemIdentity } }
 		);
-		await tick();
-		expect(document.activeElement).toBe(target('editing-retry'));
+		await expectFocused('editing-retry');
 		unavailable.setView(publicFixtureView);
-		await tick();
-		await tick();
-		expect(document.activeElement).toBe(target(itemIdentity));
+		await expectFocused(itemIdentity);
 	});
 
 	test('uses first editable focus when an exact recovery identity no longer exists', async () => {
@@ -881,7 +871,32 @@ describe('SaveFileLedger semantic focus graph', () => {
 		expect(document.activeElement).toBe(target('trainer-name'));
 	});
 
-	test('restores local focus after a retrying editing recovery without a shell getter', async () => {
+	test('restores local focus after retrying recovery and another target change', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const harness = render();
+		target('money-value').focus();
+		harness.setView({
+			...publicFixtureView,
+			editingUnavailable: { message: 'Editor unavailable.' }
+		});
+		await tick();
+		await tick();
+		harness.setView({
+			...publicFixtureView,
+			editingUnavailable: { message: 'Editor unavailable.', retrying: true }
+		});
+		harness.setCatalogues({
+			...publicCatalogues,
+			[pocket.key]: { status: 'loading' }
+		});
+		await tick();
+		harness.setView(publicFixtureView);
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(target('money-value'));
+	});
+
+	test('restores local focus when ready state overtakes the rendered unavailable phase', async () => {
 		const harness = render();
 		target('money-value').focus();
 		harness.setView({
@@ -893,11 +908,8 @@ describe('SaveFileLedger semantic focus graph', () => {
 			...publicFixtureView,
 			editingUnavailable: { message: 'Editor unavailable.', retrying: true }
 		});
-		await tick();
 		harness.setView(publicFixtureView);
-		await tick();
-		await tick();
-		expect(document.activeElement).toBe(target('money-value'));
+		await expectFocused('money-value');
 	});
 
 	test('does not restore recovery focus over a shell takeover', async () => {
@@ -1010,7 +1022,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		render();
 		const pocketKey = publicFixtureView.projection.inventory.pockets[0].key;
 		(target(`pocket-${pocketKey}-add`) as HTMLButtonElement).click();
-		await tick();
+		await expectFocused(`pocket-${pocketKey}-add-item`);
 		const select = target(`pocket-${pocketKey}-add-item`);
 		const nativeArrow = new KeyboardEvent('keydown', {
 			key: 'ArrowRight',
@@ -1069,7 +1081,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 				onCommandChange
 			}
 		});
-		await tick();
+		await expectFocused(`pocket-${pocket.key}-add-item`);
 		const name = target('trainer-name');
 		name.focus();
 		expect(ledger.handleBack()).toBe(true);
@@ -1077,17 +1089,55 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		expect(onCommandChange).not.toHaveBeenCalled();
 	});
 
+	test('leaves pending read-only drafts focused and declines local Back handling', async () => {
+		const onMoneyAbandon = vi.fn();
+		const ledger = render(publicFixtureView, {
+			harness: false,
+			pendingTargets: ['money'],
+			props: { onMoneyAbandon }
+		});
+		const money = target('money-value') as HTMLInputElement;
+		money.focus();
+		expect(money.readOnly).toBe(true);
+		expect(ledger.handleBack()).toBe(false);
+		const escape = new KeyboardEvent('keydown', {
+			key: 'Escape',
+			bubbles: true,
+			cancelable: true
+		});
+		money.dispatchEvent(escape);
+		expect(escape.defaultPrevented).toBe(false);
+		expect(onMoneyAbandon).not.toHaveBeenCalled();
+		expect(document.activeElement).toBe(money);
+
+		await clearMounted();
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const onCommandChange = vi.fn();
+		const withCommand = render(publicFixtureView, {
+			harness: false,
+			pendingTargets: ['trainer-name'],
+			props: {
+				command: { kind: 'add-item', pocketKey: pocket.key, itemId: null, quantity: '1' },
+				onCommandChange
+			}
+		});
+		await expectFocused(`pocket-${pocket.key}-add-item`);
+		const name = target('trainer-name');
+		name.focus();
+		expect(withCommand.handleBack()).toBe(true);
+		expect(onCommandChange).toHaveBeenCalledWith(null);
+	});
+
 	test('closes an open command from any ordinary Ledger control and restores its launcher', async () => {
 		const ledger = render();
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
 		const launcherIdentity = `pocket-${pocket.key}-add`;
 		(target(launcherIdentity) as HTMLButtonElement).click();
-		await tick();
+		await expectFocused(`pocket-${pocket.key}-add-item`);
 		target('money-decrease').focus();
 		expect(ledger.handleBack()).toBe(true);
-		await tick();
+		await expectFocused(launcherIdentity);
 		expect(host.querySelector('[data-ledger-command]')).toBeNull();
-		expect(document.activeElement).toBe(target(launcherIdentity));
 	});
 
 	test('does not steal focus when async command reconciliation runs after a shell takeover', async () => {
