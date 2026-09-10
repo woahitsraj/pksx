@@ -45,6 +45,7 @@
 		fieldIdentity: string;
 		commit: (reason: SaveFileLedgerCommitReason) => void;
 	} | null = null;
+	let pointerDraftOperator: string | null = null;
 	let previousCommand: SaveFileLedgerCommand | null = null;
 	let editingWasUnavailable = false;
 	let lastItemFocus: { pocketKey: string; itemId: number; index: number } | null = null;
@@ -74,7 +75,7 @@
 			command ? commandIdentity(command) : '',
 			...pockets.flatMap((pocket) => [
 				pocket.key,
-				catalogueFor(pocket.key).status,
+				catalogueSignature(catalogueFor(pocket.key)),
 				...pocket.items.map((item) => String(item.id))
 			])
 		].join('|');
@@ -84,6 +85,8 @@
 	function ledgerRoot(node: HTMLElement) {
 		root = node;
 		window.addEventListener('keydown', handleWindowKeydown, true);
+		window.addEventListener('pointerup', releaseDraftOperatorPointer, true);
+		window.addEventListener('pointercancel', releaseDraftOperatorPointer, true);
 		let visibilityFrame = 0;
 		const resizeObserver = new ResizeObserver(() => {
 			cancelAnimationFrame(visibilityFrame);
@@ -95,6 +98,8 @@
 		resizeObserver.observe(node);
 		return () => {
 			window.removeEventListener('keydown', handleWindowKeydown, true);
+			window.removeEventListener('pointerup', releaseDraftOperatorPointer, true);
+			window.removeEventListener('pointercancel', releaseDraftOperatorPointer, true);
 			resizeObserver.disconnect();
 			cancelAnimationFrame(visibilityFrame);
 		};
@@ -150,7 +155,11 @@
 		previousCommand = nextCommand;
 		refreshLastItemIndex();
 
-		if (rememberedTarget && !findIdentity(rememberedTarget)) reconcileMissingTarget();
+		if (rememberedTarget) {
+			const remembered = findIdentity(rememberedTarget);
+			if (!remembered) reconcileMissingTarget();
+			else if (document.activeElement === document.body) focusElement(remembered);
+		}
 	}
 
 	function refreshLastItemIndex() {
@@ -368,6 +377,10 @@
 		return catalogues[pocketKey] ?? { status: 'loading' };
 	}
 
+	function catalogueSignature(catalogue: SaveFileLedgerCatalogue) {
+		return `${catalogue.status}:${catalogue.status === 'loading' && catalogue.retrying ? 'retrying' : ''}`;
+	}
+
 	function availableOptions(pocketKey: string) {
 		const catalogue = catalogueFor(pocketKey);
 		if (catalogue.status !== 'ready') return [];
@@ -393,7 +406,7 @@
 		const operatorIdentity =
 			event.relatedTarget instanceof HTMLElement
 				? event.relatedTarget.dataset.ledgerConsumesDraft
-				: null;
+				: pointerDraftOperator;
 		if (commit && fieldIdentity && operatorIdentity === fieldIdentity) {
 			deferredBlur = { fieldIdentity, commit };
 			return;
@@ -424,6 +437,22 @@
 	function activateDraftOperator(fieldIdentity: string, action: (() => boolean) | undefined) {
 		if (action?.() !== true) return;
 		if (deferredBlur?.fieldIdentity === fieldIdentity) deferredBlur = null;
+	}
+
+	function beginDraftOperatorPointer(event: PointerEvent) {
+		const operator = event.currentTarget as HTMLElement;
+		const fieldIdentity = operator.dataset.ledgerConsumesDraft;
+		const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		if (fieldIdentity && active?.dataset.destinationFocus === fieldIdentity) {
+			event.preventDefault();
+			pointerDraftOperator = fieldIdentity;
+		} else {
+			pointerDraftOperator = null;
+		}
+	}
+
+	function releaseDraftOperatorPointer() {
+		pointerDraftOperator = null;
 	}
 
 	function commitDraft(target: HTMLElement, reason: SaveFileLedgerCommitReason) {
@@ -506,7 +535,8 @@
 			if (catalogue.status === 'ready' && !pocket.full && availableOptions(pocket.key).length > 0) {
 				return addIdentity(pocket.key);
 			}
-			if (catalogue.status === 'failed') return retryIdentity(pocket.key);
+			if (catalogue.status === 'failed' || (catalogue.status === 'loading' && catalogue.retrying))
+				return retryIdentity(pocket.key);
 			if (pocket.items[0]) return itemIdentity(pocket.key, pocket.items[0].id, 'decrease');
 		}
 		return pockets[0] ? jumpIdentity(pockets[0].key) : '';
@@ -584,7 +614,6 @@
 						</div>
 						<p class="workspace-file">
 							<span class="filename" title={view.originalFilename}>{view.originalFilename}</span>
-							<span aria-hidden="true">·</span>
 							<span>{view.summary.gameVersion}</span>
 						</p>
 					</header>
@@ -771,6 +800,7 @@
 												aria-label="Decrease Money"
 												data-ledger-control
 												data-ledger-consumes-draft="money-value"
+												onpointerdown={beginDraftOperatorPointer}
 												data-destination-initial={initialTargetIdentity === 'money-decrease'
 													? ''
 													: undefined}
@@ -811,6 +841,7 @@
 												aria-label="Increase Money"
 												data-ledger-control
 												data-ledger-consumes-draft="money-value"
+												onpointerdown={beginDraftOperatorPointer}
 												data-destination-focus="money-increase"
 												aria-disabled={moneyBusy || moneyAtMax}
 												disabled={Boolean(editingUnavailable)}
@@ -826,6 +857,7 @@
 												type="button"
 												data-ledger-control
 												data-ledger-consumes-draft="money-value"
+												onpointerdown={beginDraftOperatorPointer}
 												data-destination-focus="money-max"
 												aria-disabled={moneyBusy || moneyAtMax}
 												disabled={Boolean(editingUnavailable)}
@@ -990,9 +1022,32 @@
 															>
 														{/if}
 
-														<div class="catalogue-status">
+														<div
+															class="catalogue-status"
+															aria-busy={catalogue.status === 'loading'}
+														>
 															{#if catalogue.status === 'loading'}
-																<DelayedSpinner active label={`Loading ${pocket.label} items`} />
+																{#if catalogue.retrying}
+																	<button
+																		type="button"
+																		data-ledger-control
+																		data-destination-initial={initialTargetIdentity ===
+																		retryIdentity(pocket.key)
+																			? ''
+																			: undefined}
+																		data-destination-focus={retryIdentity(pocket.key)}
+																		aria-busy="true"
+																		aria-disabled="true"
+																	>
+																		Retry catalogue
+																		<DelayedSpinner
+																			active
+																			label={`Retrying ${pocket.label} catalogue`}
+																		/>
+																	</button>
+																{:else}
+																	<DelayedSpinner active label={`Loading ${pocket.label} items`} />
+																{/if}
 															{:else if catalogue.status === 'failed'}
 																<span class="field-error">{catalogue.message}</span>
 																<button
@@ -1107,6 +1162,7 @@
 																				aria-label={`Decrease ${item.name} quantity`}
 																				data-ledger-control
 																				data-ledger-consumes-draft={quantityIdentity}
+																				onpointerdown={beginDraftOperatorPointer}
 																				data-pocket-key={pocket.key}
 																				data-item-id={item.id}
 																				data-destination-fallbacks={focusFallbacks}
@@ -1173,6 +1229,7 @@
 																				aria-label={`Increase ${item.name} quantity`}
 																				data-ledger-control
 																				data-ledger-consumes-draft={quantityIdentity}
+																				onpointerdown={beginDraftOperatorPointer}
 																				data-pocket-key={pocket.key}
 																				data-item-id={item.id}
 																				data-destination-fallbacks={focusFallbacks}

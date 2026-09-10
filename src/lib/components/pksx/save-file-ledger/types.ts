@@ -18,7 +18,7 @@ export type SaveFileLedgerView =
 	  };
 
 export type SaveFileLedgerCatalogue =
-	| { status: 'loading' }
+	| { status: 'loading'; retrying?: boolean }
 	| { status: 'ready'; availableItems: InventoryItemOption[] }
 	| { status: 'failed'; message: string };
 

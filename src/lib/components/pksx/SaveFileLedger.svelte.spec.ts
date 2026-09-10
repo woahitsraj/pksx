@@ -154,6 +154,7 @@ describe('SaveFileLedger public fixture presentation', () => {
 		expect(host.querySelector('.mock-section, .mock-field, .apply-bar, .item-icon')).toBeNull();
 		expect(host.textContent).not.toMatch(/staged|Apply edits|Cancel all|generation|box count/i);
 		expect(host.textContent).not.toContain('¤');
+		expect(host.textContent).not.toContain('·');
 		expect(target('money-decrease').getAttribute('aria-label')).toBe('Decrease Money');
 		expect(target('money-increase').getAttribute('aria-label')).toBe('Increase Money');
 
@@ -432,6 +433,47 @@ describe('SaveFileLedger semantic focus graph', () => {
 		await tick();
 		await tick();
 		expect(document.activeElement).toBe(remembered);
+	});
+
+	test('keeps catalogue Retry focused through retrying and returns to Add without stealing focus', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const failedCatalogues = {
+			...publicCatalogues,
+			[pocket.key]: { status: 'failed' as const, message: 'Catalogue unavailable.' }
+		};
+		const retryingCatalogues = {
+			...publicCatalogues,
+			[pocket.key]: { status: 'loading' as const, retrying: true }
+		};
+		const emptyView = projectionWithItems(pocket.key, []);
+		let harness = render(emptyView, { catalogues: failedCatalogues });
+		target(`pocket-${pocket.key}-retry`).focus();
+		harness.setCatalogues(retryingCatalogues);
+		await tick();
+		await tick();
+		const retrying = target(`pocket-${pocket.key}-retry`);
+		expect(document.activeElement).toBe(retrying);
+		expect(retrying.getAttribute('aria-busy')).toBe('true');
+		expect(retrying.getAttribute('aria-disabled')).toBe('true');
+		expect(retrying.querySelector('.spinner-graphic')).toBeNull();
+		await new Promise((resolve) => setTimeout(resolve, 550));
+		expect(retrying.querySelector('.spinner-graphic')).not.toBeNull();
+		harness.setCatalogues(publicCatalogues);
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(target(`pocket-${pocket.key}-add`));
+
+		await clearMounted();
+		harness = render(publicFixtureView, { catalogues: failedCatalogues });
+		target(`pocket-${pocket.key}-retry`).focus();
+		harness.setCatalogues(retryingCatalogues);
+		await tick();
+		await tick();
+		target('money-value').focus();
+		harness.setCatalogues(publicCatalogues);
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(target('money-value'));
 	});
 
 	test('enters a pocket through Retry, first item, the next pocket, then clamps', async () => {
@@ -946,12 +988,63 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		const input = target('money-value');
 		const decrease = target('money-decrease');
 		input.focus();
-		decrease.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-		decrease.focus();
+		const pointerdown = new PointerEvent('pointerdown', { bubbles: true, cancelable: true });
+		decrease.dispatchEvent(pointerdown);
+		expect(pointerdown.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(input);
 		decrease.click();
 
 		expect(onMoneyCommit).not.toHaveBeenCalled();
 		expect(onMoneyStep).toHaveBeenCalledWith(-1, '001');
+	});
+
+	test('consumes a null-related-target pointer blur with exactly one operator step', async () => {
+		const onMoneyCommit = vi.fn();
+		const onMoneyStep = vi.fn(() => true);
+		render(publicFixtureView, {
+			harness: false,
+			props: {
+				drafts: { money: { value: '001' } },
+				onMoneyCommit,
+				onMoneyStep
+			}
+		});
+		await tick();
+		const input = target('money-value');
+		const increase = target('money-increase');
+		input.focus();
+		increase.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+		input.dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
+		window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+		await Promise.resolve();
+		expect(onMoneyCommit).not.toHaveBeenCalled();
+		increase.click();
+
+		expect(onMoneyCommit).not.toHaveBeenCalled();
+		expect(onMoneyStep).toHaveBeenCalledOnce();
+		expect(onMoneyStep).toHaveBeenCalledWith(1, '001');
+	});
+
+	test('keeps a pointer-cancelled or released draft focused until a real focus transfer', async () => {
+		const onMoneyCommit = vi.fn();
+		render(publicFixtureView, { harness: false, props: { onMoneyCommit } });
+		await tick();
+		const input = target('money-value');
+		const increase = target('money-increase');
+		input.focus();
+		increase.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+		window.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true }));
+		expect(document.activeElement).toBe(input);
+		expect(onMoneyCommit).not.toHaveBeenCalled();
+
+		increase.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+		window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+		await Promise.resolve();
+		expect(document.activeElement).toBe(input);
+		expect(onMoneyCommit).not.toHaveBeenCalled();
+
+		host.querySelector<HTMLElement>('[data-ledger-jump]')!.focus();
+		expect(onMoneyCommit).toHaveBeenCalledOnce();
 	});
 
 	test('lets controller traversal reach a same-field operator and activate one combined step', async () => {
@@ -1155,5 +1248,17 @@ describe('SaveFileLedger states and feedback', () => {
 		expect(money.querySelector('.spinner-graphic')).toBeNull();
 		await new Promise((resolve) => setTimeout(resolve, 550));
 		expect(money.querySelector('.spinner-graphic')).not.toBeNull();
+
+		await clearMounted();
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		render(publicFixtureView, {
+			harness: false,
+			catalogues: { ...publicCatalogues, [pocket.key]: { status: 'loading' } }
+		});
+		const catalogueStatus = host.querySelector<HTMLElement>(
+			`[data-ledger-pocket="${pocket.key}"] .catalogue-status`
+		)!;
+		expect(catalogueStatus.getAttribute('aria-busy')).toBe('true');
+		expect(catalogueStatus.querySelector('.spinner-graphic')).toBeNull();
 	});
 });
