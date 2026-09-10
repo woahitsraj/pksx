@@ -115,6 +115,16 @@ const noResponsiveClassifier = {
 							rootAliases.add(property.value.name);
 					}
 				}
+				if (node.id.type === 'ObjectPattern' && isDocumentRoot(node.init, rootAliases)) {
+					for (const property of node.id.properties) {
+						if (
+							property.type === 'Property' &&
+							property.key.type === 'Identifier' &&
+							rootGeometryProperties.has(property.key.name)
+						)
+							context.report({ node: property, messageId: 'root' });
+					}
+				}
 			},
 			Identifier(node) {
 				if (!globalViewportIdentifiers.has(node.name)) return;
@@ -211,15 +221,28 @@ const noOwnedTokenWrites = {
 		schema: []
 	},
 	create(context) {
+		const tokenAliases = new Set();
 		return {
+			VariableDeclarator(node) {
+				if (node.id.type !== 'Identifier') return;
+				if (
+					node.init?.type === 'Literal' &&
+					typeof node.init.value === 'string' &&
+					ownedToken.test(node.init.value)
+				)
+					tokenAliases.add(node.id.name);
+				if (node.init?.type === 'Identifier' && tokenAliases.has(node.init.name))
+					tokenAliases.add(node.id.name);
+			},
 			CallExpression(node) {
 				if (node.callee.type !== 'MemberExpression' || propertyName(node.callee) !== 'setProperty')
 					return;
 				const token = node.arguments[0];
 				if (
-					token?.type === 'Literal' &&
-					typeof token.value === 'string' &&
-					ownedToken.test(token.value)
+					(token?.type === 'Literal' &&
+						typeof token.value === 'string' &&
+						ownedToken.test(token.value)) ||
+					(token?.type === 'Identifier' && tokenAliases.has(token.name))
 				) {
 					context.report({ node, messageId: 'token' });
 				}

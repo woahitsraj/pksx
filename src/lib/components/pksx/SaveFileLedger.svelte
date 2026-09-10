@@ -1799,7 +1799,7 @@
 	.money-row,
 	.quantity-controls,
 	.add-command {
-		font-size: var(--pksx-type-editable);
+		font-size: max(16px, var(--pksx-type-editable, 16px));
 	}
 
 	.field-error {
@@ -2005,6 +2005,11 @@
 		font-size: var(--pksx-type-label);
 		font-weight: 700;
 		cursor: pointer;
+	}
+
+	input,
+	select {
+		font-size: max(16px, var(--pksx-type-editable, 16px));
 	}
 
 	button:hover:not(:disabled):not([aria-disabled='true']),

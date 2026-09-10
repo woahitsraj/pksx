@@ -1,5 +1,8 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { checkDesignContract } from './check';
+import { checkDesignContract, checkRepository } from './check';
 
 function names(path: string, source: string) {
 	return checkDesignContract(path, source).map(({ contract, name }) => `${contract} ${name}`);
@@ -28,6 +31,9 @@ describe('responsive design contract', () => {
 	});
 
 	it('[RESP-1] requires the structurally exact Height Band authority', () => {
+		expect(names('src/routes/layout.css', ':root { --pksx-height-band: short; }')).toContain(
+			'RESP-1 viewport-query'
+		);
 		expect(
 			names(
 				'src/routes/layout.css',
@@ -37,9 +43,32 @@ describe('responsive design contract', () => {
 		expect(
 			names('src/other.css', '@media (min-height: 560px) { :root { --pksx-height-band: tall; } }')
 		).toEqual(expect.arrayContaining(['RESP-1 viewport-query', 'RESP-1 height-band-owner']));
+		expect(
+			names(
+				'src/routes/layout.css',
+				'@media (min-height: 560px) { :root { --pksx-height-band: tall; } } @media (min-height: 560px) { :root { --pksx-height-band: tall; } }'
+			)
+		).toContain('RESP-1 viewport-query');
 		expect(names('src/routes/layout.css', '.x { --pksx-height-band: short; }')).toContain(
 			'RESP-1 height-band-owner'
 		);
+	});
+
+	it('[RESP-1] requires the Height Band authority file in the repository', async () => {
+		const root = await mkdtemp(path.join(tmpdir(), 'pksx-design-contract-'));
+		try {
+			await mkdir(path.join(root, 'src'));
+			await writeFile(path.join(root, 'src', 'component.css'), '.component { display: grid; }');
+			expect(await checkRepository(root)).toEqual([
+				expect.objectContaining({
+					contract: 'RESP-1',
+					name: 'viewport-query',
+					path: 'src/routes/layout.css'
+				})
+			]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 
 	it.each([
@@ -125,6 +154,22 @@ describe('density design contract', () => {
 		expect(names('src/Example.svelte', source)).toContain('DENSITY-1 control-owner');
 	});
 
+	it('[DENSITY-1] requires control ownership even without a block-size declaration', () => {
+		expect(names('src/Example.svelte', '<button>Go</button>')).toContain('DENSITY-1 control-owner');
+		expect(
+			names(
+				'src/Example.svelte',
+				'<button class="action">Go</button><style>.action { padding: 1rem; }</style>'
+			)
+		).toContain('DENSITY-1 control-owner');
+		expect(
+			names(
+				'src/Example.svelte',
+				'<button class="action" data-pksx-control-category="small">Go</button><style>.action { height: 1px; }</style>'
+			)
+		).toContain('DENSITY-1 control-owner');
+	});
+
 	it('[DENSITY-1] rejects derived sizes, invalid categories, and inline ownership bypasses', () => {
 		const source = `<button class="derived">Go</button>
 			<button class="invalid" data-pksx-control-category="compact" style:height={'30px'}>No</button>
@@ -141,26 +186,44 @@ describe('density design contract', () => {
 	it('[DENSITY-1] enforces editable font ownership', () => {
 		const rejected = names(
 			'src/Example.svelte',
-			'<input class="field" /><style>.field { font-size: var(--pksx-type-label); }</style>'
+			'<input class="field" data-pksx-control-category="composition" /><style>.field { font-size: var(--pksx-type-label); }</style>'
 		);
 		expect(rejected).toContain('DENSITY-1 editable-floor');
 		expect(
 			names(
 				'src/Example.svelte',
-				'<input class="field" /><style>.field { font: 700 var(--pksx-type-label) sans-serif; }</style>'
+				'<input class="field" data-pksx-control-category="composition" /><style>.field { font: 700 var(--pksx-type-label) sans-serif; }</style>'
 			)
 		).toContain('DENSITY-1 editable-floor');
 		expect(
 			names(
 				'src/Example.svelte',
-				'<input class="field" /><style>.field { font-size: var(--pksx-type-editable); }</style>'
+				'<input class="field" data-pksx-control-category="composition" /><style>.field { font-size: var(--pksx-type-editable); }</style>'
 			)
 		).toEqual([]);
 		expect(
 			names(
 				'src/Example.svelte',
-				'<div class="form"><div id="editable" contenteditable></div></div><style>.form #editable { font-size: var(--pksx-type-label); }</style>'
+				'<input class="field" data-pksx-control-category="composition" /><style>.field { font-size: max(16px, var(--pksx-type-editable, 16px)); }</style>'
+			)
+		).toEqual([]);
+		expect(
+			names(
+				'src/Example.svelte',
+				'<input class="field" data-pksx-control-category="composition" /><style>.field { font-size: max(15px, var(--pksx-type-editable, 15px)); }</style>'
+			)
+		).toEqual(expect.arrayContaining(['DENSITY-1 type-token', 'DENSITY-1 editable-floor']));
+		expect(
+			names(
+				'src/Example.svelte',
+				'<div class="form"><div id="editable" contenteditable data-pksx-control-category="composition"></div></div><style>.form #editable { font-size: var(--pksx-type-label); }</style>'
 			)
 		).toContain('DENSITY-1 editable-floor');
+		expect(
+			names(
+				'src/Example.svelte',
+				'<input data-pksx-control-category="composition" /><style>input { font: 12px / var(--pksx-type-editable) sans-serif !important; }</style>'
+			)
+		).toEqual(expect.arrayContaining(['DENSITY-1 type-token', 'DENSITY-1 editable-floor']));
 	});
 });

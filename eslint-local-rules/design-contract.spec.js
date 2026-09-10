@@ -25,6 +25,7 @@ describe('local responsive rules', () => {
 		'const { screen: display } = window; display.width;',
 		"matchMedia('(min-width: 40rem)')",
 		'const root = document.documentElement; root.clientWidth;',
+		'const { clientWidth } = document.documentElement; if (clientWidth > 640) useWideLayout();',
 		'const { body: root } = document; root.clientHeight;',
 		'document.body.getBoundingClientRect();',
 		'element.clientWidth > element.clientHeight'
@@ -44,5 +45,9 @@ describe('local responsive rules', () => {
 		expect(messages("element.style.setProperty('--pksx-type-body', '12px')")[0]?.message).toContain(
 			'[DENSITY-1]'
 		);
+		expect(
+			messages("const token = '--pksx-type-body'; element.style.setProperty(token, '12px')")[0]
+				?.message
+		).toContain('[DENSITY-1]');
 	});
 });

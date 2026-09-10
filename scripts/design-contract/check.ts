@@ -53,7 +53,7 @@ const viewportVariant =
 const viewportVariantName = /^(?:sm|md|lg|xl|2xl|portrait|landscape|min-|max-|\[@media)/;
 const typeToken =
 	/^var\(--pksx-(?:type-(?:caption|label|body|title|display|editable)|(?:small-)?icon-size)\)$/;
-const canonicalEditable = /^max\(16px,\s*var\(--pksx-type-editable\)\)$/;
+const canonicalEditable = /^max\(16px,\s*var\(--pksx-type-editable(?:,\s*16px)?\)\)$/;
 const ownedTokens = new Set([
 	'--pksx-type-caption',
 	'--pksx-type-label',
@@ -260,6 +260,53 @@ function containsIdentitySelector(selectorList: AstNode) {
 	return found;
 }
 
+function cssTokens(value: string) {
+	const tokens: string[] = [];
+	let current = '';
+	let depth = 0;
+	let quote = '';
+	for (const character of value) {
+		if (quote) {
+			current += character;
+			if (character === quote) quote = '';
+			continue;
+		}
+		if (character === '"' || character === "'") {
+			quote = character;
+			current += character;
+			continue;
+		}
+		if (character === '(') depth += 1;
+		if (character === ')') depth -= 1;
+		if (depth === 0 && (character === '/' || /\s/.test(character))) {
+			if (current) tokens.push(current);
+			if (character === '/') tokens.push(character);
+			current = '';
+			continue;
+		}
+		current += character;
+	}
+	if (current) tokens.push(current);
+	return tokens;
+}
+
+function fontSizeFromShorthand(value: string) {
+	if (value === 'inherit') return 'inherit';
+	const tokens = cssTokens(value);
+	const slash = tokens.indexOf('/');
+	const candidates = slash === -1 ? tokens : tokens.slice(0, slash);
+	return (
+		candidates.find(
+			(token) =>
+				typeToken.test(token) ||
+				canonicalEditable.test(token) ||
+				/^(?:\d*\.?\d+(?:%|[a-z]+)|(?:calc|clamp|max|min)\(|xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|larger|smaller)/i.test(
+					token
+				)
+		) ?? null
+	);
+}
+
 function compoundMatchesIdentity(compound: AstNode, identity: ElementIdentity) {
 	const selectors = Array.isArray(compound.selectors) ? (compound.selectors as AstNode[]) : [];
 	for (const selector of selectors) {
@@ -377,6 +424,28 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 	}
 
 	const elements = filePath.endsWith('.svelte') ? collectElements(ast) : [];
+	const standardControlOwners = new Set<ElementRecord>();
+	const smallControlOwners = new Set<ElementRecord>();
+	const reportMissingControlOwners = () => {
+		for (const element of elements) {
+			if (element.category === 'small' && !smallControlOwners.has(element)) {
+				report(
+					'DENSITY-1',
+					'control-owner',
+					element.offset,
+					'Small controls must derive a block dimension from --pksx-small-control-height.'
+				);
+			}
+			if (!element.category && !standardControlOwners.has(element)) {
+				report(
+					'DENSITY-1',
+					'control-owner',
+					element.offset,
+					'Standard controls require --pksx-control-height or an explicit custom category.'
+				);
+			}
+		}
+	};
 	for (const element of elements) {
 		if (element.category && !customCategories.has(element.category)) {
 			report(
@@ -467,7 +536,29 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 		}
 	}
 
-	if (!css) return diagnostics;
+	if (!css) {
+		reportMissingControlOwners();
+		return diagnostics;
+	}
+	if (filePath === 'src/routes/layout.css') {
+		const authorities: AstNode[] = [];
+		visit(css, (node) => {
+			if (
+				node.type === 'Atrule' &&
+				node.name?.toLowerCase() === 'media' &&
+				isCanonicalHeightBandMedia(filePath, node, cssSource)
+			)
+				authorities.push(node);
+		});
+		if (authorities.length !== 1) {
+			report(
+				'RESP-1',
+				'viewport-query',
+				((authorities[1] ?? authorities[0])?.start ?? cssOffset) - cssOffset,
+				'Exactly one structurally valid 560px Height Band authority is required.'
+			);
+		}
+	}
 	visit(css, (node, ancestors) => {
 		if (node.type === 'Atrule') {
 			const name = node.name?.toLowerCase();
@@ -569,10 +660,11 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 				`font-size must use one semantic type token, found "${value}".`
 			);
 		}
+		const shorthandSize = property === 'font' ? fontSizeFromShorthand(value) : null;
 		if (
 			property === 'font' &&
-			value !== 'inherit' &&
-			!/var\(--pksx-(?:type-[\w-]+|(?:small-)?icon-size)\)/.test(value)
+			shorthandSize !== 'inherit' &&
+			!(shorthandSize && (typeToken.test(shorthandSize) || canonicalEditable.test(shorthandSize)))
 		) {
 			report(
 				'DENSITY-1',
@@ -600,8 +692,9 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 		if (
 			property === 'font' &&
 			matched.some((element) => element.editable) &&
-			value !== 'inherit' &&
-			!/var\(--pksx-type-editable\)/.test(value)
+			shorthandSize !== 'inherit' &&
+			shorthandSize !== 'var(--pksx-type-editable)' &&
+			!(shorthandSize && canonicalEditable.test(shorthandSize))
 		) {
 			report(
 				'DENSITY-1',
@@ -611,8 +704,12 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 			);
 		}
 		if (blockProperties.has(property) && matched.length > 0) {
-			if (value === 'var(--pksx-control-height)') return;
+			if (value === 'var(--pksx-control-height)') {
+				for (const element of matched) standardControlOwners.add(element);
+				return;
+			}
 			if (value === 'var(--pksx-small-control-height)') {
+				for (const element of matched) smallControlOwners.add(element);
 				if (matched.some((element) => !['small', 'icon-only'].includes(element.category ?? '')))
 					report(
 						'DENSITY-1',
@@ -632,6 +729,7 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 			}
 		}
 	});
+	reportMissingControlOwners();
 	return diagnostics;
 }
 
@@ -658,10 +756,21 @@ async function sourceFiles(directory: string): Promise<string[]> {
 
 export async function checkRepository(root = process.cwd()) {
 	const diagnostics: DesignContractDiagnostic[] = [];
+	let foundHeightBandAuthorityFile = false;
 	for (const absolute of await sourceFiles(path.join(root, 'src'))) {
 		const relative = path.relative(root, absolute).split(path.sep).join('/');
+		if (relative === 'src/routes/layout.css') foundHeightBandAuthorityFile = true;
 		const source = await readFile(absolute, 'utf8');
 		diagnostics.push(...checkDesignContract(relative, source));
+	}
+	if (!foundHeightBandAuthorityFile) {
+		diagnostics.push({
+			contract: 'RESP-1',
+			name: 'viewport-query',
+			path: 'src/routes/layout.css',
+			offset: 0,
+			message: 'Exactly one structurally valid 560px Height Band authority is required.'
+		});
 	}
 	return diagnostics.sort(
 		(left, right) => left.path.localeCompare(right.path) || left.offset - right.offset
@@ -671,7 +780,12 @@ export async function checkRepository(root = process.cwd()) {
 async function main() {
 	const diagnostics = await checkRepository();
 	for (const diagnostic of diagnostics) {
-		const source = await readFile(path.resolve(diagnostic.path), 'utf8');
+		const source = await readFile(path.resolve(diagnostic.path), 'utf8').catch(
+			(error: NodeJS.ErrnoException) => {
+				if (error.code === 'ENOENT') return '';
+				throw error;
+			}
+		);
 		const { line, column } = location(source, diagnostic.offset);
 		console.error(
 			`${diagnostic.path}:${line}:${column} [${diagnostic.contract}] ${diagnostic.name}: ${diagnostic.message}`

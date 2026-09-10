@@ -113,6 +113,7 @@
 
 	.update-prompt button {
 		flex: 0 0 auto;
+		min-height: var(--pksx-control-height);
 		padding: 9px 12px;
 		border: 0;
 		border-radius: var(--pksx-radius-md);

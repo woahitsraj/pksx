@@ -268,6 +268,10 @@
 		font-weight: 720;
 	}
 
+	footer button {
+		min-height: var(--pksx-control-height);
+	}
+
 	.quick-fix {
 		justify-self: start;
 		min-height: var(--pksx-small-control-height);

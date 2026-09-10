@@ -345,6 +345,7 @@
 	.pksx-combobox-option {
 		width: 100%;
 		min-width: 0;
+		min-height: var(--pksx-control-height);
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) max-content max-content;
 		align-items: center;
