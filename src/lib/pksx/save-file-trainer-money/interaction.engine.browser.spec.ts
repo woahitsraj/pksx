@@ -125,6 +125,12 @@ describe('Save File Trainer and Money real public fixtures', () => {
 			'011020251345.sav',
 			instrumentedEngine
 		);
+		expect(host.querySelector('[data-destination-root="trainer"]')).not.toBeNull();
+		expect(host.querySelector('[data-destination-root="bag"]')).toBeNull();
+		const initialView = harness.currentLedgerProps().view;
+		expect(initialView.status).toBe('ready');
+		if (initialView.status !== 'ready') throw new Error('Trainer fixture did not mount.');
+		expect(initialView.projection).toEqual(workspace.workspace.saveFile);
 
 		const name = input('trainer-name');
 		name.focus();
