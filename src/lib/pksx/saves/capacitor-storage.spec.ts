@@ -14,6 +14,8 @@ describe('CapacitorSavesStorage', () => {
 	let failWorkspaceWrites: number;
 	let failWorkspaceDeletes: number;
 	let partialBackupWrites: number;
+	let completeBackupWriteFailures: number;
+	let deniedBackupWrites: number;
 	let catalogWriteFailure: 'after' | 'partial' | null;
 	let failCatalogReads: number;
 	let failCatalogReadback: boolean;
@@ -26,6 +28,8 @@ describe('CapacitorSavesStorage', () => {
 		failWorkspaceWrites = 0;
 		failWorkspaceDeletes = 0;
 		partialBackupWrites = 0;
+		completeBackupWriteFailures = 0;
+		deniedBackupWrites = 0;
 		catalogWriteFailure = null;
 		failCatalogReads = 0;
 		failCatalogReadback = false;
@@ -64,12 +68,20 @@ describe('CapacitorSavesStorage', () => {
 				return value instanceof Uint8Array ? new Uint8Array(value) : null;
 			},
 			async writeBytes(path, value) {
+				if (path.startsWith('backups/') && deniedBackupWrites > 0) {
+					deniedBackupWrites -= 1;
+					throw new Error('Backup write unavailable');
+				}
 				if (path.startsWith('backups/') && partialBackupWrites > 0) {
 					partialBackupWrites -= 1;
 					files.set(path, new Uint8Array(value.slice(0, 1)));
 					throw new Error('partial Backup write');
 				}
 				files.set(path, new Uint8Array(value));
+				if (path.startsWith('backups/') && completeBackupWriteFailures > 0) {
+					completeBackupWriteFailures -= 1;
+					throw new Error('Backup acknowledgement unavailable');
+				}
 				if (path.startsWith('workspaces/') && failWorkspaceWrites > 0) {
 					failWorkspaceWrites -= 1;
 					throw new Error('workspace write unavailable');
@@ -647,6 +659,38 @@ describe('CapacitorSavesStorage', () => {
 		const recreated = new CapacitorSavesStorage({ fileStore });
 		expect(await recreated.listBackups(saveFile.id)).toEqual([backup]);
 		expect(await recreated.getBackupBytes(backup.id)).toEqual(baseline);
+	});
+
+	it('reuses a complete uncatalogued automatic Backup without a second byte write', async () => {
+		const baseline = new Uint8Array([1, 2, 3]);
+		const saveFile = await storage.importSave({ bytes: baseline, originalFileName: null });
+		const workspace = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: baseline,
+			dirty: false,
+			automaticBackupCreated: false
+		});
+		const input = {
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			expectedUpdatedAt: workspace.updatedAt,
+			reason: 'save-file-editing' as const
+		};
+		completeBackupWriteFailures = 1;
+		failBackupDeletes = 1;
+
+		await expect(storage.ensureAutomaticBackup(input)).rejects.toThrow(
+			'backup cleanup unavailable'
+		);
+		deniedBackupWrites = 1;
+		await expect(storage.ensureAutomaticBackup(input)).resolves.toMatchObject({
+			established: true
+		});
+
+		expect(deniedBackupWrites).toBe(1);
+		const [backup] = await storage.listBackups(saveFile.id);
+		expect(await storage.getBackupBytes(backup.id)).toEqual(baseline);
+		expect((await storage.getWorkspace(saveFile.id))?.automaticBackupCreated).toBe(true);
 	});
 
 	it('does not overwrite mismatched bytes for a catalogued automatic Backup identity', async () => {

@@ -294,7 +294,8 @@ export class CapacitorSavesStorage implements SavesStorage {
 			catalog.workspaces[input.saveFileId] = metadata;
 			await this.#journal.commit(snapshot, catalog, {
 				workspaceBytes: new Map([[input.saveFileId, bytes]]),
-				stagedBytes: existingBackup && existingBytes ? [] : [{ path: backupPath, bytes }]
+				stagedBytes:
+					existingBytes && bytesEqual(existingBytes, bytes) ? [] : [{ path: backupPath, bytes }]
 			});
 			return {
 				workspace: { ...storedWorkspaceMetadata(metadata), bytes: copyBytes(bytes) },
