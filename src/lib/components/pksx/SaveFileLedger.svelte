@@ -12,6 +12,7 @@
 	} from './save-file-ledger/types';
 
 	let {
+		destination,
 		view,
 		command = null,
 		catalogues = {},
@@ -62,24 +63,33 @@
 	const projection = $derived(ready?.projection ?? null);
 	const trainerVisible = $derived(
 		Boolean(
-			projection?.trainerProfile.trainerNameSupported || projection?.trainerProfile.genderSupported
+			destination === 'trainer' &&
+			(projection?.trainerProfile.trainerNameSupported ||
+				projection?.trainerProfile.genderSupported)
 		)
 	);
-	const moneyVisible = $derived(projection?.money.supported === true);
-	const bagVisible = $derived(projection?.inventory.supported === true);
+	const moneyVisible = $derived(destination === 'trainer' && projection?.money.supported === true);
+	const bagVisible = $derived(destination === 'bag' && projection?.inventory.supported === true);
 	const pockets = $derived(projection?.inventory.pockets ?? []);
-	const hasCapabilities = $derived(trainerVisible || moneyVisible || bagVisible);
+	const hasCapabilities = $derived(
+		destination === 'trainer' ? trainerVisible || moneyVisible : bagVisible
+	);
 	const editingUnavailable = $derived(ready?.editingUnavailable ?? null);
+	const activeCommand = $derived(destination === 'bag' ? command : null);
+	const destinationLabel = $derived(destination === 'trainer' ? 'Trainer' : 'Bag');
+	const titleId = $derived(`save-file-${destination}-title`);
 	const targetSignature = $derived.by(() => {
 		if (!ready) return view.status;
 		return [
 			ready.editingUnavailable?.message ?? '',
-			command ? commandIdentity(command) : '',
-			...pockets.flatMap((pocket) => [
-				pocket.key,
-				catalogueSignature(catalogueFor(pocket.key)),
-				...pocket.items.map((item) => String(item.id))
-			])
+			destination === 'bag' && activeCommand ? commandIdentity(activeCommand) : '',
+			...(destination === 'bag'
+				? pockets.flatMap((pocket) => [
+						pocket.key,
+						catalogueSignature(catalogueFor(pocket.key)),
+						...pocket.items.map((item) => String(item.id))
+					])
+				: [])
 		].join('|');
 	});
 	const initialTargetIdentity = $derived.by(firstTargetIdentity);
@@ -282,8 +292,8 @@
 			abandonDraft(active);
 			return true;
 		}
-		if (command) {
-			const closingCommand = command;
+		if (activeCommand) {
+			const closingCommand = activeCommand;
 			onCommandChange?.(null);
 			void tick().then(() => {
 				const nextActive = document.activeElement;
@@ -387,9 +397,9 @@
 		const add = findIdentity(addIdentity(pocketKey));
 		if (add) return focusElement(add);
 		if (
-			command?.kind === 'add-item' &&
-			command.pocketKey === pocketKey &&
-			focusIdentity(commandFirstIdentity(command))
+			activeCommand?.kind === 'add-item' &&
+			activeCommand.pocketKey === pocketKey &&
+			focusIdentity(commandFirstIdentity(activeCommand))
 		)
 			return true;
 		const retry = findIdentity(retryIdentity(pocketKey));
@@ -457,6 +467,12 @@
 
 	function isPending(identity: string, direct = false) {
 		return direct || pendingTargets.includes(identity);
+	}
+
+	function draftMatchesAccepted(raw: string, accepted: number | null) {
+		if (accepted === null || raw.trim() === '') return false;
+		const value = Number(raw);
+		return Number.isInteger(value) && value === accepted;
 	}
 
 	function handleDraftBlur(
@@ -592,9 +608,12 @@
 
 	function firstTargetIdentity() {
 		if (!projection) return '';
-		if (projection.trainerProfile.trainerNameSupported) return 'trainer-name';
-		if (projection.trainerProfile.genderSupported) return 'trainer-gender-male';
-		if (projection.money.supported) return 'money-decrease';
+		if (destination === 'trainer') {
+			if (projection.trainerProfile.trainerNameSupported) return 'trainer-name';
+			if (projection.trainerProfile.genderSupported) return 'trainer-gender-male';
+			if (projection.money.supported) return 'money-decrease';
+			return '';
+		}
 		for (const pocket of pockets) {
 			const catalogue = catalogueFor(pocket.key);
 			if (catalogue.status === 'ready' && !pocket.full && availableOptions(pocket.key).length > 0) {
@@ -610,27 +629,32 @@
 
 <section
 	class="save-file-ledger-frame pksx-density-container"
-	aria-labelledby="save-file-ledger-title"
-	data-destination-root="save-file"
+	aria-labelledby={titleId}
+	data-destination-root={destination}
 	data-initial-state={view.status === 'loading' ? 'loading' : 'ready'}
 	aria-busy={view.status === 'loading'}
 	onfocusin={handleFocusIn}
 	onfocusout={handleFocusOut}
 	{@attach ledgerRoot}
-	{@attach reconcileTargets(targetSignature, command, view.status, editingUnavailable !== null)}
+	{@attach reconcileTargets(
+		targetSignature,
+		activeCommand,
+		view.status,
+		editingUnavailable !== null
+	)}
 >
 	<div class="save-file-ledger-density pksx-density">
 		<div class="save-file-ledger-container">
 			{#if view.status === 'loading'}
 				<div class="route-state" aria-live="polite">
-					<h1 id="save-file-ledger-title">Save File</h1>
-					<DelayedSpinner active label="Loading Save File" />
+					<h1 id={titleId}>{destinationLabel}</h1>
+					<DelayedSpinner active label={`Loading ${destinationLabel}`} />
 				</div>
 			{:else if view.status === 'no-active-save'}
 				<div class="route-state">
-					<h1 id="save-file-ledger-title">Save File</h1>
+					<h1 id={titleId}>{destinationLabel}</h1>
 					<strong>No active Save File</strong>
-					<p>Import or select a Save File to edit its supported details.</p>
+					<p>Import or select a Save File to edit {destinationLabel.toLowerCase()} details.</p>
 					<button
 						type="button"
 						data-ledger-row="no-active-save"
@@ -642,7 +666,7 @@
 				</div>
 			{:else if view.status === 'load-failed'}
 				<div class="route-state" role="alert" data-destination-focus-memory="preserve">
-					<h1 id="save-file-ledger-title">Save File</h1>
+					<h1 id={titleId}>{destinationLabel}</h1>
 					<strong>Could not load this Save File</strong>
 					<p>{view.message}</p>
 					<div class="state-actions" data-ledger-row="load-failed">
@@ -675,7 +699,7 @@
 					<header class="workspace-identity">
 						<div>
 							<p class="eyebrow">Save File</p>
-							<h1 id="save-file-ledger-title">Ledger</h1>
+							<h1 id={titleId}>{destinationLabel}</h1>
 						</div>
 						<p class="workspace-file">
 							<span class="filename" title={view.originalFilename}>{view.originalFilename}</span>
@@ -701,7 +725,7 @@
 								Retry
 								<DelayedSpinner
 									active={view.editingUnavailable.retrying === true}
-									label="Retrying Save File editing"
+									label={`Retrying ${destinationLabel} editing`}
 								/>
 							</button>
 						</div>
@@ -709,8 +733,12 @@
 
 					{#if !hasCapabilities}
 						<div class="route-state embedded">
-							<strong>No editable details are available</strong>
-							<p>This game does not expose Trainer, Money, or Bag editing here.</p>
+							<strong>No editable {destinationLabel} details are available</strong>
+							<p>
+								{destination === 'trainer'
+									? 'This game does not expose Trainer or Money editing here.'
+									: 'This game does not expose Bag editing here.'}
+							</p>
 							<button
 								type="button"
 								data-ledger-row="empty-capabilities"
@@ -721,238 +749,251 @@
 							>
 						</div>
 					{:else}
-						<div class="ledger-layout" class:bag-only={!trainerVisible && !moneyVisible}>
-							<div
-								class="details-block"
-								class:empty={!trainerVisible && !moneyVisible}
-								aria-label="Trainer and Money"
-							>
-								{#if trainerVisible}
-									<section class="details-section" aria-labelledby="ledger-trainer-title">
-										<header class="details-heading">
-											<p class="section-number">01</p>
-											<h2 id="ledger-trainer-title">Trainer</h2>
-										</header>
-										<dl class="trainer-facts">
-											<div>
-												<dt>Trainer ID</dt>
-												<dd>{view.summary.trainerId}</dd>
-											</div>
-											<div>
-												<dt>Play time</dt>
-												<dd>{view.summary.playTime}</dd>
-											</div>
-										</dl>
+						<div class="destination-content">
+							{#if destination === 'trainer'}
+								<div
+									class="details-block"
+									aria-label="Trainer and Money"
+									data-testid="trainer-ledger-scrollport"
+								>
+									{#if trainerVisible}
+										<section class="details-section" aria-labelledby="ledger-trainer-title">
+											<header class="details-heading">
+												<p class="section-number">01</p>
+												<h2 id="ledger-trainer-title">Trainer</h2>
+											</header>
+											<dl class="trainer-facts">
+												<div>
+													<dt>Trainer ID</dt>
+													<dd>{view.summary.trainerId}</dd>
+												</div>
+												<div>
+													<dt>Play time</dt>
+													<dd>{view.summary.playTime}</dd>
+												</div>
+											</dl>
 
-										{#if view.projection.trainerProfile.trainerNameSupported}
-											{@const nameField = drafts.trainerName ?? {
-												value: view.projection.trainerProfile.trainerName ?? ''
-											}}
-											{@const nameError = nameField.error ?? errors['trainer-name']}
-											{@const nameBusy = isPending('trainer-name', nameField.pending)}
-											<label class="field-row" data-ledger-row="trainer-name">
-												<span>Trainer name</span>
-												<input
-													type="text"
-													value={nameField.value}
-													maxlength={view.projection.trainerProfile.trainerNameMaxLength}
-													size={Math.max(1, view.projection.trainerProfile.trainerNameMaxLength)}
-													style:--trainer-name-ch={Math.max(
-														1,
-														view.projection.trainerProfile.trainerNameMaxLength
-													)}
-													data-ledger-control
-													data-ledger-draft="trainer-name"
-													data-destination-initial={initialTargetIdentity === 'trainer-name'
-														? ''
-														: undefined}
-													data-destination-focus="trainer-name"
-													aria-label="Trainer name"
-													aria-busy={nameBusy}
-													aria-disabled={nameBusy}
-													aria-invalid={nameError ? 'true' : undefined}
-													aria-describedby={nameError ? 'trainer-name-error' : undefined}
-													disabled={Boolean(editingUnavailable)}
-													readonly={nameBusy}
-													oninput={(event) => {
-														if (!nameBusy) onTrainerNameInput?.(event.currentTarget.value);
-													}}
-													onblur={(event) => handleDraftBlur(event, onTrainerNameCommit)}
-												/>
-												<DelayedSpinner active={nameBusy} label="Updating Trainer name" />
-												{#if nameError}<small
-														id="trainer-name-error"
-														class="field-error"
-														aria-live="polite">{nameError}</small
-													>{/if}
-											</label>
-										{/if}
-
-										{#if view.projection.trainerProfile.genderSupported}
-											{@const maleBusy = isPending('trainer-gender-male')}
-											{@const femaleBusy = isPending('trainer-gender-female')}
-											{@const genderBusy = maleBusy || femaleBusy}
-											{@const genderError = errors['trainer-gender']}
-											<div class="field-row" data-ledger-row="trainer-gender">
-												<span>Gender</span>
-												<div
-													class="segmented"
-													role="group"
-													aria-label="Trainer gender"
-													aria-busy={genderBusy}
-													aria-describedby={genderError ? 'trainer-gender-error' : undefined}
-												>
-													<button
-														type="button"
+											{#if view.projection.trainerProfile.trainerNameSupported}
+												{@const nameField = drafts.trainerName ?? {
+													value: view.projection.trainerProfile.trainerName ?? ''
+												}}
+												{@const nameError = nameField.error ?? errors['trainer-name']}
+												{@const nameBusy = isPending('trainer-name', nameField.pending)}
+												<label class="field-row" data-ledger-row="trainer-name">
+													<span>Trainer name</span>
+													<input
+														type="text"
+														value={nameField.value}
+														maxlength={view.projection.trainerProfile.trainerNameMaxLength}
+														size={Math.max(1, view.projection.trainerProfile.trainerNameMaxLength)}
+														style:--trainer-name-ch={Math.max(
+															1,
+															view.projection.trainerProfile.trainerNameMaxLength
+														)}
 														data-ledger-control
-														data-destination-initial={initialTargetIdentity ===
-														'trainer-gender-male'
+														data-ledger-draft="trainer-name"
+														data-destination-initial={initialTargetIdentity === 'trainer-name'
 															? ''
 															: undefined}
-														data-destination-focus="trainer-gender-male"
-														aria-pressed={view.projection.trainerProfile.gender === 'male'}
-														aria-disabled={genderBusy}
+														data-destination-focus="trainer-name"
+														aria-label="Trainer name"
+														aria-busy={nameBusy}
+														aria-disabled={nameBusy}
+														aria-invalid={nameError ? 'true' : undefined}
+														aria-describedby={nameError ? 'trainer-name-error' : undefined}
 														disabled={Boolean(editingUnavailable)}
-														onclick={() => {
-															if (!genderBusy) onTrainerGenderSelect?.('male');
-														}}>Male</button
-													>
-													<button
-														type="button"
-														data-ledger-control
-														data-destination-focus="trainer-gender-female"
-														aria-pressed={view.projection.trainerProfile.gender === 'female'}
-														aria-disabled={genderBusy}
-														disabled={Boolean(editingUnavailable)}
-														onclick={() => {
-															if (!genderBusy) onTrainerGenderSelect?.('female');
-														}}>Female</button
-													>
-													<DelayedSpinner active={genderBusy} label="Updating Trainer gender" />
+														readonly={nameBusy}
+														oninput={(event) => {
+															if (!nameBusy) onTrainerNameInput?.(event.currentTarget.value);
+														}}
+														onblur={(event) => handleDraftBlur(event, onTrainerNameCommit)}
+													/>
+													<DelayedSpinner active={nameBusy} label="Updating Trainer name" />
+													{#if nameError}<small
+															id="trainer-name-error"
+															class="field-error"
+															aria-live="polite">{nameError}</small
+														>{/if}
+												</label>
+											{/if}
+
+											{#if view.projection.trainerProfile.genderSupported}
+												{@const maleBusy = isPending('trainer-gender-male')}
+												{@const femaleBusy = isPending('trainer-gender-female')}
+												{@const genderBusy = maleBusy || femaleBusy}
+												{@const genderError = errors['trainer-gender']}
+												<div
+													class="field-row"
+													data-ledger-row="trainer-gender"
+													aria-busy={genderBusy}
+													aria-invalid={genderError ? 'true' : undefined}
+													aria-describedby={genderError ? 'trainer-gender-error' : undefined}
+												>
+													<span>Gender</span>
+													<div class="segmented" role="group" aria-label="Trainer gender">
+														<button
+															type="button"
+															data-ledger-control
+															data-destination-initial={initialTargetIdentity ===
+															'trainer-gender-male'
+																? ''
+																: undefined}
+															data-destination-focus="trainer-gender-male"
+															aria-pressed={view.projection.trainerProfile.gender === 'male'}
+															aria-describedby={genderError ? 'trainer-gender-error' : undefined}
+															aria-disabled={genderBusy}
+															disabled={Boolean(editingUnavailable)}
+															onclick={() => {
+																if (!genderBusy) onTrainerGenderSelect?.('male');
+															}}>Male</button
+														>
+														<button
+															type="button"
+															data-ledger-control
+															data-destination-focus="trainer-gender-female"
+															aria-pressed={view.projection.trainerProfile.gender === 'female'}
+															aria-describedby={genderError ? 'trainer-gender-error' : undefined}
+															aria-disabled={genderBusy}
+															disabled={Boolean(editingUnavailable)}
+															onclick={() => {
+																if (!genderBusy) onTrainerGenderSelect?.('female');
+															}}>Female</button
+														>
+														<DelayedSpinner active={genderBusy} label="Updating Trainer gender" />
+													</div>
+													{#if genderError}<small
+															id="trainer-gender-error"
+															class="field-error"
+															aria-live="polite">{genderError}</small
+														>{/if}
 												</div>
-												{#if genderError}<small
-														id="trainer-gender-error"
+											{/if}
+										</section>
+									{/if}
+
+									{#if moneyVisible}
+										{@const moneyField = drafts.money ?? {
+											value: String(view.projection.money.value ?? '')
+										}}
+										{@const moneyError = moneyField.error ?? errors.money}
+										{@const moneyBusy = isPending('money', moneyField.pending)}
+										{@const moneyDraftSettled = draftMatchesAccepted(
+											moneyField.value,
+											view.projection.money.value
+										)}
+										{@const moneyAtMin =
+											moneyDraftSettled &&
+											(view.projection.money.value ?? view.projection.money.min) <=
+												view.projection.money.min}
+										{@const moneyAtMax =
+											moneyDraftSettled &&
+											(view.projection.money.value ?? view.projection.money.max) >=
+												view.projection.money.max}
+										<section
+											class="details-section money-section"
+											aria-labelledby="ledger-money-title"
+										>
+											<header class="details-heading">
+												<p class="section-number">02</p>
+												<div>
+													<h2 id="ledger-money-title">Money</h2>
+													<p>Maximum {view.projection.money.max.toLocaleString()}</p>
+												</div>
+											</header>
+											<div
+												class="money-row"
+												data-ledger-row="money"
+												aria-busy={moneyBusy}
+												style:--money-ch={String(view.projection.money.max).length}
+											>
+												<button
+													type="button"
+													aria-label="Decrease Money"
+													data-ledger-control
+													data-ledger-consumes-draft="money-value"
+													onpointerdown={beginDraftOperatorPointer}
+													data-destination-initial={initialTargetIdentity === 'money-decrease'
+														? ''
+														: undefined}
+													data-destination-focus="money-decrease"
+													aria-disabled={moneyBusy || moneyAtMin}
+													disabled={Boolean(editingUnavailable)}
+													onclick={() => {
+														if (!moneyBusy && !moneyAtMin)
+															activateDraftOperator(
+																'money-value',
+																() => onMoneyStep?.(-1, moneyField.value) ?? false
+															);
+													}}>−</button
+												>
+												<input
+													type="number"
+													aria-label="Money"
+													value={moneyField.value}
+													min={view.projection.money.min}
+													max={view.projection.money.max}
+													size={String(view.projection.money.max).length}
+													data-ledger-control
+													data-ledger-draft="money"
+													data-destination-focus="money-value"
+													aria-busy={moneyBusy}
+													aria-disabled={moneyBusy}
+													aria-invalid={moneyError ? 'true' : undefined}
+													aria-describedby={moneyError ? 'money-error' : undefined}
+													disabled={Boolean(editingUnavailable)}
+													readonly={moneyBusy}
+													oninput={(event) => {
+														if (!moneyBusy) onMoneyInput?.(event.currentTarget.value);
+													}}
+													onblur={(event) => handleDraftBlur(event, onMoneyCommit)}
+												/>
+												<button
+													type="button"
+													aria-label="Increase Money"
+													data-ledger-control
+													data-ledger-consumes-draft="money-value"
+													onpointerdown={beginDraftOperatorPointer}
+													data-destination-focus="money-increase"
+													aria-disabled={moneyBusy || moneyAtMax}
+													disabled={Boolean(editingUnavailable)}
+													onclick={() => {
+														if (!moneyBusy && !moneyAtMax)
+															activateDraftOperator(
+																'money-value',
+																() => onMoneyStep?.(1, moneyField.value) ?? false
+															);
+													}}>+</button
+												>
+												<button
+													type="button"
+													data-ledger-control
+													data-ledger-consumes-draft="money-value"
+													onpointerdown={beginDraftOperatorPointer}
+													data-destination-focus="money-max"
+													aria-disabled={moneyBusy || moneyAtMax}
+													disabled={Boolean(editingUnavailable)}
+													onclick={() => {
+														if (!moneyBusy && !moneyAtMax)
+															activateDraftOperator(
+																'money-value',
+																() => onMoneyStep?.('max', moneyField.value) ?? false
+															);
+													}}>Max</button
+												>
+												<DelayedSpinner active={moneyBusy} label="Updating Money" />
+												{#if moneyError}<small
+														id="money-error"
 														class="field-error"
-														aria-live="polite">{genderError}</small
+														aria-live="polite">{moneyError}</small
 													>{/if}
 											</div>
-										{/if}
-									</section>
-								{/if}
-
-								{#if moneyVisible}
-									{@const moneyField = drafts.money ?? {
-										value: String(view.projection.money.value ?? '')
-									}}
-									{@const moneyError = moneyField.error ?? errors.money}
-									{@const moneyBusy = isPending('money', moneyField.pending)}
-									{@const moneyNumber = Number(moneyField.value)}
-									{@const moneyAtMin = moneyNumber <= view.projection.money.min}
-									{@const moneyAtMax = moneyNumber >= view.projection.money.max}
-									<section
-										class="details-section money-section"
-										aria-labelledby="ledger-money-title"
-									>
-										<header class="details-heading">
-											<p class="section-number">02</p>
-											<div>
-												<h2 id="ledger-money-title">Money</h2>
-												<p>Maximum {view.projection.money.max.toLocaleString()}</p>
-											</div>
-										</header>
-										<div
-											class="money-row"
-											data-ledger-row="money"
-											aria-busy={moneyBusy}
-											style:--money-ch={String(view.projection.money.max).length}
-										>
-											<button
-												type="button"
-												aria-label="Decrease Money"
-												data-ledger-control
-												data-ledger-consumes-draft="money-value"
-												onpointerdown={beginDraftOperatorPointer}
-												data-destination-initial={initialTargetIdentity === 'money-decrease'
-													? ''
-													: undefined}
-												data-destination-focus="money-decrease"
-												aria-disabled={moneyBusy || moneyAtMin}
-												disabled={Boolean(editingUnavailable)}
-												onclick={() => {
-													if (!moneyBusy && !moneyAtMin)
-														activateDraftOperator(
-															'money-value',
-															() => onMoneyStep?.(-1, moneyField.value) ?? false
-														);
-												}}>−</button
-											>
-											<input
-												type="number"
-												aria-label="Money"
-												value={moneyField.value}
-												min={view.projection.money.min}
-												max={view.projection.money.max}
-												size={String(view.projection.money.max).length}
-												data-ledger-control
-												data-ledger-draft="money"
-												data-destination-focus="money-value"
-												aria-busy={moneyBusy}
-												aria-disabled={moneyBusy}
-												aria-invalid={moneyError ? 'true' : undefined}
-												aria-describedby={moneyError ? 'money-error' : undefined}
-												disabled={Boolean(editingUnavailable)}
-												readonly={moneyBusy}
-												oninput={(event) => {
-													if (!moneyBusy) onMoneyInput?.(event.currentTarget.value);
-												}}
-												onblur={(event) => handleDraftBlur(event, onMoneyCommit)}
-											/>
-											<button
-												type="button"
-												aria-label="Increase Money"
-												data-ledger-control
-												data-ledger-consumes-draft="money-value"
-												onpointerdown={beginDraftOperatorPointer}
-												data-destination-focus="money-increase"
-												aria-disabled={moneyBusy || moneyAtMax}
-												disabled={Boolean(editingUnavailable)}
-												onclick={() => {
-													if (!moneyBusy && !moneyAtMax)
-														activateDraftOperator(
-															'money-value',
-															() => onMoneyStep?.(1, moneyField.value) ?? false
-														);
-												}}>+</button
-											>
-											<button
-												type="button"
-												data-ledger-control
-												data-ledger-consumes-draft="money-value"
-												onpointerdown={beginDraftOperatorPointer}
-												data-destination-focus="money-max"
-												aria-disabled={moneyBusy || moneyAtMax}
-												disabled={Boolean(editingUnavailable)}
-												onclick={() => {
-													if (!moneyBusy && !moneyAtMax)
-														activateDraftOperator(
-															'money-value',
-															() => onMoneyStep?.('max', moneyField.value) ?? false
-														);
-												}}>Max</button
-											>
-											<DelayedSpinner active={moneyBusy} label="Updating Money" />
-											{#if moneyError}<small id="money-error" class="field-error" aria-live="polite"
-													>{moneyError}</small
-												>{/if}
-										</div>
-									</section>
-								{/if}
-							</div>
-
-							{#if bagVisible}
+										</section>
+									{/if}
+								</div>
+							{:else if bagVisible}
 								<section class="bag-block" aria-labelledby="ledger-bag-title">
 									<header class="bag-heading">
-										<p class="section-number">03</p>
+										<p class="section-number">01</p>
 										<h2 id="ledger-bag-title">Bag</h2>
 									</header>
 
@@ -1185,9 +1226,13 @@
 																	quantityIdentity,
 																	quantityField.pending
 																)}
-																{@const quantityNumber = Number(quantityField.value)}
-																{@const quantityAtMin = quantityNumber <= 1}
-																{@const quantityAtMax = quantityNumber >= item.maxQuantity}
+																{@const quantityDraftSettled = draftMatchesAccepted(
+																	quantityField.value,
+																	item.quantity
+																)}
+																{@const quantityAtMin = quantityDraftSettled && item.quantity <= 1}
+																{@const quantityAtMax =
+																	quantityDraftSettled && item.quantity >= item.maxQuantity}
 																{@const removeConfirmIdentity = itemIdentity(
 																	pocket.key,
 																	item.id,
@@ -1510,27 +1555,24 @@
 		color: var(--pksx-color-feedback-danger, #c93d3d);
 	}
 
-	.ledger-layout {
-		display: grid;
-		grid-template-rows: auto minmax(0, 1fr);
-		gap: var(--pksx-space-2, 8px);
+	.destination-content {
+		height: 100%;
 		min-height: 0;
 		overflow: hidden;
 	}
 
-	.ledger-layout.bag-only {
-		grid-template-rows: minmax(0, 1fr);
-	}
-
 	.details-block {
 		display: grid;
+		box-sizing: border-box;
 		grid-template-columns: minmax(0, 1fr);
+		align-content: start;
 		gap: var(--pksx-space-2, 8px);
+		height: 100%;
 		min-width: 0;
-	}
-
-	.details-block.empty {
-		display: none;
+		min-height: 0;
+		overflow-y: auto;
+		overscroll-behavior-block: contain;
+		scroll-padding-block: var(--pksx-space-2, 8px);
 	}
 
 	.details-section,
@@ -1621,6 +1663,12 @@
 		font-variant-numeric: tabular-nums;
 	}
 
+	.money-row,
+	.quantity-controls,
+	.add-command {
+		font-size: var(--pksx-type-editable, 16px);
+	}
+
 	.field-error {
 		grid-column: 1 / -1;
 		font-size: var(--pksx-type-caption, 10px);
@@ -1629,8 +1677,10 @@
 
 	.bag-block {
 		display: grid;
+		box-sizing: border-box;
 		grid-template-rows: auto auto minmax(0, 1fr);
 		gap: var(--pksx-space-2, 8px);
+		height: 100%;
 		min-width: 0;
 		min-height: 0;
 		padding: var(--pksx-space-2, 8px);
@@ -1848,18 +1898,6 @@
 	@container save-file-ledger (min-width: 540px) {
 		.details-block {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
-		}
-	}
-
-	@container save-file-ledger (aspect-ratio > 1 / 1) {
-		.ledger-layout:not(.bag-only) {
-			grid-template-columns: 260px minmax(0, 1fr);
-			grid-template-rows: minmax(0, 1fr);
-		}
-
-		.details-block {
-			grid-template-columns: minmax(0, 1fr);
-			align-content: start;
 		}
 	}
 

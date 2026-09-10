@@ -1,12 +1,12 @@
 # Save File Editor Specification
 
-This document is the authoritative product and interaction contract for the `/save-file`
-destination. It refines the shared shell contract in issue #210 and uses the domain language in
+This document is the authoritative product and interaction contract for the `/trainer` and `/bag`
+destinations. It refines the shared shell contract in issue #210 and uses the domain language in
 `CONTEXT.md`.
 
 Later decisions in issues #167, #168, #169, and #209 supersede the page-wide staging and local-view
-language that remains in older issue history. The final destination has no page-wide staged state,
-Apply action, Cancel action, or route action bar.
+language that remains in older issue history. The final destinations have no page-wide staged
+state, Apply action, Cancel action, or route action bar.
 
 ## Scope
 
@@ -24,33 +24,36 @@ Apply action, Cancel action, or route action bar.
 
 ## Content
 
-- **SAVEFILE-CONTENT-1:** Show the original filename and game version once as the identity of the
-  active Workspace.
+- **SAVEFILE-CONTENT-1:** Trainer and Bag each show the original filename and game version once as
+  the identity of the same active Workspace.
 - **SAVEFILE-CONTENT-2:** Show Trainer name only as an editable Trainer field. Show Trainer ID and
   play time as read-only Trainer data. Omit generation and box count.
-- **SAVEFILE-CONTENT-3:** Present Money in the leading details block after Trainer. Money remains a
+- **SAVEFILE-CONTENT-3:** Present Money after Trainer in the Trainer destination. Money remains a
   separate engine value and is not part of the Bag domain model.
 - **SAVEFILE-CONTENT-4:** Present every supported Bag pocket in one grouped ledger. Each pocket has
   a heading, item count, Add Item control, and item list.
-- **SAVEFILE-CONTENT-5:** Omit each unsupported field. Omit Trainer or Bag content when none of its
-  capabilities are supported.
-- **SAVEFILE-CONTENT-6:** When no Trainer, Money, or Bag capability is supported, show a destination
-  empty state with the original filename, game version, explanation, and Back to Boxes action.
+- **SAVEFILE-CONTENT-5:** Omit each unsupported field. Trainer presents only Trainer and Money
+  capabilities. Bag presents only Bag capabilities. Do not alter the engine projection to select
+  destination content.
+- **SAVEFILE-CONTENT-6:** When the selected destination has no supported capability, show its empty
+  state with the original filename, game version, explanation, and Back to Boxes action.
 - **SAVEFILE-CONTENT-7:** Do not show normal Backup state, automatic Backup readiness, Dirty
   Workspace state, page-wide staged counts, or Export inside destination content.
 
 ## Layout and responsive composition
 
-- **SAVEFILE-LAYOUT-1:** Use the Ledger direction selected in issue #169. There is no Trainer or Bag
-  view switch.
-- **SAVEFILE-LAYOUT-2:** The destination owns one definite internal layout area inside the Safe
-  Canvas. The document and shell do not scroll at supported Viewport Budget floors.
-- **SAVEFILE-LAYOUT-3:** When the destination container is strictly wider than tall, place Trainer
-  and Money in a 260px leading column and the Bag ledger beside it.
-- **SAVEFILE-LAYOUT-4:** When the destination container is square or taller than wide, place Trainer
-  and Money in a top block and the Bag ledger below it.
-- **SAVEFILE-LAYOUT-5:** Select composition with a local container aspect query. Do not classify
-  viewport width, orientation, or device type.
+- **SAVEFILE-LAYOUT-1:** Render Trainer and Bag as separate production destinations through one
+  shared presentation implementation. Do not retain a combined Ledger or a content switch inside
+  either destination.
+- **SAVEFILE-LAYOUT-2:** Each destination owns one definite internal layout area and internal
+  scrollport inside the Safe Canvas. The document and shell do not scroll at supported Viewport
+  Budget floors.
+- **SAVEFILE-LAYOUT-3:** Trainer adapts Trainer fields, Trainer facts, and Money to its allocated
+  container and shared Height Band. There is no combined Trainer and Bag leading-column layout.
+- **SAVEFILE-LAYOUT-4:** Bag adapts pocket navigation and its grouped ledger to its allocated
+  container and shared Height Band. There is no combined Trainer top block above Bag.
+- **SAVEFILE-LAYOUT-5:** Select each destination's composition with local container queries. Do not
+  classify viewport width, orientation, or device type.
 - **SAVEFILE-LAYOUT-6:** The Bag ledger is the vertical scroll owner. Pocket headings remain sticky
   inside that scrollport and never cover the target under Controller Focus.
 - **SAVEFILE-LAYOUT-7:** The pocket jump controls stay in one horizontally scrolling row in every
@@ -85,12 +88,15 @@ Apply action, Cancel action, or route action bar.
 
 ## Controller Focus
 
-- **SAVEFILE-FOCUS-1:** The destination has one Focus Zone. It contains vertical focus stops in its
-  internal scrolling area. Left and Right move inside a row. Up and Down leave the row.
-- **SAVEFILE-FOCUS-2:** The semantic stop order is Trainer rows, Money row, pocket jump row, then
-  each pocket's Add Item command and item rows. Responsive composition does not change this order.
+- **SAVEFILE-FOCUS-1:** Trainer and Bag each have one Focus Zone with independent session focus
+  memory. Each zone contains vertical focus stops in its internal scrolling area. Left and Right
+  move inside a row. Up and Down leave the row.
+- **SAVEFILE-FOCUS-2:** Trainer orders Trainer rows before the Money row. Bag orders its pocket jump
+  row before each pocket's Add Item command and item rows. Responsive composition does not change
+  either order.
 - **SAVEFILE-FOCUS-3:** The first supported editable control receives Controller Focus on the first
-  visit. The destination remembers a stable target identity for the session.
+  visit to each destination. Trainer and Bag remember stable target identities independently for
+  the session.
 - **SAVEFILE-FOCUS-4:** From a pocket jump, Down enters that pocket at its first available target:
   Add Item, catalogue Retry, then the first item control. If none exists, use the next pocket with a
   target. Clamp when no pocket has a target.
@@ -104,9 +110,9 @@ Apply action, Cancel action, or route action bar.
   item, then Add Item. A missing remembered target uses the same next, previous, parent fallback.
 - **SAVEFILE-FOCUS-9:** A target under Controller Focus is always fully visible inside the Safe
   Canvas and its scrollport. Height Band changes and rotation preserve target identity.
-- **SAVEFILE-FOCUS-10:** The no-active-Save-File state exposes Back to Boxes as its only stop.
-  Initial load failure orders Retry before Back to Boxes. A route-wide editing failure makes Retry
-  the first stop.
+- **SAVEFILE-FOCUS-10:** In either destination, the no-active-Save-File state exposes Back to Boxes
+  as its only stop. Initial load failure orders Retry before Back to Boxes. A route-wide editing
+  failure makes Retry the first stop in that destination.
 - **SAVEFILE-FOCUS-11:** After successful Retry, restore the remembered target when it still exists,
   otherwise use the first supported editable control.
 
@@ -123,9 +129,9 @@ Apply action, Cancel action, or route action bar.
   atomically.
 - **SAVEFILE-EDIT-5:** Remove opens an inline confirmation. Confirm Remove performs the mutation.
   Cancel, Escape, or controller B abandons it.
-- **SAVEFILE-EDIT-6:** At most one Add Item or Remove command is open in the destination. Opening a
-  different command discards the unfinished command without warning. Pending confirmed mutations
-  remain independent.
+- **SAVEFILE-EDIT-6:** At most one Add Item or Remove command is open in Bag. Opening a different
+  command discards the unfinished command without warning. Pending confirmed mutations remain
+  independent.
 - **SAVEFILE-EDIT-7:** An unfinished command is discarded without warning when it closes or the
   route closes. A failed Add or Remove command remains available for retry only while it stays open.
 - **SAVEFILE-EDIT-8:** A value equal to the latest accepted engine projection is a no-op. It creates
@@ -139,7 +145,7 @@ Apply action, Cancel action, or route action bar.
   FIFO for each Save File and Workspace identity. It is not a generic Workspace operation bus.
 - **SAVEFILE-EDIT-11:** Each operation runs against the latest persisted Workspace. Other fields and
   navigation remain available while an operation is pending.
-- **SAVEFILE-EDIT-12:** Remounting the destination reconstructs local pending state from the
+- **SAVEFILE-EDIT-12:** Remounting Trainer or Bag reconstructs its local pending state from the
   coordinator. The coordinator rejects results for a different Save File or Workspace identity.
 - **SAVEFILE-EDIT-13:** Create one idempotent automatic Backup per Workspace immediately before the
   first valid operation expected to change bytes. Invalid drafts and known no-ops create none.
@@ -168,9 +174,8 @@ Apply action, Cancel action, or route action bar.
   Keep the error until the control changes again or its local command closes.
 - **SAVEFILE-FEEDBACK-5:** An isolated PKHeX Engine, Backup, or storage failure restores the persisted
   value and shows one error Toast that names the affected field or item.
-- **SAVEFILE-FEEDBACK-6:** If editing becomes unavailable for the whole destination, keep the loaded
-  values visible, disable editing, and show Retry as durable route content. Navigation stays
-  available.
+- **SAVEFILE-FEEDBACK-6:** If editing becomes unavailable for a destination, keep its loaded values
+  visible, disable editing, and show Retry as durable route content. Navigation stays available.
 - **SAVEFILE-FEEDBACK-7:** Initial load failure replaces the editor with Retry and Back to Boxes. No
   active Save File is a normal empty state, not an error.
 - **SAVEFILE-FEEDBACK-8:** Bag catalogue loading, available count, failure, and Retry stay beside Add
@@ -193,9 +198,10 @@ Apply action, Cancel action, or route action bar.
 - **SAVEFILE-TEST-1:** Unit tests for the coordinator cover FIFO ordering, concurrent fields,
   Save File and Workspace identity, no-ops, one Backup with retry and failure, persistence rollback,
   cancellation of later operations, Export waiting, and terminal deletion.
-- **SAVEFILE-TEST-2:** Ledger tests cover semantic focus order, focus fallback, pocket jumps,
-  scroll ownership, focused-target visibility, omitted capabilities, filename overflow, two-line
-  item names, one open command, and the absence of route action-bar, mock, and imagery residue.
+- **SAVEFILE-TEST-2:** Presentation tests cover the separate Trainer and Bag roots, independent
+  semantic focus order and scroll ownership, focus fallback, pocket jumps, focused-target
+  visibility, omitted capabilities, filename overflow, two-line item names, one open Bag command,
+  and the absence of route action-bar, mock, and imagery residue.
 - **SAVEFILE-TEST-3:** Real-fixture browser tests cover Trainer and Money commit boundaries, Bag Add,
   quantity, and Remove behavior, local validation, pending state, no-op behavior, silent success,
   failure recovery, Retry, and Toast delivery.
@@ -224,7 +230,8 @@ Apply action, Cancel action, or route action bar.
 3. The Save File edit coordinator and Ledger layout may land in parallel.
 4. Trainer and Money direct editing depends on the coordinator, Ledger, and shared Toast work.
 5. Bag direct editing depends on the coordinator, Ledger, and shared Toast work.
-6. Issue #222 integrates the completed destination with the final shell and Focus Zone contract.
+6. Issue #222 integrates the completed Trainer and Bag destinations with the final shell and Focus
+   Zone contract.
 7. Issues #223, #224, and #225 finish browser, native, and static-policy enforcement.
 
 The Save File implementation issues belong to the shell implementation set under issue #210. They

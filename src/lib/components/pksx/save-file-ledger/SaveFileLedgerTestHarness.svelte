@@ -1,9 +1,15 @@
 <script lang="ts">
 	import SaveFileLedger from '../SaveFileLedger.svelte';
 	import { untrack } from 'svelte';
-	import type { SaveFileLedgerCatalogue, SaveFileLedgerCommand, SaveFileLedgerView } from './types';
+	import type {
+		SaveFileLedgerCatalogue,
+		SaveFileLedgerCommand,
+		SaveFileLedgerDestination,
+		SaveFileLedgerView
+	} from './types';
 
 	interface Props {
+		destination: SaveFileLedgerDestination;
 		initialView: SaveFileLedgerView;
 		initialCatalogues?: Readonly<Record<string, SaveFileLedgerCatalogue>>;
 		pendingTargets?: readonly string[];
@@ -11,6 +17,7 @@
 	}
 
 	let {
+		destination,
 		initialView,
 		initialCatalogues = {},
 		pendingTargets = [],
@@ -67,6 +74,7 @@
 
 <SaveFileLedger
 	bind:this={ledger}
+	{destination}
 	{view}
 	{command}
 	{catalogues}

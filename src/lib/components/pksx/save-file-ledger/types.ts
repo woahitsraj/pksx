@@ -48,7 +48,10 @@ export type SaveFileLedgerCommitReason = 'enter' | 'blur';
 
 export type SaveFileLedgerFocusFallbacks = readonly string[];
 
+export type SaveFileLedgerDestination = 'trainer' | 'bag';
+
 export type SaveFileLedgerProps = {
+	destination: SaveFileLedgerDestination;
 	view: SaveFileLedgerView;
 	command?: SaveFileLedgerCommand | null;
 	catalogues?: Readonly<Record<string, SaveFileLedgerCatalogue>>;

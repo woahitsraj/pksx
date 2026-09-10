@@ -12,6 +12,7 @@ import {
 } from '$lib/pksx/destination-focus';
 import type {
 	SaveFileLedgerCatalogue,
+	SaveFileLedgerDestination,
 	SaveFileLedgerProps,
 	SaveFileLedgerView
 } from './save-file-ledger/types';
@@ -70,6 +71,7 @@ afterAll(() => {
 function render(
 	view: SaveFileLedgerView = publicFixtureView,
 	options: {
+		destination?: SaveFileLedgerDestination;
 		width?: number;
 		height?: number;
 		catalogues?: Readonly<Record<string, SaveFileLedgerCatalogue>>;
@@ -86,6 +88,7 @@ function render(
 	document.body.append(host);
 
 	const props = {
+		destination: options.destination ?? 'bag',
 		initialView: view,
 		initialCatalogues: options.catalogues ?? publicCatalogues,
 		pendingTargets: options.pendingTargets ?? [],
@@ -96,6 +99,7 @@ function render(
 			? mount(SaveFileLedger, {
 					target: host,
 					props: {
+						destination: props.destination,
 						view,
 						catalogues: props.initialCatalogues,
 						pendingTargets: props.pendingTargets,
@@ -145,8 +149,8 @@ function projectionWithItems(
 }
 
 describe('SaveFileLedger public fixture presentation', () => {
-	test('renders the Ledger hierarchy without mock, staging, table, or imagery residue', () => {
-		render();
+	test('renders separate Trainer and Bag destinations without mock, staging, table, or imagery residue', async () => {
+		render(publicFixtureView, { destination: 'bag' });
 
 		expect(host.querySelectorAll('.pocket-section')).toHaveLength(
 			publicFixtureView.projection.inventory.pockets.length
@@ -159,69 +163,73 @@ describe('SaveFileLedger public fixture presentation', () => {
 		expect(host.textContent).not.toMatch(/staged|Apply edits|Cancel all|generation|box count/i);
 		expect(host.textContent).not.toContain('¤');
 		expect(host.textContent).not.toContain('·');
-		expect(target('trainer-name').getAttribute('aria-label')).toBe('Trainer name');
-		expect(target('money-decrease').getAttribute('aria-label')).toBe('Decrease Money');
-		expect(target('money-increase').getAttribute('aria-label')).toBe('Increase Money');
+		expect(host.querySelector('[data-destination-root="bag"]')).not.toBeNull();
+		expect(host.querySelector('[data-testid="trainer-ledger-scrollport"]')).toBeNull();
 
 		const identities = Array.from(
 			host.querySelectorAll<HTMLElement>('[data-destination-focus]'),
 			(element) => element.dataset.destinationFocus
 		);
 		expect(new Set(identities).size).toBe(identities.length);
+
+		await clearMounted();
+		render(publicFixtureView, { destination: 'trainer' });
+		expect(host.querySelector('[data-destination-root="trainer"]')).not.toBeNull();
+		expect(host.querySelector('.bag-block, .pocket-section')).toBeNull();
+		expect(target('trainer-name').getAttribute('aria-label')).toBe('Trainer name');
+		expect(target('money-decrease').getAttribute('aria-label')).toBe('Decrease Money');
+		expect(target('money-increase').getAttribute('aria-label')).toBe('Increase Money');
+		expect(host.textContent).not.toMatch(/staged|Apply edits|Cancel all|generation|box count/i);
 	});
 
-	test('uses the strict container aspect tie rule and an exact 260px leading block', async () => {
-		render(publicFixtureView, { width: 640, height: 360 });
+	test('keeps each destination independent across container aspect changes', async () => {
+		render(publicFixtureView, { destination: 'trainer', width: 640, height: 360 });
 		await tick();
 		const container = host.querySelector<HTMLElement>('.save-file-ledger-container')!;
-		const layout = host.querySelector<HTMLElement>('.ledger-layout')!;
+		const content = host.querySelector<HTMLElement>('.destination-content')!;
+		const trainer = host.querySelector<HTMLElement>('.details-block')!;
 		expect(getComputedStyle(container).containerName).toBe('save-file-ledger');
-		expect(container.clientWidth).toBeGreaterThan(container.clientHeight);
-		expect(getComputedStyle(layout).gridTemplateColumns.split(' ')[0]).toBe('260px');
+		expect(trainer.getBoundingClientRect().width).toBeCloseTo(
+			content.getBoundingClientRect().width,
+			0
+		);
+		expect(host.querySelector('.bag-block, .ledger-layout')).toBeNull();
 
 		host.style.height = '640px';
 		await new Promise(requestAnimationFrame);
 		expect(container.clientWidth).toBe(container.clientHeight);
-		expect(getComputedStyle(layout).gridTemplateColumns.split(' ')).toHaveLength(1);
-		expect(getComputedStyle(layout).gridTemplateRows.split(' ').length).toBeGreaterThan(1);
+		expect(host.querySelector('.bag-block')).toBeNull();
 
-		host.style.width = '393px';
-		host.style.height = '852px';
-		await new Promise(requestAnimationFrame);
-		expect(container.clientWidth).toBeLessThan(container.clientHeight);
-		expect(getComputedStyle(layout).gridTemplateColumns.split(' ')).toHaveLength(1);
+		await clearMounted();
+		render(publicFixtureView, { destination: 'bag', width: 393, height: 852 });
+		await tick();
+		const bagContainer = host.querySelector<HTMLElement>('.save-file-ledger-container')!;
+		expect(bagContainer.clientWidth).toBeLessThan(bagContainer.clientHeight);
+		expect(host.querySelector('.details-block, .ledger-layout')).toBeNull();
 		expect(
 			host.querySelector<HTMLElement>('[data-testid="bag-ledger-scrollport"]')!.scrollWidth
-		).toBeLessThanOrEqual(container.clientWidth);
+		).toBeLessThanOrEqual(bagContainer.clientWidth);
 	});
 
-	test('gives a Bag-only projection the full wide and tall allocation', async () => {
-		const bagOnly = structuredClone(publicFixtureView);
-		bagOnly.projection.trainerProfile.trainerNameSupported = false;
-		bagOnly.projection.trainerProfile.genderSupported = false;
-		bagOnly.projection.money.supported = false;
-		render(bagOnly, { width: 640, height: 360 });
+	test('selects presentation without changing the shared engine projection', async () => {
+		render(publicFixtureView, { destination: 'bag', width: 640, height: 360 });
 		await tick();
-		const layout = host.querySelector<HTMLElement>('.ledger-layout')!;
 		const bag = host.querySelector<HTMLElement>('.bag-block')!;
-		expect(getComputedStyle(host.querySelector<HTMLElement>('.details-block')!).display).toBe(
-			'none'
-		);
-		expect(getComputedStyle(layout).gridTemplateColumns.split(' ')).toHaveLength(1);
-		expect(bag.getBoundingClientRect().width).toBeCloseTo(layout.getBoundingClientRect().width, 0);
+		const content = host.querySelector<HTMLElement>('.destination-content')!;
+		expect(host.querySelector('.details-block')).toBeNull();
+		expect(bag.getBoundingClientRect().width).toBeCloseTo(content.getBoundingClientRect().width, 0);
 		expect(bag.getBoundingClientRect().height).toBeCloseTo(
-			layout.getBoundingClientRect().height,
+			content.getBoundingClientRect().height,
 			0
 		);
 
-		host.style.width = '393px';
-		host.style.height = '852px';
-		await new Promise(requestAnimationFrame);
-		expect(getComputedStyle(layout).gridTemplateColumns.split(' ')).toHaveLength(1);
-		expect(bag.getBoundingClientRect().height).toBeCloseTo(
-			layout.getBoundingClientRect().height,
-			0
-		);
+		await clearMounted();
+		render(publicFixtureView, { destination: 'trainer', width: 640, height: 360 });
+		await tick();
+		expect(host.querySelector('.bag-block')).toBeNull();
+		expect(host.querySelectorAll('.details-section')).toHaveLength(2);
+		expect(target('trainer-name')).not.toBeNull();
+		expect(target('money-value')).not.toBeNull();
 	});
 
 	test('contains an open Add command and wrapped error at the 616 by 336 safe allocation', async () => {
@@ -234,14 +242,15 @@ describe('SaveFileLedger public fixture presentation', () => {
 			props: {
 				errors: {
 					[addConfirmIdentity]:
-						'This item could not be added to the selected pocket. Choose another item and try again.'
+						'This item could not be added to the selected pocket because the engine rejected the requested change. Choose another item or quantity, then try the Add Item command again.'
 				},
 				command: {
 					kind: 'add-item',
 					pocketKey: pocket.key,
 					itemId: null,
 					quantity: '',
-					quantityError: 'Enter a whole number between one and the maximum quantity.'
+					quantityError:
+						'Enter a whole number between one and the maximum quantity allowed for this selected Bag item.'
 				}
 			}
 		});
@@ -263,7 +272,7 @@ describe('SaveFileLedger public fixture presentation', () => {
 		);
 	});
 
-	test('keeps the Bag as its only vertical scroll owner and preserves full accessible names', async () => {
+	test('keeps each destination scroll local and preserves full Bag accessible names', async () => {
 		const longName =
 			'A very long public fixture filename that must remain available to assistive technology.sav';
 		render({ ...publicFixtureView, originalFilename: longName }, { width: 640, height: 360 });
@@ -281,37 +290,58 @@ describe('SaveFileLedger public fixture presentation', () => {
 		expect(filename.title).toBe(longName);
 		expect(getComputedStyle(filename).textOverflow).toBe('ellipsis');
 		expect(getComputedStyle(itemName).webkitLineClamp).toBe('2');
+
+		await clearMounted();
+		render(publicFixtureView, { destination: 'trainer', width: 360, height: 200 });
+		await tick();
+		const trainer = host.querySelector<HTMLElement>('[data-testid="trainer-ledger-scrollport"]')!;
+		expect(getComputedStyle(trainer).overflowY).toBe('auto');
+		expect(trainer.scrollHeight).toBeGreaterThan(trainer.clientHeight);
+		expect(getComputedStyle(host.querySelector<HTMLElement>('.ledger-screen')!).overflowY).toBe(
+			'hidden'
+		);
 	});
 });
 
 describe('SaveFileLedger semantic focus graph', () => {
-	test('keeps one semantic row order across the responsive composition boundary', async () => {
-		render();
-		const expectedPrefix = ['trainer-name', 'trainer-gender', 'money', 'pocket-jumps'];
+	test('keeps one semantic row order within each destination', async () => {
+		render(publicFixtureView, { destination: 'trainer' });
 		const rowOrder = () =>
 			Array.from(
 				host.querySelectorAll<HTMLElement>('[data-ledger-row]'),
 				(row) => row.dataset.ledgerRow
 			);
-		expect(rowOrder().slice(0, 4)).toEqual(expectedPrefix);
+		expect(rowOrder()).toEqual(['trainer-name', 'trainer-gender', 'money']);
 
 		host.style.height = '640px';
 		await new Promise(requestAnimationFrame);
-		expect(rowOrder().slice(0, 4)).toEqual(expectedPrefix);
+		expect(rowOrder()).toEqual(['trainer-name', 'trainer-gender', 'money']);
+
+		await clearMounted();
+		render(publicFixtureView, { destination: 'bag' });
+		await tick();
+		expect(rowOrder()[0]).toBe('pocket-jumps');
+		expect(
+			rowOrder()
+				.slice(1)
+				.every((row) => row?.startsWith('pocket-') || row?.startsWith('item-'))
+		).toBe(true);
 	});
 
-	test('moves within a row, then through semantic rows independent of composition', async () => {
-		render();
+	test('moves within Trainer rows and enters Bag pockets independently', async () => {
+		render(publicFixtureView, { destination: 'trainer' });
 		await tick();
 		const decrease = target('money-decrease');
 		decrease.focus();
 		press(decrease, 'ArrowRight');
 		expect(document.activeElement).toBe(target('money-value'));
 
-		dispatchControllerKey('ArrowDown');
-		expect(document.activeElement).toBe(
-			host.querySelectorAll<HTMLElement>('[data-ledger-jump]')[1]
-		);
+		dispatchControllerKey('ArrowUp');
+		expect(document.activeElement).toBe(target('trainer-gender-female'));
+
+		await clearMounted();
+		render(publicFixtureView, { destination: 'bag' });
+		await tick();
 		const secondJump = host.querySelectorAll<HTMLElement>('[data-ledger-jump]')[1];
 		secondJump.focus();
 		press(secondJump, 'ArrowDown');
@@ -372,25 +402,24 @@ describe('SaveFileLedger semantic focus graph', () => {
 	test('keeps an unrelated live draft focused when pending Add or Remove completes', async () => {
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
 		let harness = render();
+		let quantities = host.querySelectorAll<HTMLInputElement>('[data-ledger-draft="item-quantity"]');
+		let liveQuantity = quantities[0];
 		(target(`pocket-${pocket.key}-add`) as HTMLButtonElement).click();
 		await expectFocused(`pocket-${pocket.key}-add-item`);
-		const trainerName = target('trainer-name') as HTMLInputElement;
-		const trainerBlur = vi.fn();
-		trainerName.addEventListener('blur', trainerBlur);
-		trainerName.focus();
+		const quantityBlur = vi.fn();
+		liveQuantity.addEventListener('blur', quantityBlur);
+		liveQuantity.focus();
 		harness.setPendingTargets([`pocket-${pocket.key}-add-confirm`]);
 		harness.setCommand(null);
 		await tick();
 		await tick();
-		expect(document.activeElement).toBe(trainerName);
-		expect(trainerBlur).not.toHaveBeenCalled();
+		expect(document.activeElement).toBe(liveQuantity);
+		expect(quantityBlur).not.toHaveBeenCalled();
 
 		await clearMounted();
 		harness = render();
-		const quantities = host.querySelectorAll<HTMLInputElement>(
-			'[data-ledger-draft="item-quantity"]'
-		);
-		const liveQuantity = quantities[0];
+		quantities = host.querySelectorAll<HTMLInputElement>('[data-ledger-draft="item-quantity"]');
+		liveQuantity = quantities[0];
 		const removedQuantity = Array.from(quantities).find(
 			(candidate) =>
 				candidate.dataset.pocketKey !== liveQuantity.dataset.pocketKey ||
@@ -400,15 +429,15 @@ describe('SaveFileLedger semantic focus graph', () => {
 		const removedItemId = Number(removedQuantity.dataset.itemId);
 		(target(`item-${removedPocketKey}-${removedItemId}-remove`) as HTMLButtonElement).click();
 		await expectFocused(`item-${removedPocketKey}-${removedItemId}-confirm-remove`);
-		const quantityBlur = vi.fn();
-		liveQuantity.addEventListener('blur', quantityBlur);
+		const removeQuantityBlur = vi.fn();
+		liveQuantity.addEventListener('blur', removeQuantityBlur);
 		liveQuantity.focus();
 		harness.setPendingTargets([`item-${removedPocketKey}-${removedItemId}-confirm-remove`]);
 		harness.setCommand(null);
 		await tick();
 		await tick();
 		expect(document.activeElement).toBe(liveQuantity);
-		expect(quantityBlur).not.toHaveBeenCalled();
+		expect(removeQuantityBlur).not.toHaveBeenCalled();
 	});
 
 	test('re-enters an open Add command from its pocket jump', async () => {
@@ -503,7 +532,7 @@ describe('SaveFileLedger semantic focus graph', () => {
 		await tick();
 		expect(document.activeElement).toBe(target(`pocket-${pocket.key}-add`));
 
-		const remembered = target('money-value');
+		const remembered = target(`item-${pocket.key}-${pocket.items[0].id}-remove`);
 		remembered.focus();
 		harness.setView({
 			...publicFixtureView,
@@ -579,11 +608,12 @@ describe('SaveFileLedger semantic focus graph', () => {
 		harness.setCatalogues(retryingCatalogues);
 		await tick();
 		await tick();
-		target('money-value').focus();
+		const quantityIdentity = `item-${pocket.key}-${pocket.items[0].id}-quantity`;
+		target(quantityIdentity).focus();
 		harness.setCatalogues(publicCatalogues);
 		await tick();
 		await tick();
-		expect(document.activeElement).toBe(target('money-value'));
+		expect(document.activeElement).toBe(target(quantityIdentity));
 	});
 
 	test('enters a pocket through Retry, first item, the next pocket, then clamps', async () => {
@@ -868,13 +898,14 @@ describe('SaveFileLedger semantic focus graph', () => {
 		);
 		await tick();
 		await tick();
-		expect(document.activeElement).toBe(target('trainer-name'));
+		expect(document.activeElement).toBe(target(`pocket-${pocket.key}-add`));
 	});
 
 	test('restores local focus after retrying recovery and another target change', async () => {
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
 		const harness = render();
-		target('money-value').focus();
+		const quantityIdentity = `item-${pocket.key}-${pocket.items[0].id}-quantity`;
+		target(quantityIdentity).focus();
 		harness.setView({
 			...publicFixtureView,
 			editingUnavailable: { message: 'Editor unavailable.' }
@@ -893,11 +924,11 @@ describe('SaveFileLedger semantic focus graph', () => {
 		harness.setView(publicFixtureView);
 		await tick();
 		await tick();
-		expect(document.activeElement).toBe(target('money-value'));
+		expect(document.activeElement).toBe(target(quantityIdentity));
 	});
 
 	test('restores local focus when ready state overtakes the rendered unavailable phase', async () => {
-		const harness = render();
+		const harness = render(publicFixtureView, { destination: 'trainer' });
 		target('money-value').focus();
 		harness.setView({
 			...publicFixtureView,
@@ -983,6 +1014,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		const onTrainerNameCommit = vi.fn();
 		const onTrainerNameAbandon = vi.fn();
 		render(publicFixtureView, {
+			destination: 'trainer',
 			harness: false,
 			props: { onTrainerNameCommit, onTrainerNameAbandon }
 		});
@@ -1069,29 +1101,31 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		expect(onCommandChange).toHaveBeenCalledWith(expect.objectContaining({ quantity: '007' }));
 	});
 
-	test('gives a focused draft priority over an open command in the local Back handler', async () => {
-		const onTrainerNameAbandon = vi.fn();
+	test('gives a focused Bag draft priority over an open command in the local Back handler', async () => {
+		const onItemQuantityAbandon = vi.fn();
 		const onCommandChange = vi.fn();
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const item = pocket.items[0];
 		const ledger = render(publicFixtureView, {
 			harness: false,
 			props: {
 				command: { kind: 'add-item', pocketKey: pocket.key, itemId: null, quantity: '1' },
-				onTrainerNameAbandon,
+				onItemQuantityAbandon,
 				onCommandChange
 			}
 		});
 		await expectFocused(`pocket-${pocket.key}-add-item`);
-		const name = target('trainer-name');
-		name.focus();
+		const quantity = target(`item-${pocket.key}-${item.id}-quantity`);
+		quantity.focus();
 		expect(ledger.handleBack()).toBe(true);
-		expect(onTrainerNameAbandon).toHaveBeenCalledOnce();
+		expect(onItemQuantityAbandon).toHaveBeenCalledWith(pocket.key, item.id);
 		expect(onCommandChange).not.toHaveBeenCalled();
 	});
 
 	test('leaves pending read-only drafts focused and declines local Back handling', async () => {
 		const onMoneyAbandon = vi.fn();
 		const ledger = render(publicFixtureView, {
+			destination: 'trainer',
 			harness: false,
 			pendingTargets: ['money'],
 			props: { onMoneyAbandon }
@@ -1112,18 +1146,20 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 
 		await clearMounted();
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const pendingQuantity = `item-${pocket.key}-${pocket.items[0].id}-quantity`;
 		const onCommandChange = vi.fn();
 		const withCommand = render(publicFixtureView, {
 			harness: false,
-			pendingTargets: ['trainer-name'],
+			pendingTargets: [pendingQuantity],
 			props: {
 				command: { kind: 'add-item', pocketKey: pocket.key, itemId: null, quantity: '1' },
 				onCommandChange
 			}
 		});
 		await expectFocused(`pocket-${pocket.key}-add-item`);
-		const name = target('trainer-name');
-		name.focus();
+		const quantity = target(pendingQuantity) as HTMLInputElement;
+		quantity.focus();
+		expect(quantity.readOnly).toBe(true);
 		expect(withCommand.handleBack()).toBe(true);
 		expect(onCommandChange).toHaveBeenCalledWith(null);
 	});
@@ -1134,7 +1170,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		const launcherIdentity = `pocket-${pocket.key}-add`;
 		(target(launcherIdentity) as HTMLButtonElement).click();
 		await expectFocused(`pocket-${pocket.key}-add-item`);
-		target('money-decrease').focus();
+		target(`pocket-${pocket.key}-jump`).focus();
 		expect(ledger.handleBack()).toBe(true);
 		await expectFocused(launcherIdentity);
 		expect(host.querySelector('[data-ledger-command]')).toBeNull();
@@ -1156,7 +1192,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 	});
 
 	test('keeps pending, bounded, and retry targets focused while blocking repeat activation', async () => {
-		const harness = render();
+		let harness = render(publicFixtureView, { destination: 'trainer' });
 		await tick();
 		const money = target('money-value') as HTMLInputElement;
 		money.focus();
@@ -1165,10 +1201,11 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		expect(document.activeElement).toBe(money);
 		expect(money.readOnly).toBe(true);
 		expect(money.getAttribute('aria-disabled')).toBe('true');
-		dispatchControllerKey('ArrowDown');
-		expect(document.activeElement).toBe(
-			host.querySelectorAll<HTMLElement>('[data-ledger-jump]')[1]
-		);
+		dispatchControllerKey('ArrowUp');
+		expect(document.activeElement).toBe(target('trainer-gender-female'));
+
+		await clearMounted();
+		harness = render();
 
 		const pocket = publicFixtureView.projection.inventory.pockets.find((candidate) =>
 			candidate.items.some((item) => item.quantity > 1)
@@ -1206,53 +1243,153 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		expect(retry.getAttribute('aria-disabled')).toBe('true');
 	});
 
-	test('derives numeric field widths from engine maxima', () => {
-		render();
+	test('derives numeric field widths from engine maxima', async () => {
+		const expectValueFits = (input: HTMLInputElement, value: string) => {
+			const style = getComputedStyle(input);
+			const canvas = document.createElement('canvas');
+			const context = canvas.getContext('2d')!;
+			context.font = style.font;
+			const contentWidth =
+				input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+			expect(context.measureText(value).width).toBeLessThanOrEqual(contentWidth);
+		};
+		render(publicFixtureView, { destination: 'trainer' });
 		const moneyRow = host.querySelector<HTMLElement>('.money-row')!;
-		const firstQuantity = host.querySelector<HTMLElement>('.quantity-controls')!;
+		const moneyInput = target('money-value') as HTMLInputElement;
 		expect(moneyRow.style.getPropertyValue('--money-ch')).toBe(
 			String(publicFixtureView.projection.money.max).length.toString()
 		);
+		expect(getComputedStyle(moneyInput).fontSize).toBe('16px');
+		expectValueFits(moneyInput, String(publicFixtureView.projection.money.max));
+
+		await clearMounted();
+		render();
+		const firstQuantity = host.querySelector<HTMLElement>('.quantity-controls')!;
 		const firstItem = publicFixtureView.projection.inventory.pockets[0].items[0];
+		const quantityInput = target(
+			`item-${publicFixtureView.projection.inventory.pockets[0].key}-${firstItem.id}-quantity`
+		) as HTMLInputElement;
 		expect(firstQuantity.style.getPropertyValue('--quantity-ch')).toBe(
 			String(firstItem.maxQuantity).length.toString()
 		);
+		expect(getComputedStyle(quantityInput).fontSize).toBe('16px');
+		expectValueFits(quantityInput, String(firstItem.maxQuantity));
 	});
 
-	test('guards pending and bounded value activations without removing focus stops', () => {
+	test('guards pending and bounded value activations without removing focus stops', async () => {
 		const onMoneyCommit = vi.fn();
 		const onMoneyStep = vi.fn(() => true);
 		const onItemQuantityStep = vi.fn(() => true);
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
 		const item = pocket.items[0];
 		const boundedView = projectionWithItems(pocket.key, [{ ...item, quantity: 1 }]);
-		render(boundedView, {
+		render(publicFixtureView, {
+			destination: 'trainer',
 			harness: false,
 			pendingTargets: ['money'],
-			props: { onMoneyCommit, onMoneyStep, onItemQuantityStep }
+			props: { onMoneyCommit, onMoneyStep }
 		});
 
 		const money = target('money-value');
 		money.focus();
 		press(money, 'Enter');
 		(target('money-decrease') as HTMLButtonElement).click();
-		(target(`item-${pocket.key}-${item.id}-decrease`) as HTMLButtonElement).click();
 		expect(onMoneyCommit).not.toHaveBeenCalled();
 		expect(onMoneyStep).not.toHaveBeenCalled();
+
+		await clearMounted();
+		render(boundedView, { harness: false, props: { onItemQuantityStep } });
+		(target(`item-${pocket.key}-${item.id}-decrease`) as HTMLButtonElement).click();
+		expect(onItemQuantityStep).not.toHaveBeenCalled();
+	});
+
+	test('keeps raw boundary drafts activatable until Money accepts the boundary', async () => {
+		const onMoneyStep = vi.fn(() => true);
+		const maximum = publicFixtureView.projection.money.max;
+		render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { drafts: { money: { value: String(maximum) } }, onMoneyStep }
+		});
+		const max = target('money-max') as HTMLButtonElement;
+		expect(max.getAttribute('aria-disabled')).toBe('false');
+		max.click();
+		expect(onMoneyStep).toHaveBeenCalledWith('max', String(maximum));
+
+		await clearMounted();
+		const accepted = structuredClone(publicFixtureView);
+		accepted.projection.money.value = maximum;
+		onMoneyStep.mockClear();
+		render(accepted, {
+			destination: 'trainer',
+			harness: false,
+			props: { drafts: { money: { value: String(maximum) } }, onMoneyStep }
+		});
+		expect(target('money-max').getAttribute('aria-disabled')).toBe('true');
+		(target('money-max') as HTMLButtonElement).click();
+		expect(onMoneyStep).not.toHaveBeenCalled();
+
+		await clearMounted();
+		render(accepted, {
+			destination: 'trainer',
+			harness: false,
+			props: { drafts: { money: { value: 'invalid' } }, onMoneyStep }
+		});
+		expect(target('money-max').getAttribute('aria-disabled')).toBe('false');
+		(target('money-max') as HTMLButtonElement).click();
+		expect(onMoneyStep).toHaveBeenCalledWith('max', 'invalid');
+	});
+
+	test('keeps raw boundary drafts activatable until Bag accepts the boundary', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets.find((candidate) =>
+			candidate.items.some((item) => item.quantity > 1)
+		)!;
+		const item = pocket.items.find((candidate) => candidate.quantity > 1)!;
+		const onItemQuantityStep = vi.fn(() => true);
+		render(publicFixtureView, {
+			harness: false,
+			props: {
+				drafts: { itemQuantities: { [`${pocket.key}:${item.id}`]: { value: '1' } } },
+				onItemQuantityStep
+			}
+		});
+		const decrease = target(`item-${pocket.key}-${item.id}-decrease`) as HTMLButtonElement;
+		expect(decrease.getAttribute('aria-disabled')).toBe('false');
+		decrease.click();
+		expect(onItemQuantityStep).toHaveBeenCalledWith(pocket.key, item.id, -1, '1');
+
+		await clearMounted();
+		const accepted = projectionWithItems(
+			pocket.key,
+			pocket.items.map((candidate) =>
+				candidate.id === item.id ? { ...candidate, quantity: 1 } : candidate
+			)
+		);
+		onItemQuantityStep.mockClear();
+		render(accepted, {
+			harness: false,
+			props: {
+				drafts: { itemQuantities: { [`${pocket.key}:${item.id}`]: { value: '1' } } },
+				onItemQuantityStep
+			}
+		});
+		expect(target(`item-${pocket.key}-${item.id}-decrease`).getAttribute('aria-disabled')).toBe(
+			'true'
+		);
+		(target(`item-${pocket.key}-${item.id}-decrease`) as HTMLButtonElement).click();
 		expect(onItemQuantityStep).not.toHaveBeenCalled();
 	});
 
 	test('exposes and guards pending gender, Add, and Remove operations', async () => {
 		const onTrainerGenderSelect = vi.fn();
 		render(publicFixtureView, {
+			destination: 'trainer',
 			harness: false,
 			pendingTargets: ['trainer-gender-male'],
 			props: { onTrainerGenderSelect }
 		});
-		const genderGroup = host.querySelector<HTMLElement>(
-			'[role="group"][aria-label="Trainer gender"]'
-		)!;
-		expect(genderGroup.getAttribute('aria-busy')).toBe('true');
+		const genderRow = host.querySelector<HTMLElement>('[data-ledger-row="trainer-gender"]')!;
+		expect(genderRow.getAttribute('aria-busy')).toBe('true');
 		expect(target('trainer-gender-male').getAttribute('aria-disabled')).toBe('true');
 		expect(target('trainer-gender-female').getAttribute('aria-disabled')).toBe('true');
 		(target('trainer-gender-male') as HTMLButtonElement).click();
@@ -1311,13 +1448,32 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		expect((target(removeIdentity) as HTMLButtonElement).disabled).toBe(true);
 	});
 
-	test('associates an Engine rejection with the Trainer gender group', () => {
+	test('exposes a gender Engine rejection without changing pressed-button activation', () => {
+		const onTrainerGenderSelect = vi.fn();
 		render(publicFixtureView, {
+			destination: 'trainer',
 			harness: false,
-			props: { errors: { 'trainer-gender': 'This gender could not be saved.' } }
+			props: {
+				errors: { 'trainer-gender': 'This gender could not be saved.' },
+				onTrainerGenderSelect
+			}
 		});
+		const row = host.querySelector<HTMLElement>('[data-ledger-row="trainer-gender"]')!;
 		const group = host.querySelector<HTMLElement>('[role="group"][aria-label="Trainer gender"]')!;
-		expect(group.getAttribute('aria-describedby')).toBe('trainer-gender-error');
+		expect(row.getAttribute('aria-invalid')).toBe('true');
+		expect(row.getAttribute('aria-describedby')).toBe('trainer-gender-error');
+		for (const choice of ['trainer-gender-male', 'trainer-gender-female']) {
+			expect(target(choice).getAttribute('aria-describedby')).toBe('trainer-gender-error');
+		}
+		const male = target('trainer-gender-male');
+		male.focus();
+		dispatchControllerKey('ArrowRight');
+		expect(document.activeElement).toBe(target('trainer-gender-female'));
+		expect(onTrainerGenderSelect).not.toHaveBeenCalled();
+		(document.activeElement as HTMLButtonElement).click();
+		expect(onTrainerGenderSelect).toHaveBeenCalledOnce();
+		expect(onTrainerGenderSelect).toHaveBeenCalledWith('female');
+		expect(group.getAttribute('role')).toBe('group');
 		expect(document.getElementById('trainer-gender-error')?.textContent).toBe(
 			'This gender could not be saved.'
 		);
@@ -1348,7 +1504,9 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		add.click();
 		remove.click();
 		expect(onCommandChange).not.toHaveBeenCalled();
-		expect((target('money-value') as HTMLInputElement).readOnly).toBe(false);
+		expect(
+			(target(`item-${pocket.key}-${pocket.items[1].id}-quantity`) as HTMLInputElement).readOnly
+		).toBe(false);
 
 		await new Promise((resolve) => setTimeout(resolve, 550));
 		expect(add.parentElement?.querySelector('.spinner-graphic')).not.toBeNull();
@@ -1376,6 +1534,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		const onMoneyCommit = vi.fn();
 		const onMoneyStep = vi.fn(() => true);
 		render(publicFixtureView, {
+			destination: 'trainer',
 			harness: false,
 			props: {
 				drafts: { money: { value: '001' } },
@@ -1401,6 +1560,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		const onMoneyCommit = vi.fn();
 		const onMoneyStep = vi.fn(() => true);
 		render(publicFixtureView, {
+			destination: 'trainer',
 			harness: false,
 			props: {
 				drafts: { money: { value: '001' } },
@@ -1426,7 +1586,11 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 
 	test('keeps a pointer-cancelled or released draft focused until a real focus transfer', async () => {
 		const onMoneyCommit = vi.fn();
-		render(publicFixtureView, { harness: false, props: { onMoneyCommit } });
+		render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { onMoneyCommit }
+		});
 		await tick();
 		const input = target('money-value');
 		const increase = target('money-increase');
@@ -1442,7 +1606,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		expect(document.activeElement).toBe(input);
 		expect(onMoneyCommit).not.toHaveBeenCalled();
 
-		host.querySelector<HTMLElement>('[data-ledger-jump]')!.focus();
+		target('trainer-name').focus();
 		expect(onMoneyCommit).toHaveBeenCalledOnce();
 	});
 
@@ -1450,6 +1614,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		const onMoneyCommit = vi.fn();
 		const onMoneyStep = vi.fn(() => true);
 		render(publicFixtureView, {
+			destination: 'trainer',
 			harness: false,
 			props: { drafts: { money: { value: '001' } }, onMoneyCommit, onMoneyStep }
 		});
@@ -1469,14 +1634,18 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 
 	test('commits a deferred draft once when controller focus leaves its operator group', async () => {
 		const onMoneyCommit = vi.fn();
-		render(publicFixtureView, { harness: false, props: { onMoneyCommit } });
+		render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { onMoneyCommit }
+		});
 		await tick();
 		const input = target('money-value');
 		input.focus();
 		dispatchControllerKey('ArrowRight');
 		dispatchControllerKey('ArrowRight');
 		expect(onMoneyCommit).not.toHaveBeenCalled();
-		dispatchControllerKey('ArrowDown');
+		dispatchControllerKey('ArrowUp');
 		expect(onMoneyCommit).toHaveBeenCalledOnce();
 		expect(onMoneyCommit).toHaveBeenCalledWith('blur');
 	});
@@ -1509,7 +1678,10 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		const onMoneyCommit = vi.fn();
 		const onMoneyStep = vi.fn(() => false);
 		const maximum = String(publicFixtureView.projection.money.max);
-		render(publicFixtureView, {
+		const acceptedMaximum = structuredClone(publicFixtureView);
+		acceptedMaximum.projection.money.value = publicFixtureView.projection.money.max;
+		render(acceptedMaximum, {
+			destination: 'trainer',
 			harness: false,
 			props: { drafts: { money: { value: maximum } }, onMoneyCommit, onMoneyStep }
 		});
@@ -1518,12 +1690,13 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		target('money-increase').focus();
 		(target('money-increase') as HTMLButtonElement).click();
 		expect(onMoneyStep).not.toHaveBeenCalled();
-		host.querySelector<HTMLElement>('[data-ledger-jump]')!.focus();
+		target('trainer-name').focus();
 		expect(onMoneyCommit).toHaveBeenCalledOnce();
 
 		await clearMounted();
 		onMoneyCommit.mockClear();
 		render(publicFixtureView, {
+			destination: 'trainer',
 			harness: false,
 			props: { drafts: { money: { value: '001' } }, onMoneyCommit, onMoneyStep }
 		});
@@ -1532,13 +1705,14 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		target('money-increase').focus();
 		(target('money-increase') as HTMLButtonElement).click();
 		expect(onMoneyStep).toHaveBeenCalledWith(1, '001');
-		host.querySelector<HTMLElement>('[data-ledger-jump]')!.focus();
+		target('trainer-name').focus();
 		expect(onMoneyCommit).toHaveBeenCalledOnce();
 
 		await clearMounted();
 		onMoneyCommit.mockClear();
 		onMoneyStep.mockClear();
 		render(publicFixtureView, {
+			destination: 'trainer',
 			harness: false,
 			pendingTargets: ['money'],
 			props: { drafts: { money: { value: '001' } }, onMoneyCommit, onMoneyStep }
@@ -1548,38 +1722,48 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		target('money-increase').focus();
 		(target('money-increase') as HTMLButtonElement).click();
 		expect(onMoneyStep).not.toHaveBeenCalled();
-		host.querySelector<HTMLElement>('[data-ledger-jump]')!.focus();
+		target('trainer-name').focus();
 		expect(onMoneyCommit).toHaveBeenCalledOnce();
 	});
 
 	test('commits one field when a pointer activates a different field operator', async () => {
-		const onMoneyCommit = vi.fn();
-		render(publicFixtureView, { harness: false, props: { onMoneyCommit } });
+		const onTrainerNameCommit = vi.fn();
+		render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { onTrainerNameCommit }
+		});
 		await tick();
-		const money = target('money-value');
-		const pocket = publicFixtureView.projection.inventory.pockets[0];
-		const item = pocket.items[0];
-		const increase = target(`item-${pocket.key}-${item.id}-increase`);
-		money.focus();
+		const name = target('trainer-name');
+		const increase = target('money-increase');
+		name.focus();
 		increase.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 		increase.focus();
-		expect(onMoneyCommit).toHaveBeenCalledOnce();
-		expect(onMoneyCommit).toHaveBeenCalledWith('blur');
+		expect(onTrainerNameCommit).toHaveBeenCalledOnce();
+		expect(onTrainerNameCommit).toHaveBeenCalledWith('blur');
 	});
 
 	test('commits one field when controller focus crosses into a different field group', async () => {
 		const onMoneyCommit = vi.fn();
-		render(publicFixtureView, { harness: false, props: { onMoneyCommit } });
+		render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { onMoneyCommit }
+		});
 		await tick();
 		target('money-value').focus();
-		dispatchControllerKey('ArrowDown');
+		dispatchControllerKey('ArrowUp');
 		expect(onMoneyCommit).toHaveBeenCalledOnce();
 		expect(onMoneyCommit).toHaveBeenCalledWith('blur');
 	});
 
 	test('does not commit a deferred draft when the Ledger is destroyed', async () => {
 		const onMoneyCommit = vi.fn();
-		render(publicFixtureView, { harness: false, props: { onMoneyCommit } });
+		render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { onMoneyCommit }
+		});
 		await tick();
 		target('money-value').focus();
 		dispatchControllerKey('ArrowRight');
@@ -1615,32 +1799,46 @@ describe('SaveFileLedger states and feedback', () => {
 		expect(target('back-boxes').hasAttribute('data-destination-initial')).toBe(true);
 	});
 
-	test('omits unsupported capability groups and shows the route empty state', () => {
+	test('shows destination-specific empty states for unsupported capabilities', async () => {
 		const projection = structuredClone(publicFixtureView.projection);
 		projection.trainerProfile.trainerNameSupported = false;
 		projection.trainerProfile.genderSupported = false;
 		projection.money.supported = false;
-		projection.inventory.supported = false;
-		render({ ...publicFixtureView, projection });
+		render({ ...publicFixtureView, projection }, { destination: 'trainer' });
 
-		expect(host.querySelector('.details-block, .bag-block')).toBeNull();
-		expect(host.textContent).toContain('No editable details are available');
+		expect(host.querySelector('.details-block')).toBeNull();
+		expect(host.textContent).toContain('No editable Trainer details are available');
 		expect(host.textContent).not.toContain('Generation');
+
+		await clearMounted();
+		projection.inventory.supported = false;
+		render({ ...publicFixtureView, projection }, { destination: 'bag' });
+		expect(host.querySelector('.bag-block')).toBeNull();
+		expect(host.textContent).toContain('No editable Bag details are available');
 	});
 
-	test('omits only unsupported capability groups', () => {
+	test('omits only unsupported groups within the selected destination', async () => {
 		const projection = structuredClone(publicFixtureView.projection);
 		projection.trainerProfile.trainerNameSupported = false;
 		projection.trainerProfile.genderSupported = false;
-		render({ ...publicFixtureView, projection });
+		render({ ...publicFixtureView, projection }, { destination: 'trainer' });
 
 		expect(host.querySelector('[aria-labelledby="ledger-trainer-title"]')).toBeNull();
 		expect(host.querySelector('[aria-labelledby="ledger-money-title"]')).not.toBeNull();
+		expect(host.querySelector('[aria-labelledby="ledger-bag-title"]')).toBeNull();
+
+		await clearMounted();
+		render({ ...publicFixtureView, projection }, { destination: 'bag' });
 		expect(host.querySelector('[aria-labelledby="ledger-bag-title"]')).not.toBeNull();
+		expect(host.querySelector('[aria-labelledby="ledger-money-title"]')).toBeNull();
 	});
 
 	test('exposes pending immediately without prose and delays the localized spinner', async () => {
-		render(publicFixtureView, { pendingTargets: ['money'], harness: false });
+		render(publicFixtureView, {
+			destination: 'trainer',
+			pendingTargets: ['money'],
+			harness: false
+		});
 		const money = host.querySelector<HTMLElement>('.money-row')!;
 		expect(money.getAttribute('aria-busy')).toBe('true');
 		expect(host.textContent).not.toMatch(/Saving|Working/i);
@@ -1665,17 +1863,23 @@ describe('SaveFileLedger states and feedback', () => {
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
 		const item = pocket.items[0];
 		const quantityIdentity = `item-${pocket.key}-${item.id}-quantity`;
-		const harness = render();
+		let harness = render(publicFixtureView, { destination: 'trainer' });
 		const money = host.querySelector<HTMLElement>('.money-row')!;
-		const quantity = target(quantityIdentity).closest<HTMLElement>('.quantity-controls')!;
 		const moneyHeight = money.getBoundingClientRect().height;
-		const quantityHeight = quantity.getBoundingClientRect().height;
-		harness.setPendingTargets(['money', quantityIdentity]);
+		harness.setPendingTargets(['money']);
 		await tick();
 		expect(money.getBoundingClientRect().height).toBe(moneyHeight);
-		expect(quantity.getBoundingClientRect().height).toBe(quantityHeight);
 		await new Promise((resolve) => setTimeout(resolve, 550));
 		expect(money.getBoundingClientRect().height).toBe(moneyHeight);
+
+		await clearMounted();
+		harness = render();
+		const quantity = target(quantityIdentity).closest<HTMLElement>('.quantity-controls')!;
+		const quantityHeight = quantity.getBoundingClientRect().height;
+		harness.setPendingTargets([quantityIdentity]);
+		await tick();
+		expect(quantity.getBoundingClientRect().height).toBe(quantityHeight);
+		await new Promise((resolve) => setTimeout(resolve, 550));
 		expect(quantity.getBoundingClientRect().height).toBe(quantityHeight);
 	});
 
