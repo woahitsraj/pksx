@@ -245,6 +245,26 @@ describe('density design contract', () => {
 		).toEqual([]);
 	});
 
+	it('[DENSITY-1] permits automatic sizes only with a surviving token minimum', () => {
+		for (const category of ['', 'small']) {
+			const token = category ? '--pksx-small-control-height' : '--pksx-control-height';
+			const button = `<button class="x" ${category ? 'data-pksx-control-category="small"' : ''}>Less</button>`;
+			for (const property of ['height', 'block-size']) {
+				expect(
+					names(
+						'src/Example.svelte',
+						`${button}<style>.x { min-height: var(${token}); ${property}: auto; }</style>`
+					)
+				).toEqual([]);
+				for (const size of ['', `${property}: var(${token});`]) {
+					expect(
+						names('src/Example.svelte', `${button}<style>.x { ${size} ${property}: auto; }</style>`)
+					).toContain('DENSITY-1 control-owner');
+				}
+			}
+		}
+	});
+
 	it('[DENSITY-1] rejects overrides of a small-control minimum', () => {
 		for (const property of ['min-height', 'min-block-size']) {
 			expect(

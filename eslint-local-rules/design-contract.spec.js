@@ -72,6 +72,21 @@ describe('local responsive rules', () => {
 		).toEqual([]);
 	});
 
+	it('resolves later initializer definitions without crossing lexical bindings', () => {
+		for (const source of [
+			'function classify() { return viewport.innerWidth > 640; } const viewport = globalThis.window;',
+			"function force() { root.setAttribute('data-pksx-height-band-lock', 'tall'); } const root = document.documentElement;",
+			"function force() { root.dataset.pksxHeightBandLock = 'tall'; } const { documentElement: root } = doc; const doc = document;"
+		])
+			expect(messages(source)[0]?.message).toContain('[RESP-1]');
+		expect(
+			messages(`function inspect() { return viewport.clientWidth; } const viewport = element;
+			function animate() { matchMedia(query); } const query = '(prefers-reduced-motion: reduce)';
+			function local(window) { return window.innerWidth; }
+			function cyclic() { return first.innerWidth; } const first = second; const second = first;`)
+		).toEqual([]);
+	});
+
 	it('[DENSITY-1] rejects runtime token writes', () => {
 		expect(messages("element.style.setProperty('--pksx-type-body', '12px')")[0]?.message).toContain(
 			'[DENSITY-1]'
@@ -118,7 +133,9 @@ describe('local responsive rules', () => {
 			"const doc = document; doc.documentElement.dataset.pksxHeightBandLock = 'tall';",
 			"const doc = globalThis.document; const root = doc.documentElement; root.setAttribute('style', '--pksx-height-band: tall');",
 			"const { documentElement: root } = window.document; root.removeAttribute('data-pksx-height-band-lock');",
-			"const root = document.documentElement; { const root = element; } root.dataset.pksxHeightBandLock = 'tall';"
+			"const root = document.documentElement; { const root = element; } root.dataset.pksxHeightBandLock = 'tall';",
+			"const root = document.scrollingElement; if (root) root.setAttribute('data-pksx-height-band-lock', 'tall');",
+			"const root = document.scrollingElement; if (root) root.dataset.pksxHeightBandLock = 'tall';"
 		])
 			expect(messages(source)[0]?.message).toContain('[RESP-1]');
 		expect(

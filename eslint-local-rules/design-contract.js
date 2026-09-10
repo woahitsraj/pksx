@@ -64,6 +64,7 @@ function isRoot(kind) {
 
 function staticBindings(context) {
 	const values = new Map();
+	const resolving = new Set();
 	const variable = (node) => {
 		for (let scope = context.sourceCode.getScope(node); scope; scope = scope.upper) {
 			const binding = scope.set.get(node.name);
@@ -83,8 +84,8 @@ function staticBindings(context) {
 			if (['document', 'matchMedia', 'getComputedStyle'].includes(key)) return { kind: key };
 		}
 		if (owner?.kind === 'document') {
-			if (key === 'documentElement') return { kind: 'documentElement' };
-			if (['body', 'scrollingElement'].includes(key)) return { kind: 'root' };
+			if (['documentElement', 'scrollingElement'].includes(key)) return { kind: 'documentElement' };
+			if (key === 'body') return { kind: 'root' };
 		}
 		if (owner?.kind === 'documentElement' && key === 'dataset') return { kind: 'rootDataset' };
 		return null;
@@ -97,7 +98,14 @@ function staticBindings(context) {
 			const binding = variable(node);
 			const key = binding ?? node.name;
 			if (values.has(key)) return values.get(key);
-			if (binding?.defs.length) return null;
+			if (binding?.defs.length) {
+				const declaration = binding.defs.find((definition) => definition.type === 'Variable')?.node;
+				if (!declaration?.init || resolving.has(binding)) return null;
+				resolving.add(binding);
+				bindValue(declaration.id, resolve(declaration.init));
+				resolving.delete(binding);
+				return values.get(binding) ?? null;
+			}
 			return { kind: globalKinds.get(node.name) };
 		}
 		if (node?.type === 'MemberExpression') return member(resolve(node.object), propertyName(node));

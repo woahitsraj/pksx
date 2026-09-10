@@ -531,10 +531,12 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 	const smallControlFloors = new Set<ElementRecord>();
 	const smallControlExactSizes = new Set<ElementRecord>();
 	const conflictingControlSizes = new Set<ElementRecord>();
+	const automaticControlSizes = new Set<ElementRecord>();
 	const reportMissingControlOwners = () => {
 		for (const element of elements) {
 			const hasSmallOwner =
-				(smallControlFloors.has(element) || smallControlExactSizes.has(element)) &&
+				(smallControlFloors.has(element) ||
+					(smallControlExactSizes.has(element) && !automaticControlSizes.has(element))) &&
 				!conflictingControlSizes.has(element);
 			if (element.category === 'small' && !hasSmallOwner) {
 				report(
@@ -545,7 +547,8 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 				);
 			}
 			const hasStandardOwner =
-				(standardControlFloors.has(element) || standardControlExactSizes.has(element)) &&
+				(standardControlFloors.has(element) ||
+					(standardControlExactSizes.has(element) && !automaticControlSizes.has(element))) &&
 				!conflictingControlSizes.has(element);
 			if (!element.category && !hasStandardOwner) {
 				report(
@@ -903,6 +906,10 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 				return;
 			}
 			if (maximumBlockProperties.has(property) && value === 'none') return;
+			if (exactBlockProperties.has(property) && value === 'auto') {
+				for (const element of matched) automaticControlSizes.add(element);
+				return;
+			}
 			for (const element of matched) conflictingControlSizes.add(element);
 			if (matched.some((element) => !element.category || !customCategories.has(element.category))) {
 				report(
