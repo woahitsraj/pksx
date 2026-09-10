@@ -1037,7 +1037,7 @@ test('Box Menu exports and backs up the captured secondary Save File Workspace',
 	await page.keyboard.press('Enter');
 	await secondarySlotMenu.getByRole('button', { name: 'Move' }).click();
 	await page.locator('#box-0-slot-3').click();
-	await expect(page.getByRole('alert')).toContainText(
+	await expect(page.locator('.toast-error')).toContainText(
 		'Moving Pokemon between Save Files is not available yet.'
 	);
 	await expect(page.locator('#box-0-slot-2')).toContainText('ARON');
@@ -1871,7 +1871,7 @@ test('confirm opens slot actions and back restores the grid focus', async ({ pag
 	]) {
 		await expect(page.getByRole('button', { name: unavailableAction, exact: true })).toHaveCount(0);
 	}
-	await expect(page.getByRole('alert')).toHaveCount(0);
+	await expect(page.locator('.toast-error')).toHaveCount(0);
 
 	await expect(page.locator('#slot-action-0')).toBeFocused();
 	await expect(page.getByRole('button', { name: 'Open Main Menu' })).toHaveCount(0);
@@ -4008,7 +4008,7 @@ test('moves an occupied box slot into an empty destination slot', async ({ page 
 
 	await moveFirstEmeraldBoxSlotToThirdSlot(page);
 	await expect(page.locator('#box-0-slot-2')).toBeFocused();
-	await expect(page.getByRole('alert')).toHaveCount(0);
+	await expect(page.locator('.toast-error')).toHaveCount(0);
 });
 
 test('reload preserves unexported slot changes from the active workspace', async ({ page }) => {
@@ -4042,7 +4042,7 @@ test('can perform another slot mutation after the first move changes workspace b
 	await page.locator('#box-0-slot-3').click();
 
 	await expect(page.locator('#box-0-slot-3')).toContainText('ILLUMISE');
-	await expect(page.getByRole('alert')).toHaveCount(0);
+	await expect(page.locator('.toast-error')).toHaveCount(0);
 });
 
 test('copies an occupied box slot into an empty destination slot', async ({ page }) => {
@@ -4083,7 +4083,7 @@ test('copy keeps destination selection active and shows an error toast for occup
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 
 	await expect(page.locator('#box-0-slot-1')).toBeFocused();
-	await expect(page.getByRole('alert')).toContainText('Copy needs an empty destination Slot.');
+	await expect(page.locator('.toast-error')).toContainText('Copy needs an empty destination Slot.');
 	await expect(page.locator('#box-0-slot-0')).toContainText('ARON');
 	await expect(page.locator('#box-0-slot-1')).toContainText('ILLUMISE');
 });
