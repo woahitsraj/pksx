@@ -70,8 +70,7 @@ async function setup(url: string, fileName: string, engineForCoordinator: Engine
 			workspace,
 			activeBox: 0,
 			coordinator,
-			toast,
-			reloadWorkspace: async () => workspace
+			toast
 		}
 	});
 	await tick();

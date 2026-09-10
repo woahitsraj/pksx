@@ -13,6 +13,8 @@ import {
 	type SaveFileTrainerMoneyCoordinator
 } from './index.svelte';
 
+type RecoveryResult = Awaited<ReturnType<SaveFileTrainerMoneyCoordinator['recoverWorkspace']>>;
+
 function workspace(
 	options: {
 		name?: string;
@@ -82,6 +84,7 @@ function createCoordinator() {
 	const pending: PendingSaveFileEdit[] = [];
 	const listeners = new Set<(value: readonly PendingSaveFileEdit[]) => void>();
 	const results: Array<Promise<SaveFileEditResult> | SaveFileEditResult> = [];
+	const recoveries: Array<Promise<RecoveryResult> | RecoveryResult> = [];
 	let sequence = 0;
 	const enqueueEdit = vi.fn((requestOrigin: SaveFileEditOrigin, request: SaveFileEditRequest) => {
 		const pendingEdit = { key: request.key, sequence: ++sequence };
@@ -99,10 +102,24 @@ function createCoordinator() {
 			for (const listener of listeners) listener([...pending]);
 		});
 	});
-	const replaceWorkspace = vi.fn(() => ({ ...origin, workspaceId: `workspace-${++sequence}` }));
+	const recoverWorkspace = vi.fn(
+		async (
+			requestOrigin: SaveFileEditOrigin,
+			_options: { isCurrent: () => boolean }
+		): Promise<RecoveryResult> => {
+			return (
+				recoveries.shift() ?? {
+					ok: true,
+					status: 'accepted',
+					origin: { ...requestOrigin, workspaceId: `workspace-${++sequence}` },
+					workspace: workspace()
+				}
+			);
+		}
+	);
 	const coordinator: SaveFileTrainerMoneyCoordinator = {
 		openWorkspace: vi.fn(() => origin),
-		replaceWorkspace,
+		recoverWorkspace,
 		listPending: vi.fn(() => [...pending]),
 		isPending: vi.fn((_origin, key) =>
 			key === undefined ? pending.length > 0 : pending.some((edit) => edit.key === key)
@@ -114,13 +131,13 @@ function createCoordinator() {
 		}),
 		enqueueEdit
 	};
-	return { coordinator, enqueueEdit, pending, results, replaceWorkspace };
+	return { coordinator, enqueueEdit, pending, results, recoveries, recoverWorkspace };
 }
 
 function controller(
 	input: {
 		state?: WorkspaceState;
-		reload?: () => Promise<WorkspaceState | null>;
+		isCurrent?: () => boolean;
 	} = {}
 ) {
 	const harness = createCoordinator();
@@ -130,7 +147,7 @@ function controller(
 		activeBox: 0,
 		coordinator: harness.coordinator,
 		toast,
-		reloadWorkspace: input.reload ?? (async () => workspace())
+		...(input.isCurrent ? { isCurrent: input.isCurrent } : {})
 	});
 	return { value, toast, ...harness };
 }
@@ -466,9 +483,9 @@ describe('Save File Trainer and Money controller', () => {
 		}
 	);
 
-	test('reconstructs pending state and replaces the origin on Retry', async () => {
+	test('reconstructs pending state and adopts a published recovery before notifying listeners', async () => {
 		const reloaded = workspace({ name: 'BLUE', money: 500, byte: 3 });
-		const { value, pending, replaceWorkspace } = controller({ reload: async () => reloaded });
+		const { value, pending } = controller();
 		pending.push(
 			{ key: trainerMoneyPendingKeys.money, sequence: 1 },
 			{ key: 'inventory:Items:1', sequence: 2 }
@@ -489,11 +506,9 @@ describe('Save File Trainer and Money controller', () => {
 					publishPending = listener;
 					listener([...pending]);
 					return () => undefined;
-				},
-				replaceWorkspace
+				}
 			},
-			toast: { error: vi.fn() },
-			reloadWorkspace: async () => reloaded
+			toast: { error: vi.fn() }
 		});
 		expect(remounted.ledgerProps.pendingTargets).toEqual([
 			trainerMoneyPendingKeys.money,
@@ -508,42 +523,56 @@ describe('Save File Trainer and Money controller', () => {
 			projection: { money: { value: 500 } }
 		});
 
-		const retryHarness = controller({ reload: async () => reloaded });
+		const retryHarness = controller();
 		retryHarness.results.push({
 			ok: false,
 			status: 'rejected',
 			origin: retryHarness.value.origin,
-			code: 'save-file-deleted',
+			code: 'stale-workspace',
 			message: 'Editing stopped.'
 		});
 		retryHarness.value.ledgerProps.onMoneyInput?.('200');
 		retryHarness.value.ledgerProps.onMoneyCommit?.('enter');
 		await settled();
-		const originUpdates: Array<{
-			origin: SaveFileEditOrigin;
-			money: number | null | undefined;
-			unavailable: string | undefined;
-		}> = [];
-		const unsubscribe = retryHarness.value.subscribeOrigin((origin) =>
-			originUpdates.push({
-				origin,
-				money: retryHarness.value.workspace.workspace.saveFile?.money.value,
-				unavailable: retryHarness.value.editingUnavailable?.message
-			})
-		);
-		await retryHarness.value.ledgerProps.onRetryEditing?.();
-		expect(retryHarness.replaceWorkspace).toHaveBeenCalledWith(reloaded, 0);
-		expect(originUpdates).toEqual([
-			{
-				origin: { saveFileId: 'save-1', workspaceId: 'workspace-1' },
-				money: 100,
-				unavailable: 'Editing stopped.'
-			},
-			{
-				origin: { saveFileId: 'save-1', workspaceId: 'workspace-2' },
-				money: 500,
-				unavailable: undefined
+		retryHarness.value.ledgerProps.onTrainerNameInput?.('');
+		retryHarness.value.ledgerProps.onTrainerNameCommit?.('enter');
+		retryHarness.value.ledgerProps.onMoneyInput?.('invalid');
+		retryHarness.value.ledgerProps.onMoneyCommit?.('enter');
+		let publishedWorkspace: WorkspaceState | null = null;
+		const recoveredOrigin = { saveFileId: 'save-1', workspaceId: 'workspace-recovered' };
+		retryHarness.recoverWorkspace.mockImplementationOnce(async (_origin, { isCurrent }) => {
+			expect(isCurrent()).toBe(true);
+			publishedWorkspace = reloaded;
+			return {
+				ok: true,
+				status: 'accepted',
+				origin: recoveredOrigin,
+				workspace: reloaded
+			};
+		});
+		const originUpdates: SaveFileEditOrigin[] = [];
+		const unsubscribe = retryHarness.value.subscribeOrigin((origin) => {
+			if (origin === recoveredOrigin) {
+				expect(publishedWorkspace).toBe(reloaded);
+				expect(retryHarness.value.workspace).toBe(reloaded);
+				expect(retryHarness.value.editingUnavailable).toBeNull();
+				expect(retryHarness.value.ledgerProps.drafts).toMatchObject({
+					trainerName: { value: 'BLUE', error: null },
+					money: { value: '500', error: null }
+				});
+				expect(retryHarness.value.ledgerProps.pendingTargets).toEqual([]);
 			}
+			originUpdates.push(origin);
+		});
+		await retryHarness.value.ledgerProps.onRetryEditing?.();
+		expect(retryHarness.recoverWorkspace).toHaveBeenCalledOnce();
+		expect(retryHarness.recoverWorkspace.mock.calls[0][0]).toEqual({
+			saveFileId: 'save-1',
+			workspaceId: 'workspace-1'
+		});
+		expect(originUpdates).toEqual([
+			{ saveFileId: 'save-1', workspaceId: 'workspace-1' },
+			recoveredOrigin
 		]);
 		expect(retryHarness.value.ledgerProps.view).toMatchObject({
 			status: 'ready',
@@ -560,6 +589,91 @@ describe('Save File Trainer and Money controller', () => {
 		expect(remounted.ledgerProps.drafts).toMatchObject({
 			trainerName: { value: 'BLUE', error: null },
 			money: { value: '500', error: null }
+		});
+	});
+
+	test('keeps a terminal Save File unavailable when recovery is rejected', async () => {
+		const harness = controller();
+		harness.results.push({
+			ok: false,
+			status: 'rejected',
+			origin: harness.value.origin,
+			code: 'save-file-deleted',
+			message: 'The Save File was deleted.'
+		});
+		harness.value.ledgerProps.onMoneyInput?.('200');
+		harness.value.ledgerProps.onMoneyCommit?.('enter');
+		await settled();
+		const originalOrigin = harness.value.origin;
+		const originalWorkspace = harness.value.workspace;
+		const originListener = vi.fn();
+		harness.value.subscribeOrigin(originListener);
+		harness.recoveries.push({
+			ok: false,
+			status: 'rejected',
+			origin: originalOrigin,
+			code: 'save-file-deleted',
+			message: 'The Save File is no longer available.'
+		});
+
+		await harness.value.ledgerProps.onRetryEditing?.();
+
+		expect(harness.value.origin).toBe(originalOrigin);
+		expect(harness.value.workspace).toBe(originalWorkspace);
+		expect(harness.value.editingUnavailable).toEqual({
+			message: 'The Save File is no longer available.'
+		});
+		expect(originListener).toHaveBeenCalledOnce();
+	});
+
+	test('ignores a delayed recovery result after disposal and exposes the lifetime guard', async () => {
+		let resolveRecovery!: (result: RecoveryResult) => void;
+		let recoveryIsCurrent: (() => boolean) | undefined;
+		const recovery = new Promise<RecoveryResult>((resolve) => (resolveRecovery = resolve));
+		let routeCurrent = true;
+		const routeIsCurrent = vi.fn(() => routeCurrent);
+		const harness = controller({ isCurrent: routeIsCurrent });
+		harness.value.rejectEditing('Editing stopped.');
+		harness.recoverWorkspace.mockImplementationOnce(async (_origin, options) => {
+			recoveryIsCurrent = options.isCurrent;
+			return recovery;
+		});
+		const retry = harness.value.ledgerProps.onRetryEditing?.();
+		if (!recoveryIsCurrent) throw new Error('Recovery did not receive its lifetime guard.');
+		expect(recoveryIsCurrent()).toBe(true);
+		routeCurrent = false;
+		expect(recoveryIsCurrent()).toBe(false);
+		routeCurrent = true;
+
+		harness.value.dispose();
+		expect(recoveryIsCurrent()).toBe(false);
+		resolveRecovery({
+			ok: false,
+			status: 'rejected',
+			origin: harness.value.origin,
+			code: 'stale-workspace',
+			message: 'Late recovery result.'
+		});
+		await retry;
+
+		expect(harness.value.editingUnavailable).toEqual({
+			message: 'Editing stopped.',
+			retrying: true
+		});
+		expect(routeIsCurrent).toHaveBeenCalled();
+	});
+
+	test('shows thrown recovery failures as actionable retry feedback', async () => {
+		const harness = controller();
+		harness.value.rejectEditing('Editing stopped.');
+		harness.recoverWorkspace.mockRejectedValueOnce(
+			new Error('Storage is temporarily unavailable.')
+		);
+
+		await harness.value.ledgerProps.onRetryEditing?.();
+
+		expect(harness.value.editingUnavailable).toEqual({
+			message: 'Storage is temporarily unavailable.'
 		});
 	});
 });

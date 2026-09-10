@@ -19,7 +19,7 @@ export const trainerMoneyPendingKeys = {
 export type SaveFileTrainerMoneyCoordinator = Pick<
 	SaveFileEditCoordinator,
 	| 'openWorkspace'
-	| 'replaceWorkspace'
+	| 'recoverWorkspace'
 	| 'listPending'
 	| 'isPending'
 	| 'subscribePending'
@@ -31,7 +31,7 @@ export type SaveFileTrainerMoneyControllerOptions = {
 	activeBox: number;
 	coordinator: SaveFileTrainerMoneyCoordinator;
 	toast: Pick<ToastHost, 'error'>;
-	reloadWorkspace: () => Promise<WorkspaceState | null>;
+	isCurrent?: () => boolean;
 };
 
 export type SaveFileTrainerMoneyLedgerProps = Pick<
@@ -272,12 +272,17 @@ export function createSaveFileTrainerMoneyController(
 		const previousMessage = editingUnavailable?.message ?? 'Save File editing is unavailable.';
 		editingUnavailable = { message: previousMessage, retrying: true };
 		try {
-			const reloaded = await options.reloadWorkspace();
-			if (disposed) return;
-			if (!reloaded) throw new Error('The Save File is no longer available.');
-			projection(reloaded);
-			origin = options.coordinator.replaceWorkspace(reloaded, options.activeBox);
-			workspace = reloaded;
+			const recovered = await options.coordinator.recoverWorkspace(origin, {
+				isCurrent: retryIsCurrent
+			});
+			if (!retryIsCurrent()) return;
+			if (!recovered.ok) {
+				editingUnavailable = { message: recovered.message };
+				return;
+			}
+			projection(recovered.workspace);
+			origin = recovered.origin;
+			workspace = recovered.workspace;
 			restoreTrainerName();
 			restoreMoney();
 			trainerNameError = null;
@@ -287,9 +292,13 @@ export function createSaveFileTrainerMoneyController(
 			subscribePending();
 			for (const listener of originListeners) listener(origin);
 		} catch (error) {
-			if (disposed) return;
+			if (!retryIsCurrent()) return;
 			editingUnavailable = { message: errorMessage(error) };
 		}
+	}
+
+	function retryIsCurrent() {
+		return !disposed && (options.isCurrent?.() ?? true);
 	}
 
 	function restoreTrainerName() {
