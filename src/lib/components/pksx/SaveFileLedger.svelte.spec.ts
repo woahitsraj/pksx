@@ -107,6 +107,7 @@ function render(
 		setView: (view: SaveFileLedgerView) => void;
 		setCatalogues: (catalogues: Readonly<Record<string, SaveFileLedgerCatalogue>>) => void;
 		setPendingTargets: (targets: readonly string[]) => void;
+		setCommand: (command: SaveFileLedgerProps['command']) => void;
 		handleBack: () => boolean;
 	};
 }
@@ -154,6 +155,7 @@ describe('SaveFileLedger public fixture presentation', () => {
 		expect(host.textContent).not.toMatch(/staged|Apply edits|Cancel all|generation|box count/i);
 		expect(host.textContent).not.toContain('¤');
 		expect(host.textContent).not.toContain('·');
+		expect(target('trainer-name').getAttribute('aria-label')).toBe('Trainer name');
 		expect(target('money-decrease').getAttribute('aria-label')).toBe('Decrease Money');
 		expect(target('money-increase').getAttribute('aria-label')).toBe('Increase Money');
 
@@ -369,6 +371,48 @@ describe('SaveFileLedger semantic focus graph', () => {
 		expect(document.activeElement).toBe(target(`item-${pocket.key}-${firstItem.id}-remove`));
 	});
 
+	test('keeps an unrelated live draft focused when pending Add or Remove completes', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		let harness = render();
+		(target(`pocket-${pocket.key}-add`) as HTMLButtonElement).click();
+		await tick();
+		const trainerName = target('trainer-name') as HTMLInputElement;
+		const trainerBlur = vi.fn();
+		trainerName.addEventListener('blur', trainerBlur);
+		trainerName.focus();
+		harness.setPendingTargets([`pocket-${pocket.key}-add-confirm`]);
+		harness.setCommand(null);
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(trainerName);
+		expect(trainerBlur).not.toHaveBeenCalled();
+
+		await clearMounted();
+		harness = render();
+		const quantities = host.querySelectorAll<HTMLInputElement>(
+			'[data-ledger-draft="item-quantity"]'
+		);
+		const liveQuantity = quantities[0];
+		const removedQuantity = Array.from(quantities).find(
+			(candidate) =>
+				candidate.dataset.pocketKey !== liveQuantity.dataset.pocketKey ||
+				candidate.dataset.itemId !== liveQuantity.dataset.itemId
+		)!;
+		const removedPocketKey = removedQuantity.dataset.pocketKey!;
+		const removedItemId = Number(removedQuantity.dataset.itemId);
+		(target(`item-${removedPocketKey}-${removedItemId}-remove`) as HTMLButtonElement).click();
+		await tick();
+		const quantityBlur = vi.fn();
+		liveQuantity.addEventListener('blur', quantityBlur);
+		liveQuantity.focus();
+		harness.setPendingTargets([`item-${removedPocketKey}-${removedItemId}-confirm-remove`]);
+		harness.setCommand(null);
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(liveQuantity);
+		expect(quantityBlur).not.toHaveBeenCalled();
+	});
+
 	test('re-enters an open Add command from its pocket jump', async () => {
 		render();
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
@@ -473,6 +517,35 @@ describe('SaveFileLedger semantic focus graph', () => {
 		expect(document.activeElement).toBe(remembered);
 	});
 
+	test('does not refocus editing Retry while recovery continues and another target survives', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const harness = render({
+			...publicFixtureView,
+			editingUnavailable: { message: 'Editor service unavailable.' }
+		});
+		await tick();
+		expect(document.activeElement).toBe(target('editing-retry'));
+		const jump = target(`pocket-${pocket.key}-jump`);
+		jump.focus();
+		harness.setCatalogues({
+			...publicCatalogues,
+			[pocket.key]: { status: 'failed', message: 'Catalogue unavailable.' }
+		});
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(jump);
+
+		const catalogueRetry = target(`pocket-${pocket.key}-retry`);
+		catalogueRetry.focus();
+		harness.setCatalogues({
+			...publicCatalogues,
+			[pocket.key]: { status: 'loading', retrying: true }
+		});
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(target(`pocket-${pocket.key}-retry`));
+	});
+
 	test('keeps catalogue Retry focused through retrying and returns to Add without stealing focus', async () => {
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
 		const failedCatalogues = {
@@ -491,6 +564,7 @@ describe('SaveFileLedger semantic focus graph', () => {
 		await tick();
 		const retrying = target(`pocket-${pocket.key}-retry`);
 		expect(document.activeElement).toBe(retrying);
+		expect(retrying.getAttribute('aria-label')).toBe(`Retry ${pocket.label} catalogue`);
 		expect(retrying.getAttribute('aria-busy')).toBe('true');
 		expect(retrying.getAttribute('aria-disabled')).toBe('true');
 		expect(retrying.querySelector('.spinner-graphic')).toBeNull();
@@ -807,10 +881,18 @@ describe('SaveFileLedger semantic focus graph', () => {
 		expect(document.activeElement).toBe(target('trainer-name'));
 	});
 
-	test('restores local focus after load recovery without a shell getter', async () => {
+	test('restores local focus after a retrying editing recovery without a shell getter', async () => {
 		const harness = render();
 		target('money-value').focus();
-		harness.setView({ status: 'load-failed', message: 'Could not read the Save File.' });
+		harness.setView({
+			...publicFixtureView,
+			editingUnavailable: { message: 'Editor unavailable.' }
+		});
+		await tick();
+		harness.setView({
+			...publicFixtureView,
+			editingUnavailable: { message: 'Editor unavailable.', retrying: true }
+		});
 		await tick();
 		harness.setView(publicFixtureView);
 		await tick();
@@ -961,6 +1043,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		});
 		await tick();
 		const quantity = target(`pocket-${pocket.key}-add-quantity`) as HTMLInputElement;
+		expect(quantity.getAttribute('aria-label')).toBe(`Quantity to add to ${pocket.label}`);
 		expect(quantity.getAttribute('aria-invalid')).toBe('true');
 		expect(quantity.getAttribute('aria-describedby')).toBe(
 			`pocket-${pocket.key}-add-quantity-error`
@@ -1526,6 +1609,24 @@ describe('SaveFileLedger states and feedback', () => {
 		)!;
 		expect(catalogueStatus.getAttribute('aria-busy')).toBe('true');
 		expect(catalogueStatus.querySelector('.spinner-graphic')).toBeNull();
+	});
+
+	test('does not shift Money or quantity row geometry when delayed spinners appear', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const item = pocket.items[0];
+		const quantityIdentity = `item-${pocket.key}-${item.id}-quantity`;
+		const harness = render();
+		const money = host.querySelector<HTMLElement>('.money-row')!;
+		const quantity = target(quantityIdentity).closest<HTMLElement>('.quantity-controls')!;
+		const moneyHeight = money.getBoundingClientRect().height;
+		const quantityHeight = quantity.getBoundingClientRect().height;
+		harness.setPendingTargets(['money', quantityIdentity]);
+		await tick();
+		expect(money.getBoundingClientRect().height).toBe(moneyHeight);
+		expect(quantity.getBoundingClientRect().height).toBe(quantityHeight);
+		await new Promise((resolve) => setTimeout(resolve, 550));
+		expect(money.getBoundingClientRect().height).toBe(moneyHeight);
+		expect(quantity.getBoundingClientRect().height).toBe(quantityHeight);
 	});
 
 	test('associates a failed pocket catalogue with Add and a pocket-specific Retry name', () => {

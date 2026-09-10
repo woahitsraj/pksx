@@ -132,7 +132,8 @@
 		const recoveryContinues = Boolean(
 			recoveryIdentity || (view.status === 'loading' && recoveryWasActive)
 		);
-		if (recoveryIdentity && !recoveryWasActive) {
+		const enteringRecovery = Boolean(recoveryIdentity && !recoveryWasActive);
+		if (enteringRecovery) {
 			targetBeforeRecovery = getSessionFocusIdentity?.() ?? rememberedTarget;
 		}
 		if (active instanceof HTMLElement && active !== document.body && !root.contains(active)) {
@@ -147,7 +148,10 @@
 
 		if (recoveryIdentity) {
 			recoveryWasActive = true;
-			focusIdentity(recoveryIdentity);
+			if (enteringRecovery) focusIdentity(recoveryIdentity);
+			else if (active === document.body && !focusIdentity(rememberedTarget ?? '')) {
+				focusIdentity(recoveryIdentity);
+			}
 			previousCommand = nextCommand;
 			return;
 		}
@@ -167,14 +171,13 @@
 
 		if (nextCommand && commandIdentity(nextCommand) !== commandIdentity(previousCommand)) {
 			focusIdentity(commandFirstIdentity(nextCommand));
-		} else if (!nextCommand && previousCommand) {
-			if (previousCommand.kind === 'add-item') {
-				if (!focusIdentity(addIdentity(previousCommand.pocketKey))) {
-					focusPocketEntry(previousCommand.pocketKey);
-				}
-			} else {
-				focusAfterRemove(previousCommand.pocketKey, previousCommand.itemId);
-			}
+		} else if (
+			!nextCommand &&
+			previousCommand &&
+			(active === document.body ||
+				(active instanceof HTMLElement && Boolean(active.closest('[data-ledger-command]'))))
+		) {
+			focusAfterCommandClose(previousCommand);
 		}
 		previousCommand = nextCommand;
 		refreshLastItemIndex();
@@ -270,7 +273,18 @@
 			return true;
 		}
 		if (command) {
+			const closingCommand = command;
 			onCommandChange?.(null);
+			void tick().then(() => {
+				const nextActive = document.activeElement;
+				if (
+					root?.isConnected &&
+					(nextActive === document.body ||
+						(nextActive instanceof HTMLElement && root.contains(nextActive)))
+				) {
+					focusAfterCommandClose(closingCommand);
+				}
+			});
 			return true;
 		}
 		return false;
@@ -349,7 +363,17 @@
 		return focusIdentity(addIdentity(pocketKey)) || focusPocketEntry(pocketKey);
 	}
 
-	function focusPocketEntry(pocketKey: string) {
+	function focusAfterCommandClose(closedCommand: SaveFileLedgerCommand) {
+		if (closedCommand.kind === 'add-item') {
+			return (
+				focusIdentity(addIdentity(closedCommand.pocketKey)) ||
+				focusPocketEntry(closedCommand.pocketKey)
+			);
+		}
+		return focusAfterRemove(closedCommand.pocketKey, closedCommand.itemId);
+	}
+
+	function focusOwnPocketEntry(pocketKey: string) {
 		const add = findIdentity(addIdentity(pocketKey));
 		if (add) return focusElement(add);
 		if (
@@ -363,10 +387,13 @@
 		const pocket = pockets.find((candidate) => candidate.key === pocketKey);
 		const firstItem = pocket?.items[0];
 		if (firstItem && focusItemRow(pocketKey, firstItem.id)) return true;
+		return false;
+	}
 
+	function focusPocketEntry(pocketKey: string) {
 		const index = pockets.findIndex((candidate) => candidate.key === pocketKey);
-		for (const nextPocket of pockets.slice(index + 1)) {
-			if (focusPocketEntry(nextPocket.key)) return true;
+		for (const pocket of pockets.slice(Math.max(0, index))) {
+			if (focusOwnPocketEntry(pocket.key)) return true;
 		}
 		return false;
 	}
@@ -730,6 +757,7 @@
 														? ''
 														: undefined}
 													data-destination-focus="trainer-name"
+													aria-label="Trainer name"
 													aria-busy={nameBusy}
 													aria-disabled={nameBusy}
 													aria-invalid={nameError ? 'true' : undefined}
@@ -1004,6 +1032,7 @@
 																		data-ledger-control
 																		data-destination-fallbacks={addFocusFallbacks}
 																		data-destination-focus={`pocket-${pocket.key}-add-quantity`}
+																		aria-label={`Quantity to add to ${pocket.label}`}
 																		aria-invalid={command.quantityError ? 'true' : undefined}
 																		aria-describedby={command.quantityError
 																			? `pocket-${pocket.key}-add-quantity-error`
@@ -1089,6 +1118,7 @@
 																			? ''
 																			: undefined}
 																		data-destination-focus={retryIdentity(pocket.key)}
+																		aria-label={`Retry ${pocket.label} catalogue`}
 																		aria-busy="true"
 																		aria-disabled="true"
 																	>
@@ -1566,7 +1596,8 @@
 			var(--pksx-control-height, 32px)
 			minmax(0, calc(var(--money-ch, 7) * 1ch + var(--ledger-input-chrome)))
 			var(--pksx-control-height, 32px)
-			auto;
+			auto
+			var(--pksx-space-3, 12px);
 		align-items: center;
 		gap: var(--pksx-space-1, 4px);
 		min-width: 0;
@@ -1728,7 +1759,8 @@
 			var(--pksx-control-height, 32px)
 			minmax(0, calc(var(--quantity-ch, 3) * 1ch + var(--ledger-input-chrome)))
 			var(--pksx-control-height, 32px)
-			auto;
+			auto
+			var(--pksx-space-3, 12px);
 		align-items: center;
 		gap: var(--pksx-space-1, 4px);
 	}

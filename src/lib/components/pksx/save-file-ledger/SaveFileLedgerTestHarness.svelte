@@ -34,6 +34,10 @@
 		pending = next;
 	}
 
+	export function setCommand(next: SaveFileLedgerCommand | null) {
+		command = next;
+	}
+
 	export function handleBack() {
 		return ledger.handleBack();
 	}
