@@ -8,11 +8,12 @@ import emeraldUrl from '../../../../test-fixtures/save-files/bl1ndbeholder-pokem
 import xUrl from '../../../../test-fixtures/save-files/bl1ndbeholder-pokemon-saves/x/011020252224.sav?url';
 import shieldUrl from '../../../../test-fixtures/save-files/pkmds-blazor/test-save-shield.sav?url';
 import SaveFileTrainerMoneyTestHarness from './SaveFileTrainerMoneyTestHarness.svelte';
+import type { SaveFileTrainerMoneyLedgerProps } from './index.svelte';
 
 type MountedHarness = {
 	handleBack(): boolean;
 	currentWorkspace(): WorkspaceState;
-	currentLedgerProps(): { drafts?: { trainerName?: { value: string; error?: string | null } } };
+	currentLedgerProps(): SaveFileTrainerMoneyLedgerProps;
 };
 
 let engine: EngineApi;
