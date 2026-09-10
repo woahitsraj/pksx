@@ -29,7 +29,7 @@ test('one root Toast host delivers across Saves and Boxes without moving focus o
 	await expect(announcements.filter({ hasText: 'imported and made active' })).toBeVisible({
 		timeout: 15_000
 	});
-	await expect(page.getByRole('grid', { name: 'Save Files' })).toBeFocused();
+	await expect(page.getByRole('grid', { name: 'Saves collections' })).toBeFocused();
 
 	await page.getByRole('button', { name: 'Open Main Menu' }).click();
 	await page
