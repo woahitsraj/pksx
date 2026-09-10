@@ -4689,6 +4689,8 @@ test('Saves menu activates its Save File before opening Trainer or Bag', async (
 	await expect(page.getByText('alpha.sav imported and made active.')).toBeVisible({
 		timeout: 15_000
 	});
+	await expect(page.locator('.save-card')).toHaveCount(1);
+	await expect(page.locator('.save-card[aria-busy="true"]')).toHaveCount(0);
 
 	await page.getByLabel('Import Save File').setInputFiles({
 		name: 'beta.sav',
@@ -4698,6 +4700,8 @@ test('Saves menu activates its Save File before opening Trainer or Bag', async (
 	await expect(page.getByText('beta.sav imported and made active.')).toBeVisible({
 		timeout: 15_000
 	});
+	await expect(page.locator('.save-card')).toHaveCount(2);
+	await expect(page.locator('.save-card[aria-busy="true"]')).toHaveCount(0);
 
 	const grid = page.getByRole('grid', { name: 'Saves collections' });
 	const alphaCard = page.locator('.save-card').filter({ hasText: 'alpha.sav' });
