@@ -13,7 +13,6 @@ export type SummonedWorkflowKind =
 	| 'save-file-delete'
 	| 'source-picker'
 	| 'clear-slot-confirmation'
-	| 'pokemon-creation'
 	| 'pokemon-editor'
 	| 'pokemon-actions'
 	| 'legality-report'

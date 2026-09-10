@@ -117,7 +117,7 @@ A user-invoked operation that applies to multiple source Slots as one workflow.
 _Avoid_: normal Slot Action, multi action
 
 **Create Pokemon**:
-A Slot Action that creates a new Pokemon Entity in an empty Slot.
+A Slot Action that opens the Pokemon Editor with an unpublished draft for an empty Slot.
 _Avoid_: new record, spawn
 
 **Clear Slot**:
@@ -233,7 +233,7 @@ The Menu of app destinations.
 _Avoid_: global command surface, navigation menu, tab bar
 
 **Takeover**:
-A summoned surface that presents one focused workflow, such as the Pokemon Editor, Pokemon Creation, a Legality Report, or the Backup Browser.
+A summoned surface that presents one focused workflow, such as the Pokemon Editor, a Legality Report, or the Backup Browser.
 _Avoid_: modal, dialog, full-screen overlay
 
 **Backdrop**:
@@ -344,6 +344,8 @@ _Avoid_: setting, option, config
 - A **Slot Action** applies to one **Slot**.
 - A **Batch Slot Action** applies to multiple source **Slots**.
 - **Create Pokemon** applies to an empty **Slot**.
+- **Create Pokemon** defaults its unpublished **Pokemon Editor** draft to the first species supported by the **Save File**.
+- **Create Pokemon** does not write its destination **Slot** or create a **Backup** before the Pokemon Editor's explicit Apply.
 - **Clear Slot** applies to an occupied **Slot** and requires explicit user confirmation.
 - Moving or copying a **Pokemon Entity** between **Save File** **Slots** has a source **Slot** and a destination **Slot**.
 - A Move into an occupied **Slot** performs a **Slot Swap**.
@@ -394,7 +396,7 @@ _Avoid_: setting, option, config
 - Each destination remembers its **Controller Focus** target for the current session; this memory does not survive reload.
 - A **Menu** opens from the current **Controller Focus** and returns to it when dismissed.
 - At most one **Menu** is open at a time; a **Menu** cannot open while another **Menu**, a **Pokemon Editor**, or the **Backup Browser** is open, or during a **Carry**.
-- A **Menu** shows the same entries in the same order every time; an entry that does not apply stays visible, cannot be chosen, and explains why.
+- A **Menu** shows applicable entries in a stable order. The **Slot Menu** hides unavailable Slot Actions; other Menus keep unavailable entries visible, inert, and explained.
 - The **Slot Menu** acts on the **Slot** under **Controller Focus**.
 - The **Box Menu** acts on the active **Box Source**: **Export**, create a **Backup**, switch it, open another, or close it.
 - The **Box Menu** opens from the control that names the active **Box Source**, which is a **Controller Focus** target.

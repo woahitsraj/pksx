@@ -8,7 +8,8 @@ import {
 	parseEngineWorkerProtocolError,
 	parseEngineWorkerRequest,
 	parseEngineWorkerResponse,
-	parseEngineWorkerStatusMessage
+	parseEngineWorkerStatusMessage,
+	pokemonActionPreviewSchema
 } from './worker-protocol';
 import type { EngineWorkerGetVersionRequest } from './worker-protocol';
 
@@ -359,6 +360,29 @@ describe('parseEngineWorkerResponse', () => {
 			}
 		});
 	});
+
+	test('preserves stale Pokemon Action preview errors', () => {
+		expect(
+			parseEngineWorkerResponse({
+				type: 'response',
+				id: 'req-stale-action',
+				method: 'applyPokemonAction',
+				result: {
+					ok: false,
+					value: null,
+					error: {
+						code: 'stale-pokemon-action-preview',
+						message: 'Refresh the Legality Report and try again.'
+					}
+				}
+			})
+		).toMatchObject({
+			ok: true,
+			value: {
+				result: { ok: false, error: { code: 'stale-pokemon-action-preview' } }
+			}
+		});
+	});
 });
 
 describe('worker protocol messages', () => {
@@ -490,6 +514,53 @@ describe('worker protocol builders', () => {
 			type: 'protocol-error',
 			id: 'req-15',
 			error: { code: 'invalid-worker-message', message: 'Malformed request.' }
+		});
+	});
+});
+
+describe('pokemonActionPreviewSchema', () => {
+	test('keeps fix ids only on fixable report lines and validates targeted fixes', () => {
+		const preview = pokemonActionPreviewSchema.parse({
+			legalityReport: {
+				legal: false,
+				judgement: 'Invalid',
+				summary: 'One fixable problem.',
+				fixableProblems: [],
+				warnings: [{ severity: 'Fishy', identifier: 'Encounter', message: 'Review encounter.' }],
+				messages: [
+					{
+						severity: 'Invalid',
+						identifier: 'CurrentMove',
+						message: 'Invalid move.',
+						fixId: 'move-set'
+					}
+				]
+			},
+			actions: [
+				{
+					kind: 'legality-fix',
+					available: true,
+					unavailableReason: null,
+					changes: [],
+					choices: [],
+					fixes: [
+						{
+							id: 'move-set',
+							token: 'move-set:preview-token',
+							label: 'Move Set',
+							changes: [{ field: 'Moves', before: 'Tackle', after: 'Headbutt' }]
+						}
+					]
+				}
+			]
+		});
+
+		expect(preview.legalityReport.warnings[0]).not.toHaveProperty('fixId');
+		expect(preview.legalityReport.messages[0]).toHaveProperty('fixId', 'move-set');
+		expect(preview.actions[0]?.fixes[0]).toMatchObject({
+			id: 'move-set',
+			token: 'move-set:preview-token',
+			label: 'Move Set'
 		});
 	});
 });

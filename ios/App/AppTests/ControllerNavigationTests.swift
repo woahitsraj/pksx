@@ -24,14 +24,24 @@ final class ControllerNavigationTests: XCTestCase {
 
         controller.extendedGamepad?.buttonA.setValue(1)
         try await waitForJavaScript(
-            "window.__pksxControllerEvents?.includes('Enter:true') && document.querySelector('[role=\"dialog\"][aria-label=\"Slot actions\"]') !== null && document.activeElement?.id === 'slot-action-0'",
+            """
+            (() => {
+                const dialog = document.querySelector('[role="dialog"][aria-label="Slot actions"]');
+                const buttons = [...(dialog?.querySelectorAll('button') ?? [])];
+                return window.__pksxControllerEvents?.includes('Enter:true')
+                    && buttons.length === 1
+                    && buttons[0].textContent?.trim() === 'Close'
+                    && document.activeElement === buttons[0]
+                    && document.activeElement?.id === 'slot-action-0';
+            })()
+            """,
             in: webView
         )
         controller.extendedGamepad?.buttonA.setValue(0)
 
         controller.extendedGamepad?.dpad.setValueForXAxis(0, yAxis: -1)
         try await waitForJavaScript(
-            "document.activeElement?.id === 'slot-action-1' && document.activeElement.classList.contains('controller-focused') && getComputedStyle(document.activeElement).outlineStyle === 'solid'",
+            "document.activeElement?.id === 'slot-action-0' && document.activeElement?.textContent?.trim() === 'Close' && document.activeElement.classList.contains('controller-focused') && getComputedStyle(document.activeElement).outlineStyle === 'solid'",
             in: webView
         )
         controller.extendedGamepad?.dpad.setValueForXAxis(0, yAxis: 0)

@@ -6,6 +6,7 @@ import type {
 	LegalityReport,
 	PokemonActionPreview,
 	PokemonActionResult,
+	PokemonCreationCatalogue,
 	PokemonCreationResult,
 	PokemonEditOperationResult,
 	PokemonSpeciesFormEditProjection,
@@ -26,6 +27,7 @@ import {
 	type EngineWorkerApplySlotOperationRequest,
 	type EngineWorkerApplyPokemonEditOperationRequest,
 	type EngineWorkerCreatePokemonRequest,
+	type EngineWorkerGetPokemonCreationCatalogueRequest,
 	type EngineWorkerPreviewPokemonSpeciesFormEditRequest,
 	type EngineWorkerApplySaveFileEditOperationRequest,
 	type EngineWorkerGetSaveFileInventoryCatalogueRequest,
@@ -61,6 +63,7 @@ export type DotnetPkhexEngineExports = {
 		operationJson: string
 	): string;
 	CreatePokemonJson(bytes: Uint8Array, fileName: string | undefined, operationJson: string): string;
+	GetPokemonCreationCatalogueJson?(bytes: Uint8Array, fileName: string | undefined): string;
 	PreviewPokemonSpeciesFormEditJson(
 		bytes: Uint8Array,
 		fileName: string | undefined,
@@ -231,6 +234,11 @@ export function createPkhexEngineWorkerRuntime({
 			case 'createPokemon':
 				postPokemonCreationResponse(postMessage, request, createPokemon(engine, request));
 				return;
+			case 'getPokemonCreationCatalogue':
+				postMessage(
+					createEngineWorkerResponse(request, getPokemonCreationCatalogue(engine, request))
+				);
+				return;
 			case 'previewPokemonSpeciesFormEdit':
 				postMessage(
 					createEngineWorkerResponse(request, previewPokemonSpeciesFormEdit(engine, request))
@@ -378,6 +386,29 @@ function createPokemon(
 				...request.payload.operation,
 				activeBox: request.payload.activeBox
 			})
+		)
+	);
+}
+
+function getPokemonCreationCatalogue(
+	engine: DotnetPkhexEngineExports,
+	request: EngineWorkerGetPokemonCreationCatalogueRequest
+): EngineResult<PokemonCreationCatalogue> {
+	if (!engine.GetPokemonCreationCatalogueJson) {
+		return {
+			ok: false,
+			value: null,
+			error: {
+				code: 'unsupported-pokemon-creation',
+				message: 'Pokemon species names are not available in this PKHeX Engine build.'
+			}
+		};
+	}
+
+	return parseEngineResult<PokemonCreationCatalogue>(
+		engine.GetPokemonCreationCatalogueJson(
+			new Uint8Array(request.payload.bytes),
+			request.payload.fileName
 		)
 	);
 }
@@ -700,6 +731,8 @@ function unavailableResult(request: EngineWorkerRequest) {
 			return result satisfies EngineResult<PokemonEditOperationResult>;
 		case 'createPokemon':
 			return result satisfies EngineResult<PokemonCreationResult>;
+		case 'getPokemonCreationCatalogue':
+			return result satisfies EngineResult<PokemonCreationCatalogue>;
 		case 'previewPokemonSpeciesFormEdit':
 			return result satisfies EngineResult<PokemonSpeciesFormEditProjection>;
 		case 'applySaveFileEditOperation':

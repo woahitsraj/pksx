@@ -63,8 +63,10 @@ export function isNativeEditorActivation(
 			action === 'confirm' &&
 			event.target.closest('.pokemon-editor button, .pokemon-creation button') !== null
 		);
-	if (event.key.length === 1) return true;
 	const editor = input.closest<HTMLElement>('.pokemon-editor');
+	const creationSelect = !editor && input instanceof HTMLSelectElement;
+	if (event.key.length === 1 && !(creationSelect && action === 'confirm')) return true;
+	if (creationSelect) return false;
 	if (
 		editor &&
 		input.id !== editor.dataset.editorEnteredField &&

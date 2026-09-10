@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import type { SaveSlotRef } from './types';
+import type { BoxSlotSummary, SaveSlotRef } from './types';
 import colosseumFixtureUrl from '../../../test-fixtures/save-files/bl1ndbeholder-pokemon-saves/colosseum/011020251345.gci?url';
 import fixtureUrl from '../../../test-fixtures/save-files/bl1ndbeholder-pokemon-saves/emerald-011020251345.sav?url';
 import moonFixtureUrl from '../../../test-fixtures/save-files/bl1ndbeholder-pokemon-saves/moon/011020252257.sav?url';
@@ -500,6 +500,127 @@ describe('PKHeX Engine browser runtime smoke', () => {
 		expect(storedApplied.value.entityBytesBase64).not.toBe(slots.value[0].entityBytesBase64);
 	});
 
+	test('exposes and applies one targeted move legality fix through the browser-wasm bundle', async () => {
+		const [engine, fixtureResponse] = await Promise.all([
+			createPkhexEngine('/pkhex-engine'),
+			fetch(platinumEuFixtureUrl)
+		]);
+		const fixtureBytes = new Uint8Array(await fixtureResponse.arrayBuffer());
+		const originalBytes = copyBytes(fixtureBytes);
+		const source = { zone: 'box' as const, box: 2, slot: 18 };
+		const workspace = await engine.loadSaveWorkspace(fixtureBytes, 'pokemon-platinum-eu.sav', 2);
+		expect(workspace.ok, JSON.stringify(workspace.error)).toBe(true);
+		if (!workspace.ok) throw new Error('Expected Platinum workspace to load.');
+		const original = workspace.value.boxSlots[18];
+		expect(original).toMatchObject({ nickname: 'MEW' });
+		if (!original) throw new Error('Expected the Platinum MEW fixture Slot.');
+
+		const preview = await engine.previewPokemonActions(
+			fixtureBytes,
+			'pokemon-platinum-eu.sav',
+			source
+		);
+		expect(preview.ok, JSON.stringify(preview.error)).toBe(true);
+		if (!preview.ok) throw new Error('Expected targeted legality preview to succeed.');
+		const moveFix = preview.value.actions
+			.find((action) => action.kind === 'legality-fix')
+			?.fixes.find((fix) => fix.id === 'move-set');
+		expect(moveFix).toMatchObject({ id: 'move-set', label: 'Move Set' });
+		expect(moveFix?.token).toMatch(/^move-set:[0-9a-f]{32}$/);
+		if (!moveFix) throw new Error('Expected a targeted Move Set fix.');
+		const moveLine = [
+			...preview.value.legalityReport.warnings,
+			...preview.value.legalityReport.messages
+		].find((line) => line.fixId === 'move-set');
+		expect(moveLine).toMatchObject({ fixId: 'move-set' });
+		expect(moveLine?.severity).not.toBe('Valid');
+
+		const unknownInput = copyBytes(fixtureBytes);
+		const unknown = await engine.applyPokemonAction(
+			unknownInput,
+			'pokemon-platinum-eu.sav',
+			{ kind: 'legality-fix', source, choiceId: `move-set:${'0'.repeat(32)}` },
+			2
+		);
+		expect(unknown).toMatchObject({
+			ok: false,
+			error: {
+				code: 'unsupported-pokemon-action',
+				message:
+					'This Quick Fix preview is no longer available. Refresh the Legality Report and try again.'
+			}
+		});
+		expect(unknownInput).toEqual(originalBytes);
+		expect(fixtureBytes).toEqual(originalBytes);
+
+		const applied = await engine.applyPokemonAction(
+			fixtureBytes,
+			'pokemon-platinum-eu.sav',
+			{ kind: 'legality-fix', source, choiceId: moveFix.token },
+			2
+		);
+		expect(applied.ok, JSON.stringify(applied.error)).toBe(true);
+		if (!applied.ok) throw new Error('Expected targeted Move Set fix to succeed.');
+		const appliedSlot = applied.value.workspace.boxSlots[18];
+		if (!appliedSlot) throw new Error('Expected the fixed Platinum MEW Slot.');
+		expect(applied.value.changes).toEqual(moveFix.changes);
+		expect(moveFix.changes).toEqual([
+			{
+				field: 'Moves',
+				before: original.moves.map((move) => move.name).join(', '),
+				after: appliedSlot.moves.map((move) => move.name).join(', ')
+			}
+		]);
+		expect(pokemonActionUnrelatedProjection(applied.value.workspace.boxSlots[18])).toEqual(
+			pokemonActionUnrelatedProjection(original)
+		);
+		expect(applied.value.bytes).not.toEqual(originalBytes);
+		expect(fixtureBytes).toEqual(originalBytes);
+
+		// Discard the first result as if persistence failed, then retry the same preview and source.
+		const retried = await engine.applyPokemonAction(
+			fixtureBytes,
+			'pokemon-platinum-eu.sav',
+			{ kind: 'legality-fix', source, choiceId: moveFix.token },
+			2
+		);
+		expect(retried.ok, JSON.stringify(retried.error)).toBe(true);
+		if (!retried.ok) throw new Error('Expected the targeted Move Set fix retry to succeed.');
+		expect(retried.value).toEqual(applied.value);
+		expect(fixtureBytes).toEqual(originalBytes);
+
+		const fixedPreview = await engine.previewPokemonActions(
+			applied.value.bytes,
+			'pokemon-platinum-eu.sav',
+			source
+		);
+		expect(fixedPreview.ok, JSON.stringify(fixedPreview.error)).toBe(true);
+		if (!fixedPreview.ok) throw new Error('Expected fixed Move Set preview to succeed.');
+		expect(
+			fixedPreview.value.actions
+				.find((action) => action.kind === 'legality-fix')
+				?.fixes.some((fix) => fix.id === 'move-set')
+		).toBe(false);
+
+		const staleInput = copyBytes(applied.value.bytes);
+		const staleOriginal = copyBytes(staleInput);
+		const stale = await engine.applyPokemonAction(
+			staleInput,
+			'pokemon-platinum-eu.sav',
+			{ kind: 'legality-fix', source, choiceId: moveFix?.token },
+			2
+		);
+		expect(stale).toMatchObject({
+			ok: false,
+			error: {
+				code: 'stale-pokemon-action-preview',
+				message:
+					'This Pokemon changed after the Quick Fix preview. Refresh the Legality Report and try again.'
+			}
+		});
+		expect(staleInput).toEqual(staleOriginal);
+	});
+
 	test('applies Save File slot operations through the browser-wasm bundle', async () => {
 		expect.assertions(13);
 
@@ -592,6 +713,19 @@ describe('PKHeX Engine browser runtime smoke', () => {
 			fetch(fixtureUrl)
 		]);
 		const fixtureBytes = new Uint8Array(await fixtureResponse.arrayBuffer());
+		const catalogue = await engine.getPokemonCreationCatalogue(
+			copyBytes(fixtureBytes),
+			'011020251345.sav'
+		);
+		expect(catalogue.ok).toBe(true);
+		if (!catalogue.ok) throw new Error('Expected a Create Pokemon catalogue.');
+		const defaultSpecies = catalogue.value.defaultSpecies;
+		expect(defaultSpecies).not.toBeNull();
+		if (!defaultSpecies) throw new Error('Expected the Save File default species.');
+		expect(catalogue.value.availableSpecies).toContainEqual(defaultSpecies);
+		expect(catalogue.value.availableSpecies).toContainEqual({ id: 25, name: 'Pikachu' });
+		expect(catalogue.value.availableSpecies).toContainEqual({ id: 386, name: 'Deoxys' });
+		expect(Math.max(...catalogue.value.availableSpecies.map(({ id }) => id))).toBe(386);
 
 		const created = await engine.createPokemon(
 			copyBytes(fixtureBytes),
@@ -609,7 +743,24 @@ describe('PKHeX Engine browser runtime smoke', () => {
 			slot: 2,
 			isEmpty: false,
 			level: 5,
-			speciesId: expect.any(Number)
+			speciesId: defaultSpecies.id
+		});
+
+		const named = await engine.createPokemon(
+			copyBytes(fixtureBytes),
+			'011020251345.sav',
+			{
+				destination: { zone: 'box', box: 0, slot: 2 },
+				speciesId: 25,
+				level: 5
+			},
+			0
+		);
+		expect(named.ok).toBe(true);
+		if (!named.ok) throw new Error('Expected named Create Pokemon to succeed.');
+		expect(named.value.workspace.boxSlots[2]).toMatchObject({
+			nickname: 'PIKACHU',
+			speciesId: 25
 		});
 
 		const occupied = await engine.createPokemon(
@@ -1438,4 +1589,27 @@ function copyBytes(bytes: Uint8Array): Uint8Array {
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
 	return copy;
+}
+
+function pokemonActionUnrelatedProjection(slot: BoxSlotSummary | undefined) {
+	if (!slot) return null;
+	return {
+		speciesId: slot.speciesId,
+		form: slot.form,
+		format: slot.format,
+		level: slot.level,
+		experience: slot.experience,
+		nickname: slot.nickname,
+		isEgg: slot.isEgg,
+		gender: slot.gender,
+		nature: slot.nature,
+		ability: slot.ability,
+		heldItem: slot.heldItem,
+		types: slot.types,
+		stats: slot.stats,
+		ballId: slot.metDataEditConstraints.currentBallId,
+		metLabel: slot.metLabel,
+		originalTrainer: slot.originalTrainer,
+		spriteIdentity: slot.spriteIdentity
+	};
 }

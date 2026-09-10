@@ -15,71 +15,47 @@
 	const preview = $derived(
 		state.status === 'ready' || state.status === 'applying' ? state.preview : null
 	);
-	const legalityFix = $derived(
-		preview?.actions.find((action) => action.kind === 'legality-fix') ?? null
-	);
 	const evolve = $derived(preview?.actions.find((action) => action.kind === 'evolve') ?? null);
-
-	function handleKeydown(event: KeyboardEvent) {
-		if (event.key !== 'Escape' && event.key !== 'Backspace') return;
-		event.preventDefault();
-		event.stopPropagation();
-		if (state.status === 'applying') return;
-		if (state.status === 'ready' && state.selection) {
-			onClearSelection();
-		} else {
-			onClose();
-		}
-	}
 </script>
 
-<div class="action-backdrop" role="presentation">
-	<div
-		class="pokemon-action-dialog"
-		role="dialog"
-		aria-modal="true"
-		aria-labelledby="pokemon-action-title"
-		onkeydown={handleKeydown}
-		tabindex="-1"
-	>
-		<header>
-			<div>
-				<p>{state.location}</p>
-				<h2 id="pokemon-action-title">Pokemon Actions</h2>
-			</div>
-			<button
-				id="pokemon-action-close"
-				data-pokemon-action-control
-				type="button"
-				aria-label="Close Pokemon Actions"
-				disabled={state.status === 'applying'}
-				onclick={onClose}>×</button
-			>
-		</header>
+<div class="pokemon-action-dialog">
+	<header>
+		<div>
+			<p>{state.location}</p>
+			<h2 id="pokemon-action-title">Evolve</h2>
+		</div>
+		<button
+			id="pokemon-action-close"
+			data-pokemon-action-control
+			type="button"
+			aria-label="Close Evolve"
+			disabled={state.status === 'applying'}
+			onclick={onClose}>×</button
+		>
+	</header>
 
-		<section class="subject" aria-label="Pokemon Action source">
+	<div class="action-scroll">
+		<section class="subject" aria-label="Evolution source">
 			<strong>{state.pokemonLabel}</strong>
 			<span>
 				{state.status === 'loading'
-					? 'Loading engine-backed actions...'
+					? 'Loading engine-backed evolutions...'
 					: state.status === 'error'
-						? 'Pokemon Actions unavailable'
-						: state.preview.legalityReport.summary}
+						? 'Evolution unavailable'
+						: 'Choose a direct evolution to preview.'}
 			</span>
 		</section>
 
 		{#if state.status === 'loading'}
-			<p class="message">Asking the PKHeX Engine for available actions and previews...</p>
+			<p class="message">Asking the PKHeX Engine for direct evolutions...</p>
 		{:else if state.status === 'error'}
 			<p class="message error" role="alert">{state.message}</p>
 		{:else if state.selection}
-			<section class="preview" aria-label="Pokemon Action preview">
+			<section class="preview" aria-label="Evolution preview">
 				<div>
 					<p>Preview</p>
 					<h3>
-						{state.selection.kind === 'legality-fix'
-							? 'Legality Fix'
-							: `Evolve to ${state.selection.choice?.speciesName ?? 'selected evolution'}`}
+						Evolve to {state.selection.choice?.speciesName ?? 'selected evolution'}
 					</h3>
 				</div>
 				{#if state.selection.changes.length > 0}
@@ -102,24 +78,6 @@
 			</section>
 		{:else}
 			<div class="action-list">
-				<section>
-					<div>
-						<p>Repair</p>
-						<h3>Legality Fix</h3>
-					</div>
-					<p>
-						{legalityFix?.available
-							? `Fix ${state.preview.legalityReport.fixableProblems.join(', ')}.`
-							: (legalityFix?.unavailableReason ?? 'No supported fix is available.')}
-					</p>
-					<button
-						data-pokemon-action-control
-						type="button"
-						disabled={!legalityFix?.available || state.status === 'applying'}
-						onclick={() => onSelect('legality-fix')}>Preview Legality Fix</button
-					>
-				</section>
-
 				<section>
 					<div>
 						<p>Evolution</p>
@@ -145,56 +103,52 @@
 				</section>
 			</div>
 		{/if}
-
-		<footer>
-			{#if state.status !== 'loading' && state.status !== 'error' && state.selection}
-				<button
-					data-pokemon-action-control
-					type="button"
-					disabled={state.status === 'applying'}
-					onclick={onClearSelection}>Cancel</button
-				>
-				<button
-					id="pokemon-action-apply"
-					data-pokemon-action-control
-					class="primary"
-					type="button"
-					disabled={state.status === 'applying'}
-					onclick={onApply}
-				>
-					{state.status === 'applying' ? 'Applying...' : 'Apply Pokemon Action'}
-				</button>
-			{:else}
-				<button data-pokemon-action-control class="primary" type="button" onclick={onClose}>
-					Close
-				</button>
-			{/if}
-		</footer>
 	</div>
+
+	<footer>
+		{#if state.status !== 'loading' && state.status !== 'error' && state.selection}
+			<button
+				data-pokemon-action-control
+				type="button"
+				disabled={state.status === 'applying'}
+				onclick={onClearSelection}>Cancel</button
+			>
+			<button
+				id="pokemon-action-apply"
+				data-pokemon-action-control
+				class="primary"
+				type="button"
+				disabled={state.status === 'applying'}
+				onclick={onApply}
+			>
+				{state.status === 'applying' ? 'Applying...' : 'Apply evolution'}
+			</button>
+		{:else}
+			<button data-pokemon-action-control class="primary" type="button" onclick={onClose}>
+				Close
+			</button>
+		{/if}
+	</footer>
 </div>
 
 <style>
-	.action-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 330;
+	.pokemon-action-dialog {
+		height: 100%;
+		min-height: 0;
 		display: grid;
-		place-items: center;
-		padding: 18px;
-		background: color-mix(in oklch, var(--ink) 38%, transparent);
+		grid-template-rows: auto minmax(0, 1fr) auto;
+		gap: var(--pksx-space-2);
+		padding: var(--pksx-space-3);
+		overflow: hidden;
 	}
 
-	.pokemon-action-dialog {
-		width: min(680px, 100%);
-		max-height: min(780px, calc(100dvh - 36px));
+	.action-scroll {
+		min-height: 0;
 		display: grid;
-		gap: 12px;
-		overflow: auto;
-		padding: 14px;
-		border: 1px solid var(--rule);
-		border-radius: var(--pksx-radius-md);
-		background: var(--paper-hi);
-		box-shadow: var(--shadow-deep);
+		align-content: start;
+		gap: var(--pksx-space-2);
+		overflow-y: auto;
+		overscroll-behavior: contain;
 	}
 
 	header,
@@ -203,7 +157,7 @@
 	.action-list section,
 	.preview {
 		display: flex;
-		gap: 10px;
+		gap: var(--pksx-space-2);
 	}
 
 	header,
@@ -226,26 +180,26 @@
 	.preview > div p {
 		color: var(--rust);
 		font:
-			700 0.66rem var(--pksx-font-mono),
+			700 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		text-transform: uppercase;
 	}
 
 	h2 {
 		color: var(--ink);
-		font: 760 1.25rem/1.1 var(--pksx-font-display);
+		font: 760 var(--pksx-type-title)/1.1 var(--pksx-font-sans);
 	}
 
 	h3 {
 		color: var(--ink);
-		font: 740 1rem/1.2 var(--pksx-font-display);
+		font: 740 var(--pksx-type-title)/1.2 var(--pksx-font-sans);
 	}
 
 	button {
-		min-height: 34px;
-		padding: 7px 11px;
+		min-height: var(--pksx-control-height);
+		padding: var(--pksx-space-1) var(--pksx-space-2);
 		border: 1px solid var(--rule);
-		border-radius: var(--pksx-radius-sm);
+		border-radius: var(--pksx-radius-medium);
 		background: var(--paper);
 		color: var(--ink);
 		font: inherit;
@@ -264,9 +218,9 @@
 	}
 
 	header button {
-		width: 34px;
+		width: var(--pksx-control-height);
 		padding: 0;
-		font-size: 1.35rem;
+		font-size: var(--pksx-icon-size);
 		line-height: 1;
 	}
 
@@ -274,9 +228,9 @@
 	.message,
 	.action-list section,
 	.preview {
-		padding: 12px;
+		padding: var(--pksx-space-2);
 		border: 1px solid var(--rule);
-		border-radius: var(--pksx-radius-sm);
+		border-radius: var(--pksx-radius-medium);
 		background: var(--paper);
 	}
 
@@ -289,18 +243,18 @@
 	.message,
 	.warning {
 		color: var(--ink-mute);
-		font-size: 0.84rem;
-		line-height: 1.4;
+		font-size: var(--pksx-type-body);
+		line-height: 1.25;
 	}
 
 	.message.error {
-		color: var(--pksx-color-status-error);
+		color: var(--pksx-color-feedback-danger);
 	}
 
 	.action-list {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 10px;
+		gap: var(--pksx-space-2);
 	}
 
 	.action-list section,
@@ -311,7 +265,7 @@
 
 	.evolution-list {
 		display: grid;
-		gap: 6px;
+		gap: var(--pksx-space-1);
 	}
 
 	.evolution-list button {
@@ -324,12 +278,12 @@
 
 	.evolution-list span {
 		color: var(--ink-mute);
-		font-size: 0.75rem;
+		font-size: var(--pksx-type-label);
 	}
 
 	.preview ul {
 		display: grid;
-		gap: 6px;
+		gap: var(--pksx-space-1);
 		margin: 0;
 		padding: 0;
 		list-style: none;
@@ -339,11 +293,11 @@
 		display: grid;
 		grid-template-columns: minmax(90px, 0.7fr) 1fr auto 1fr;
 		align-items: center;
-		gap: 7px;
-		padding: 8px;
-		border-radius: var(--pksx-radius-sm);
+		gap: var(--pksx-space-1);
+		padding: var(--pksx-space-2);
+		border-radius: var(--pksx-radius-medium);
 		background: var(--paper-deep);
-		font-size: 0.8rem;
+		font-size: var(--pksx-type-label);
 	}
 
 	.preview li span {
@@ -366,7 +320,7 @@
 		color: white;
 	}
 
-	@media (max-width: 640px) {
+	@container pksx-density (max-width: 640px) {
 		.action-list {
 			grid-template-columns: 1fr;
 		}

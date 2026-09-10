@@ -11,6 +11,7 @@ export const engineWorkerMethodSchema = z.enum([
 	'applySlotOperation',
 	'applyPokemonEditOperation',
 	'createPokemon',
+	'getPokemonCreationCatalogue',
 	'previewPokemonSpeciesFormEdit',
 	'applySaveFileEditOperation',
 	'getSaveFileInventoryCatalogue',
@@ -35,6 +36,7 @@ export const engineErrorCodeSchema = z.enum([
 	'unsupported-pokemon-edit',
 	'invalid-pokemon-action',
 	'unsupported-pokemon-action',
+	'stale-pokemon-action-preview',
 	'invalid-pokemon-creation',
 	'unsupported-pokemon-creation',
 	'invalid-pokemon-import',
@@ -602,6 +604,11 @@ export const pokemonCreationResultSchema = z.object({
 	workspace: saveWorkspaceSchema
 });
 
+export const pokemonCreationCatalogueSchema = z.object({
+	defaultSpecies: z.object({ id: z.number().int(), name: z.string() }).nullable(),
+	availableSpecies: z.array(z.object({ id: z.number().int(), name: z.string() }))
+});
+
 export const pokemonSpeciesFormEditProjectionSchema = z.object({
 	availableSpecies: z.array(z.object({ id: z.number().int(), name: z.string() })),
 	availableForms: z.array(z.object({ id: z.number().int(), name: z.string() })),
@@ -661,7 +668,8 @@ export const storedPokemonImportResultSchema = z.object({
 export const legalityReportLineSchema = z.object({
 	severity: z.string(),
 	identifier: z.string(),
-	message: z.string()
+	message: z.string(),
+	fixId: z.string().optional()
 });
 
 export const legalityReportSchema = z.object({
@@ -696,7 +704,15 @@ export const pokemonActionAvailabilitySchema = z.object({
 	available: z.boolean(),
 	unavailableReason: z.string().nullable().optional(),
 	changes: z.array(pokemonActionChangeSchema),
-	choices: z.array(pokemonEvolutionChoiceSchema)
+	choices: z.array(pokemonEvolutionChoiceSchema),
+	fixes: z.array(
+		z.object({
+			id: z.string().min(1),
+			token: z.string().min(1),
+			label: z.string(),
+			changes: z.array(pokemonActionChangeSchema)
+		})
+	)
 });
 
 export const pokemonActionPreviewSchema = z.object({
@@ -876,6 +892,16 @@ export const engineWorkerCreatePokemonRequestSchema = z.object({
 	})
 });
 
+export const engineWorkerGetPokemonCreationCatalogueRequestSchema = z.object({
+	type: z.literal('request'),
+	id: engineWorkerRequestIdSchema,
+	method: z.literal('getPokemonCreationCatalogue'),
+	payload: z.object({
+		bytes: z.instanceof(ArrayBuffer),
+		fileName: z.string().optional()
+	})
+});
+
 export const engineWorkerPreviewPokemonSpeciesFormEditRequestSchema = z.object({
 	type: z.literal('request'),
 	id: engineWorkerRequestIdSchema,
@@ -985,6 +1011,7 @@ export const engineWorkerRequestSchema = z.discriminatedUnion('method', [
 	engineWorkerApplySlotOperationRequestSchema,
 	engineWorkerApplyPokemonEditOperationRequestSchema,
 	engineWorkerCreatePokemonRequestSchema,
+	engineWorkerGetPokemonCreationCatalogueRequestSchema,
 	engineWorkerPreviewPokemonSpeciesFormEditRequestSchema,
 	engineWorkerApplySaveFileEditOperationRequestSchema,
 	engineWorkerGetSaveFileInventoryCatalogueRequestSchema,
@@ -1050,6 +1077,13 @@ export const engineWorkerCreatePokemonResponseSchema = z.object({
 	id: engineWorkerRequestIdSchema,
 	method: z.literal('createPokemon'),
 	result: pokemonCreationResultResultSchema
+});
+
+export const engineWorkerGetPokemonCreationCatalogueResponseSchema = z.object({
+	type: z.literal('response'),
+	id: engineWorkerRequestIdSchema,
+	method: z.literal('getPokemonCreationCatalogue'),
+	result: engineResultSchema(pokemonCreationCatalogueSchema)
 });
 
 export const engineWorkerPreviewPokemonSpeciesFormEditResponseSchema = z.object({
@@ -1124,6 +1158,7 @@ export const engineWorkerResponseSchema = z.discriminatedUnion('method', [
 	engineWorkerApplySlotOperationResponseSchema,
 	engineWorkerApplyPokemonEditOperationResponseSchema,
 	engineWorkerCreatePokemonResponseSchema,
+	engineWorkerGetPokemonCreationCatalogueResponseSchema,
 	engineWorkerPreviewPokemonSpeciesFormEditResponseSchema,
 	engineWorkerApplySaveFileEditOperationResponseSchema,
 	engineWorkerGetSaveFileInventoryCatalogueResponseSchema,
@@ -1195,6 +1230,10 @@ export type EngineWorkerApplyPokemonEditOperationRequest = z.infer<
 
 export type EngineWorkerCreatePokemonRequest = z.infer<
 	typeof engineWorkerCreatePokemonRequestSchema
+>;
+
+export type EngineWorkerGetPokemonCreationCatalogueRequest = z.infer<
+	typeof engineWorkerGetPokemonCreationCatalogueRequestSchema
 >;
 
 export type EngineWorkerPreviewPokemonSpeciesFormEditRequest = z.infer<

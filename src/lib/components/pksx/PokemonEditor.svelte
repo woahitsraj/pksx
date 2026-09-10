@@ -34,18 +34,24 @@
 
 	interface Props {
 		editor: PokemonEditorState;
+		mode?: 'edit' | 'create';
 		saveSummary: SaveSummary | null;
 		spriteUrl: string | null;
 		slotHueStyle: string;
 		feedback: string | null;
 		applying: boolean;
+		pendingScratch?: boolean;
 		session: PokemonEditorSession;
 		initialDraft: PokemonEditorDraftSnapshot | null;
 		speciesFormProjection: PokemonSpeciesFormEditProjection | null;
 		speciesFormLoading: boolean;
 		speciesFormError: string | null;
 		onApply: (draft: PokemonEditorDraftEdits) => void;
-		onDraftChange: (draft: PokemonEditorDraftSnapshot, dirty: boolean) => void;
+		onDraftChange: (
+			draft: PokemonEditorDraftSnapshot,
+			dirty: boolean,
+			edits: PokemonEditorDraftEdits
+		) => void;
 		onFocusChange: (focus: PokemonEditorFocus) => void;
 		onSelectSection: (section: PokemonEditorSectionId) => void;
 		onShowReview: () => void;
@@ -69,11 +75,13 @@
 
 	let {
 		editor,
+		mode = 'edit',
 		saveSummary,
 		spriteUrl,
 		slotHueStyle,
 		feedback,
 		applying,
+		pendingScratch = false,
 		session,
 		initialDraft,
 		speciesFormProjection,
@@ -283,7 +291,11 @@
 	);
 	const spriteIdentityLabels = $derived(getSpriteIdentityLabels(slot.spriteIdentity));
 	const sourceLabel = $derived(
-		editor.source.owner === 'save-file' ? 'Save File Pokemon' : 'Pokemon Storage Pokemon'
+		mode === 'create'
+			? 'New Pokemon'
+			: editor.source.owner === 'save-file'
+				? 'Save File Pokemon'
+				: 'Pokemon Storage Pokemon'
 	);
 	const statusText = $derived(
 		draftValidationText
@@ -292,7 +304,10 @@
 				? feedback
 				: draftDirty
 					? `${draftEditCount} Pokemon edit${draftEditCount === 1 ? '' : 's'} drafted.`
-					: (editor.applyOutcome.message ?? 'No Pokemon edits staged.')
+					: pendingScratch
+						? 'Quick Fix staged.'
+						: (editor.applyOutcome.message ??
+							(mode === 'create' ? `Ready to create ${slot.label}.` : 'No Pokemon edits staged.'))
 	);
 	const experienceProjection = $derived(slot.experienceProjection);
 	const canEditLevelExperience = $derived(experienceProjection !== null);
@@ -514,7 +529,9 @@
 	}
 
 	function publishDraftChange() {
-		queueMicrotask(() => onDraftChange(createDraftSnapshot(), countDraftEdits() > 0));
+		queueMicrotask(() =>
+			onDraftChange(createDraftSnapshot(), countDraftEdits() > 0, buildDraftEdits())
+		);
 	}
 
 	function optionForMove(moveId: number) {
@@ -1345,7 +1362,7 @@
 			{/if}
 			<div>
 				<p>{sourceLabel}</p>
-				<h2 id="pokemon-editor-title">{slot.label}</h2>
+				<h2 id="pokemon-editor-title">{mode === 'create' ? 'New Pokemon' : slot.label}</h2>
 				<div class="identity-line">
 					<span>{editor.source.location}</span>
 					<strong>{speciesLabel}</strong>
@@ -1370,9 +1387,11 @@
 		<section class="editor-internal-state" aria-labelledby="pokemon-editor-discard-title">
 			<p>Discard staged edits?</p>
 			<h3 id="pokemon-editor-discard-title">Keep this Pokemon Editor session?</h3>
-			<span id="pokemon-editor-status"
-				>{draftEditCount} staged {draftEditCount === 1 ? 'change' : 'changes'} will be lost.</span
-			>
+			<span id="pokemon-editor-status">
+				{mode === 'create'
+					? 'This unpublished Pokemon will be lost.'
+					: `${draftEditCount} staged ${draftEditCount === 1 ? 'change' : 'changes'} will be lost.`}
+			</span>
 			<div class="internal-actions">
 				<button id="pokemon-editor-keep-editing" type="button" onclick={onKeepEditing}
 					>Keep editing</button
@@ -2460,18 +2479,20 @@
 				id="pokemon-editor-apply"
 				type="button"
 				class="unsupported-apply"
-				disabled={!draftDirty || applying || draftValidation !== null}
+				disabled={(mode === 'edit' && !draftDirty && !pendingScratch) ||
+					applying ||
+					draftValidation !== null}
 				aria-describedby="pokemon-editor-status"
 				title={draftValidationText ?? undefined}
 				onclick={handleApply}
 			>
-				{applying ? 'Applying...' : 'Apply edits'}
+				{applying ? 'Applying...' : mode === 'create' ? 'Create Pokemon' : 'Apply edits'}
 			</button>
 			<button
 				id="pokemon-editor-cancel"
 				type="button"
 				class="close-editor"
-				disabled={!draftDirty || applying}
+				disabled={(!draftDirty && !pendingScratch) || applying}
 				onclick={handleCancelEdits}
 			>
 				Cancel edits

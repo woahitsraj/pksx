@@ -6,6 +6,7 @@ import type {
 	LegalityReport,
 	PokemonActionPreview,
 	PokemonActionResult,
+	PokemonCreationCatalogue,
 	PokemonCreationResult,
 	PokemonEditOperationResult,
 	PokemonSpeciesFormEditProjection,
@@ -428,6 +429,14 @@ export function createMockEngine(overrides: Partial<EngineApi> = {}): EngineApi 
 					boxSlots: activeBox === 0 ? mockBoxSlots : []
 				}
 			}),
+		getPokemonCreationCatalogue: async () =>
+			success<PokemonCreationCatalogue>({
+				defaultSpecies: { id: 1, name: 'Bulbasaur' },
+				availableSpecies: [
+					{ id: 1, name: 'Bulbasaur' },
+					{ id: 25, name: 'Pikachu' }
+				]
+			}),
 		previewPokemonSpeciesFormEdit: async (_bytes, _fileName, _source, speciesId, form) =>
 			success<PokemonSpeciesFormEditProjection>({
 				availableSpecies: [{ id: speciesId, name: `Species ${speciesId}` }],
@@ -532,7 +541,8 @@ function mockPokemonActionPreview(): PokemonActionPreview {
 				available: false,
 				unavailableReason: 'The Legality Report has no supported fixable problems.',
 				changes: [],
-				choices: []
+				choices: [],
+				fixes: []
 			},
 			{
 				kind: 'evolve',
@@ -548,7 +558,8 @@ function mockPokemonActionPreview(): PokemonActionPreview {
 						requirement: 'UseItem',
 						changes: [{ field: 'Species', before: 'Pikachu', after: 'Raichu' }]
 					}
-				]
+				],
+				fixes: []
 			}
 		]
 	};

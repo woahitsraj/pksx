@@ -7,6 +7,7 @@ import type {
 	LegalityReport,
 	PokemonActionPreview,
 	PokemonActionResult,
+	PokemonCreationCatalogue,
 	PokemonCreationResult,
 	PokemonEditOperationResult,
 	PokemonSpeciesFormEditProjection,
@@ -230,6 +231,20 @@ export function createPkhexWorkerEngine(
 				[buffer]
 			);
 		},
+		getPokemonCreationCatalogue: (bytes, fileName) => {
+			const buffer = copyBytesToArrayBuffer(bytes);
+
+			return sendRequest(
+				'getPokemonCreationCatalogue',
+				{
+					type: 'request',
+					id: createRequestId(),
+					method: 'getPokemonCreationCatalogue',
+					payload: { bytes: buffer, fileName }
+				},
+				[buffer]
+			);
+		},
 		previewPokemonSpeciesFormEdit: (bytes, fileName, source, speciesId, form) => {
 			const buffer = copyBytesToArrayBuffer(bytes);
 
@@ -396,6 +411,11 @@ export function createPkhexWorkerEngine(
 		request: Extract<EngineWorkerRequest, { method: 'createPokemon' }>,
 		transfer: Transferable[]
 	): Promise<EngineResult<PokemonCreationResult>>;
+	async function sendRequest(
+		method: 'getPokemonCreationCatalogue',
+		request: Extract<EngineWorkerRequest, { method: 'getPokemonCreationCatalogue' }>,
+		transfer: Transferable[]
+	): Promise<EngineResult<PokemonCreationCatalogue>>;
 	async function sendRequest(
 		method: 'previewPokemonSpeciesFormEdit',
 		request: Extract<EngineWorkerRequest, { method: 'previewPokemonSpeciesFormEdit' }>,

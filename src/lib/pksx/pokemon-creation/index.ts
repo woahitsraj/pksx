@@ -45,7 +45,7 @@ export function createPokemonCreationOperation(
 		draft.speciesId !== undefined &&
 		(!Number.isInteger(draft.speciesId) || draft.speciesId <= 0)
 	) {
-		return { ok: false, reason: 'Species ID must be a positive whole number.' };
+		return { ok: false, reason: 'Choose a supported species.' };
 	}
 
 	if (!Number.isInteger(draft.level) || draft.level < 1 || draft.level > 100) {

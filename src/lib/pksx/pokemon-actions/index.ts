@@ -7,6 +7,7 @@ import type {
 	PokemonActionPreview,
 	PokemonActionResult,
 	PokemonEvolutionChoice,
+	PokemonLegalityFixChoice,
 	SaveSlotRef,
 	StoredPokemonActionOperation,
 	StoredPokemonActionResult
@@ -20,6 +21,7 @@ import {
 export type PokemonActionSelection = {
 	kind: PokemonActionKind;
 	choice: PokemonEvolutionChoice | null;
+	fix: PokemonLegalityFixChoice | null;
 	changes: PokemonActionChange[];
 };
 
@@ -106,13 +108,19 @@ export function selectPokemonAction(
 			? (action.choices.find((candidate) => candidate.id === choiceId) ?? null)
 			: null;
 	if (kind === 'evolve' && !choice) return state;
+	const fix =
+		kind === 'legality-fix'
+			? (action.fixes.find((candidate) => candidate.id === choiceId) ?? null)
+			: null;
+	if (kind === 'legality-fix' && !fix) return state;
 
 	return {
 		...state,
 		selection: {
 			kind,
 			choice,
-			changes: choice?.changes ?? action.changes
+			fix,
+			changes: choice?.changes ?? fix?.changes ?? action.changes
 		}
 	};
 }
@@ -129,7 +137,9 @@ export function selectedPokemonActionOperation(
 	if (!state.selection) return null;
 	return {
 		kind: state.selection.kind,
-		...(state.selection.choice ? { choiceId: state.selection.choice.id } : {})
+		...(state.selection.choice || state.selection.fix
+			? { choiceId: state.selection.choice?.id ?? state.selection.fix?.token }
+			: {})
 	};
 }
 
