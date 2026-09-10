@@ -1274,6 +1274,20 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		);
 		expect(getComputedStyle(quantityInput).fontSize).toBe('16px');
 		expectValueFits(quantityInput, String(firstItem.maxQuantity));
+		const wideQuantityWidth = quantityInput.getBoundingClientRect().width;
+
+		await clearMounted();
+		render(publicFixtureView, { width: 360, height: 640 });
+		await tick();
+		const narrowQuantity = target(
+			`item-${publicFixtureView.projection.inventory.pockets[0].key}-${firstItem.id}-quantity`
+		) as HTMLInputElement;
+		const narrowControls = narrowQuantity.closest<HTMLElement>('.quantity-controls')!;
+		expect(narrowQuantity.getBoundingClientRect().width).toBeCloseTo(wideQuantityWidth, 0);
+		expectValueFits(narrowQuantity, String(firstItem.maxQuantity));
+		expect(narrowControls.getBoundingClientRect().right).toBeLessThanOrEqual(
+			narrowControls.closest<HTMLElement>('.item-row')!.getBoundingClientRect().right + 1
+		);
 	});
 
 	test('guards pending and bounded value activations without removing focus stops', async () => {

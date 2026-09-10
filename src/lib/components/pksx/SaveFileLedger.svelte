@@ -1926,9 +1926,7 @@
 		}
 
 		.quantity-controls {
-			grid-template-columns:
-				var(--pksx-control-height, 32px) minmax(5ch, 1fr) var(--pksx-control-height, 32px)
-				auto;
+			justify-content: start;
 		}
 	}
 </style>
