@@ -291,6 +291,46 @@ async function chooseMainMenu(
 		.click();
 }
 
+type ActualRouteSaveFileDestination = {
+	label: 'Trainer' | 'Bag';
+	path: RegExp;
+	field: (page: Page) => Locator;
+	reachInitialField: (page: Page, field: Locator) => Promise<void>;
+};
+
+const actualRouteSaveFileDestinations: ActualRouteSaveFileDestination[] = [
+	{
+		label: 'Trainer',
+		path: /\/trainer$/,
+		field: (page) => page.getByLabel('Trainer name'),
+		reachInitialField: async (_page, field) => expect(field).toBeFocused()
+	},
+	{
+		label: 'Bag',
+		path: /\/bag$/,
+		field: (page) => page.locator('input[data-ledger-draft="item-quantity"]').first(),
+		reachInitialField: async (page, field) => {
+			await expect(field.locator('..').getByRole('button').first()).toBeFocused();
+			await pressController(page, 'ArrowRight');
+			await expect(field).toBeFocused();
+		}
+	}
+];
+
+async function actualRouteSaveFileDestination(
+	page: Page,
+	destination: ActualRouteSaveFileDestination,
+	firstVisit = false
+) {
+	await chooseMainMenu(page, destination.label);
+	await expect(page).toHaveURL(destination.path);
+	const field = destination.field(page);
+	await expect(field).toBeVisible({ timeout: 15000 });
+	if (firstVisit) await destination.reachInitialField(page, field);
+	else await expect(field).toBeFocused();
+	return field;
+}
+
 async function expectActiveSaveOwner(page: Page, fileName: string, timeout = 15000) {
 	await expect(page.locator('.boxes-route')).toHaveAttribute('data-active-save-file-id', /.+/, {
 		timeout
@@ -663,10 +703,20 @@ async function expectLedgerShellGeometry(
 					const scrollport = document.querySelector<HTMLElement>(
 						`[data-testid="${routeDestination}-ledger-scrollport"]`
 					);
-					if (!root || !shell || !focus || !scrollport) return false;
+					const workspaceFile = root?.querySelector<HTMLElement>('.workspace-file');
+					const mainMenuOpener = document.querySelector<HTMLElement>('#main-menu-opener');
+					if (!root || !shell || !focus || !scrollport || !workspaceFile || !mainMenuOpener) {
+						return false;
+					}
 					const bounds = root.getBoundingClientRect();
 					const scrollBounds = scrollport.getBoundingClientRect();
 					const target = focus.getBoundingClientRect();
+					const workspaceFileBounds = workspaceFile.getBoundingClientRect();
+					const mainMenuOpenerBounds = mainMenuOpener.getBoundingClientRect();
+					const headerClearsMainMenu =
+						innerWidth !== 640 ||
+						innerHeight !== 360 ||
+						workspaceFileBounds.right <= mainMenuOpenerBounds.left;
 					const stickyHeaderBottom =
 						routeDestination === 'bag'
 							? Math.max(
@@ -695,6 +745,7 @@ async function expectLedgerShellGeometry(
 						shell.scrollWidth <= shell.clientWidth &&
 						shell.scrollHeight <= shell.clientHeight &&
 						getComputedStyle(scrollport).overflowY === 'auto' &&
+						headerClearsMainMenu &&
 						scrollport.contains(focus) &&
 						root.contains(focus) &&
 						target.left >= bounds.left &&
@@ -3811,6 +3862,55 @@ test('Trainer and Bag destinations apply their Save File edits', async ({ page }
 	const exported = await readFile(await download.path());
 	const fixture = await readFile(emeraldFixturePath);
 	expect(exported).not.toEqual(fixture);
+});
+
+for (const destination of actualRouteSaveFileDestinations) {
+	test(`${destination.label} route Back distinguishes Controller Focus from active editing`, async ({
+		page
+	}) => {
+		await importEmeraldThroughSaves(page);
+		let field = await actualRouteSaveFileDestination(page, destination, true);
+		const accepted = await field.inputValue();
+
+		await pressController(page, 'Escape');
+		await expect(page).toHaveURL(/\/$/);
+
+		field = await actualRouteSaveFileDestination(page, destination);
+		await pressController(page, 'Enter');
+		await pressController(page, 'Escape');
+		await expect(page).toHaveURL(destination.path);
+		await expect(field).toBeFocused();
+		await expect(field).toHaveValue(accepted);
+
+		await pressController(page, 'Escape');
+		await expect(page).toHaveURL(/\/$/);
+	});
+}
+
+test('Trainer route keeps an Engine-rejected Enter draft active until Back abandons it', async ({
+	page
+}) => {
+	await importEmeraldThroughSaves(page);
+	const trainer = actualRouteSaveFileDestinations[0];
+	const field = await actualRouteSaveFileDestination(page, trainer, true);
+	const accepted = await field.inputValue();
+	const rejected = '\u{1f600}';
+
+	await pressController(page, 'Enter');
+	await field.fill(rejected);
+	await pressController(page, 'Enter');
+	await expect(field).toHaveAttribute('aria-invalid', 'true', { timeout: 15000 });
+	await expect(field).toHaveValue(rejected);
+	await expect(page.getByText(/not valid for this Save File format or language/)).toBeVisible();
+
+	await pressController(page, 'Escape');
+	await expect(page).toHaveURL(trainer.path);
+	await expect(field).toBeFocused();
+	await expect(field).toHaveValue(accepted);
+	await expect(field).toHaveAttribute('aria-invalid', 'true');
+
+	await pressController(page, 'Escape');
+	await expect(page).toHaveURL(/\/$/);
 });
 
 test('pending Money reaches Boxes Export and the exported bytes contain the confirmed edit', async ({
