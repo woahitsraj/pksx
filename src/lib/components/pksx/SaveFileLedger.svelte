@@ -1318,6 +1318,7 @@
 	}
 
 	.ledger-screen {
+		--ledger-input-chrome: 2.5rem;
 		display: grid;
 		grid-template-rows: auto auto minmax(0, 1fr);
 		gap: var(--pksx-space-2, 8px);
@@ -1480,7 +1481,7 @@
 	}
 
 	.field-row input {
-		width: min(100%, calc(var(--trainer-name-ch, 10) * 1ch + 2.5rem));
+		width: min(100%, calc(var(--trainer-name-ch, 10) * 1ch + var(--ledger-input-chrome)));
 	}
 
 	.segmented {
@@ -1493,7 +1494,8 @@
 		display: grid;
 		grid-template-columns:
 			var(--pksx-control-height, 32px)
-			minmax(0, calc(var(--money-ch, 7) * 1ch + 2.5rem)) var(--pksx-control-height, 32px)
+			minmax(0, calc(var(--money-ch, 7) * 1ch + var(--ledger-input-chrome)))
+			var(--pksx-control-height, 32px)
 			auto;
 		align-items: center;
 		gap: var(--pksx-space-1, 4px);
@@ -1612,7 +1614,7 @@
 	}
 
 	.add-command input {
-		width: min(100%, calc(var(--quantity-ch, 3) * 1ch + 2.5rem));
+		width: min(100%, calc(var(--quantity-ch, 3) * 1ch + var(--ledger-input-chrome)));
 	}
 
 	.item-list {
@@ -1654,7 +1656,7 @@
 		display: grid;
 		grid-template-columns:
 			var(--pksx-control-height, 32px)
-			minmax(0, calc(var(--quantity-ch, 3) * 1ch + 2.5rem))
+			minmax(0, calc(var(--quantity-ch, 3) * 1ch + var(--ledger-input-chrome)))
 			var(--pksx-control-height, 32px)
 			auto;
 		align-items: center;
