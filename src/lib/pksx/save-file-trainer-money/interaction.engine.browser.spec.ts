@@ -115,6 +115,84 @@ async function waitForAccepted(
 }
 
 describe('Save File Trainer and Money real public fixtures', () => {
+	test('commits valid Trainer and Money drafts on blur with Emerald', async () => {
+		const applySaveFileEditOperation = vi.fn<EngineApi['applySaveFileEditOperation']>((...args) =>
+			engine.applySaveFileEditOperation(...args)
+		);
+		const instrumentedEngine: EngineApi = { ...engine, applySaveFileEditOperation };
+		const { harness, storage, toast, workspace } = await setup(
+			emeraldUrl,
+			'011020251345.sav',
+			instrumentedEngine
+		);
+
+		const name = input('trainer-name');
+		name.focus();
+		enterValue(name, 'PKSX');
+		input('money-value').focus();
+		await waitForAccepted(
+			harness,
+			(state) => state.workspace.saveFile?.trainerProfile.trainerName,
+			'PKSX'
+		);
+		expect(applySaveFileEditOperation).toHaveBeenCalledOnce();
+
+		const moneyLimits = harness.currentWorkspace().workspace.saveFile!.money;
+		const candidate =
+			moneyLimits.value === moneyLimits.min
+				? Math.min(moneyLimits.max, moneyLimits.min + 1)
+				: moneyLimits.min;
+		const money = input('money-value');
+		money.focus();
+		enterValue(money, String(candidate));
+		input('trainer-name').focus();
+		await waitForAccepted(harness, (state) => state.workspace.saveFile?.money.value, candidate);
+
+		expect(applySaveFileEditOperation).toHaveBeenCalledTimes(2);
+		expect(toast.error).not.toHaveBeenCalled();
+		expect(await storage.listBackups(workspace.file.id)).toHaveLength(1);
+	}, 60_000);
+
+	test.each([
+		{ boundary: 'minimum', operator: 'money-decrease' },
+		{ boundary: 'maximum', operator: 'money-max' }
+	])(
+		'lets a raw $boundary Money draft reach one operator-backed Emerald edit',
+		async ({ boundary, operator }) => {
+			const applySaveFileEditOperation = vi.fn<EngineApi['applySaveFileEditOperation']>((...args) =>
+				engine.applySaveFileEditOperation(...args)
+			);
+			const instrumentedEngine: EngineApi = { ...engine, applySaveFileEditOperation };
+			const { harness, storage, toast, workspace } = await setup(
+				emeraldUrl,
+				'011020251345.sav',
+				instrumentedEngine
+			);
+			const projection = workspace.workspace.saveFile!.money;
+			const expected = boundary === 'minimum' ? projection.min : projection.max;
+			expect(expected).not.toBe(projection.value);
+
+			const money = input('money-value');
+			money.focus();
+			enterValue(money, String(expected));
+			await tick();
+			const control = target(operator);
+			expect(control.getAttribute('aria-disabled')).toBe('false');
+			control.click();
+			await waitForAccepted(harness, (state) => state.workspace.saveFile?.money.value, expected);
+
+			expect(applySaveFileEditOperation).toHaveBeenCalledOnce();
+			expect(input('money-value').value).toBe(String(expected));
+			expect(control.getAttribute('aria-disabled')).toBe('true');
+			control.click();
+			await tick();
+			expect(applySaveFileEditOperation).toHaveBeenCalledOnce();
+			expect(toast.error).not.toHaveBeenCalled();
+			expect(await storage.listBackups(workspace.file.id)).toHaveLength(1);
+		},
+		60_000
+	);
+
 	test('covers direct commit, abandonment, pending, no-op, and Backup with Emerald', async () => {
 		let releaseFirstEdit!: () => void;
 		const firstEditGate = new Promise<void>((resolve) => (releaseFirstEdit = resolve));
