@@ -41,6 +41,8 @@ import org.junit.runner.RunWith;
 public class ControllerNavigationTest {
     private static final long TIMEOUT_SECONDS = 20;
     private static final long ENGINE_TIMEOUT_SECONDS = 60;
+    // 360px CSS canvas plus 24px API 36 system bars at each edge.
+    private static final int SQUARE_NATIVE_HEIGHT = 408;
 
     @Rule
     public ActivityScenarioRule<MainActivity> activityRule =
@@ -614,14 +616,24 @@ public class ControllerNavigationTest {
             );
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-7", null);
 
-            fixture.setViewport(360, 408, 0, false);
+            fixture.setViewport(360, SQUARE_NATIVE_HEIGHT, 0, false);
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-7", null);
             awaitJavaScript(
-                "(() => { const panes = [...document.querySelectorAll('.box-pane')]"
+                "innerWidth === 360 && innerHeight === 360 && (() => {"
+                    + " const panes = [...document.querySelectorAll('.box-pane')]"
                     + ".map(pane => pane.getBoundingClientRect());"
                     + " return panes.length === 2 && panes[1].top >= panes[0].bottom - 1; })()"
             );
             assertNativeSafeCanvas("two-pane square");
+            for (int step = 0; step < 3; step++) {
+                pressGamepadKey(KeyEvent.KEYCODE_DPAD_DOWN, null);
+            }
+            awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-25", null);
+            assertNearestScrollReveal("two-pane square Slot 26");
+            for (int step = 0; step < 3; step++) {
+                pressGamepadKey(KeyEvent.KEYCODE_DPAD_UP, null);
+            }
+            awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-7", null);
 
             fixture.setViewport(360, 640, 1, false);
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-7", null);
@@ -653,7 +665,8 @@ public class ControllerNavigationTest {
             }
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-0", "move ARON");
 
-            fixture.setViewport(360, 408, 0, false);
+            fixture.setViewport(360, SQUARE_NATIVE_HEIGHT, 0, false);
+            awaitJavaScript("innerWidth === 360 && innerHeight === 360");
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-0", "move ARON");
             fixture.setViewport(360, 640, 0, false);
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-0", "move ARON");
@@ -671,16 +684,15 @@ public class ControllerNavigationTest {
                 "document.querySelector('[role=dialog][aria-label=\"Box Menu\"]')"
                     + " && document.activeElement?.id === 'box-menu-command-0'"
             );
+            awaitBoxMenuState();
+            assertEdgeMenuAttachment("Box Menu portrait", false);
+            fixture.setViewport(360, SQUARE_NATIVE_HEIGHT, 0, false);
+            awaitJavaScript("innerWidth === 360 && innerHeight === 360");
+            awaitBoxMenuState();
+            assertEdgeMenuAttachment("Box Menu square", false);
             fixture.setViewport(360, 640, 1, false);
-            awaitJavaScript(
-                "document.querySelectorAll('[role=dialog]').length === 1"
-                    + " && document.querySelector('[role=dialog][aria-label=\"Box Menu\"]')"
-                    + " && document.activeElement?.id === 'box-menu-command-0'"
-                    + " && document.querySelectorAll('.box-pane').length === 2"
-                    + " && document.querySelector('.box-pane.active-pane')?.dataset.location === 'box-0'"
-                    + " && document.querySelector('[data-source-id=\"pokemon-storage\"]')"
-                    + "?.dataset.location === 'box-1'"
-            );
+            awaitBoxMenuState();
+            assertEdgeMenuAttachment("Box Menu landscape", true);
             assertNativeSafeCanvas("Box Menu landscape");
             pressGamepadKey(
                 KeyEvent.KEYCODE_BUTTON_B,
@@ -704,10 +716,14 @@ public class ControllerNavigationTest {
                     + " && document.activeElement?.id === 'pokemon-editor-section-nickname'"
                     + " && !document.body.textContent.includes('Quick Actions')"
             );
-            fixture.setViewport(360, 408, 0, false);
-            awaitPokemonEditorState("pokemon-editor-section-nickname", null);
+            assertEditorRailAttachment("Pokemon Editor landscape", true);
+            fixture.setViewport(360, SQUARE_NATIVE_HEIGHT, 0, false);
+            awaitJavaScript("innerWidth === 360 && innerHeight === 360");
+            awaitPokemonEditorState("pokemon-editor-section-nickname");
+            assertEditorRailAttachment("Pokemon Editor square", false);
             fixture.setViewport(360, 640, 0, false);
-            awaitPokemonEditorState("pokemon-editor-section-nickname", null);
+            awaitPokemonEditorState("pokemon-editor-section-nickname");
+            assertEditorRailAttachment("Pokemon Editor portrait", false);
             assertNativeSafeCanvas("Pokemon Editor portrait");
             pressGamepadKey(
                 KeyEvent.KEYCODE_BUTTON_B,
@@ -764,6 +780,16 @@ public class ControllerNavigationTest {
             );
             assertFocusedTargetContained("keyboard-open Trainer landscape");
             Log.i("PKSXAcceptance", "IME landscape " + nativeAcceptanceState());
+            shellCommand("input text X");
+            awaitImeVisible();
+            awaitJavaScript(
+                "document.activeElement?.dataset.destinationFocus === 'trainer-name'"
+                    + " && document.activeElement?.value === 'NATIVEX'"
+                    + " && document.documentElement.dataset.pksxHeightBandLock === 'tall'"
+                    + " && getComputedStyle(document.querySelector('.app-shell'))"
+                    + ".getPropertyValue('--pksx-height-band').trim() === 'tall'"
+            );
+            Log.i("PKSXAcceptance", "IME landscape input live " + nativeAcceptanceState());
 
             runJavaScript("document.querySelector('button[aria-label=\"Open Main Menu\"]').focus()");
             hideIme();
@@ -773,7 +799,7 @@ public class ControllerNavigationTest {
                     + " && getComputedStyle(document.querySelector('.app-shell'))"
                     + ".getPropertyValue('--pksx-height-band').trim() === 'short'"
                     + " && document.querySelector('[data-destination-focus=\"trainer-name\"]')"
-                    + "?.value === 'NATIVE'"
+                    + "?.value === 'NATIVEX'"
             );
             fixture.setViewport(360, 640, 0, false);
             awaitJavaScript(
@@ -783,7 +809,7 @@ public class ControllerNavigationTest {
                     + ".getPropertyValue('--pksx-height-band').trim() === 'tall'"
                     + " && location.pathname.endsWith('/trainer')"
                     + " && document.querySelector('[data-destination-focus=\"trainer-name\"]')"
-                    + "?.value === 'NATIVE'"
+                    + "?.value === 'NATIVEX'"
             );
             assertNativeSafeCanvas("Trainer portrait after editing");
         }
@@ -1050,7 +1076,19 @@ public class ControllerNavigationTest {
         );
     }
 
-    private void awaitPokemonEditorState(String activeElementId, String inputValue) throws Exception {
+    private void awaitBoxMenuState() throws Exception {
+        awaitJavaScript(
+            "document.querySelectorAll('[role=dialog]').length === 1"
+                + " && document.querySelector('[role=dialog][aria-label=\"Box Menu\"]')"
+                + " && document.activeElement?.id === 'box-menu-command-0'"
+                + " && document.querySelectorAll('.box-pane').length === 2"
+                + " && document.querySelector('.box-pane.active-pane')?.dataset.location === 'box-0'"
+                + " && document.querySelector('[data-source-id=\"pokemon-storage\"]')"
+                + "?.dataset.location === 'box-1'"
+        );
+    }
+
+    private void awaitPokemonEditorState(String activeElementId) throws Exception {
         awaitJavaScript(
             "(() => { const editor = document.querySelector('.pokemon-editor');"
                 + " const panes = [...document.querySelectorAll('.box-pane')];"
@@ -1062,13 +1100,84 @@ public class ControllerNavigationTest {
                 + " && document.activeElement?.id === '"
                 + activeElementId
                 + "'"
-                + (inputValue == null
-                    ? ""
-                    : " && document.querySelector('#pokemon-editor-nickname')?.value === '"
-                    + inputValue
-                    + "'")
                 + " && !document.body.textContent.includes('Quick Actions'); })()"
         );
+    }
+
+    private void assertEdgeMenuAttachment(String label, boolean trailing) throws Exception {
+        JSONObject geometry = new JSONObject(
+            runJavaScript(
+                "(() => { const rect = node => { const value = node?.getBoundingClientRect();"
+                    + " return value ? [value.left,value.top,value.right,value.bottom] : null; };"
+                    + " return {innerWidth,innerHeight,layer:rect(document.querySelector('.edge-menu-layer')) ,"
+                    + "panel:rect(document.querySelector('.edge-menu-panel'))}; })()"
+            )
+        );
+        double[] layer = requiredBounds(geometry, "layer", label);
+        double[] panel = requiredBounds(geometry, "panel", label);
+        boolean attached = trailing
+            ? geometry.getDouble("innerWidth") > geometry.getDouble("innerHeight")
+                && sameEdge(panel[2], layer[2])
+                && sameEdge(panel[1], layer[1])
+                && sameEdge(panel[3], layer[3])
+                && panel[0] > layer[0]
+            : geometry.getDouble("innerWidth") <= geometry.getDouble("innerHeight")
+                && sameEdge(panel[0], layer[0])
+                && sameEdge(panel[2], layer[2])
+                && sameEdge(panel[3], layer[3])
+                && panel[1] > layer[1];
+        Log.i("PKSXAcceptance", label + " " + geometry + " " + nativeWindowGeometry());
+        if (!attached) fail(label + " is attached to the wrong edge: " + geometry);
+    }
+
+    private void assertEditorRailAttachment(String label, boolean left) throws Exception {
+        JSONObject geometry = new JSONObject(
+            runJavaScript(
+                "(() => { const rect = node => { const value = node?.getBoundingClientRect();"
+                    + " return value ? [value.left,value.top,value.right,value.bottom] : null; };"
+                    + " return {innerWidth,innerHeight,body:rect(document.querySelector('.editor-body')) ,"
+                    + "rail:rect(document.querySelector('.editor-rail')) ,"
+                    + "content:rect(document.querySelector('.editor-content'))}; })()"
+            )
+        );
+        double[] body = requiredBounds(geometry, "body", label);
+        double[] rail = requiredBounds(geometry, "rail", label);
+        double[] content = requiredBounds(geometry, "content", label);
+        boolean attached = left
+            ? geometry.getDouble("innerWidth") > geometry.getDouble("innerHeight")
+                && sameEdge(rail[0], body[0])
+                && rail[2] < content[0]
+                && sameEdge(rail[1], body[1])
+                && sameEdge(rail[3], body[3])
+            : geometry.getDouble("innerWidth") <= geometry.getDouble("innerHeight")
+                && sameEdge(rail[0], body[0])
+                && sameEdge(rail[2], body[2])
+                && rail[3] < content[1];
+        Log.i("PKSXAcceptance", label + " " + geometry + " " + nativeWindowGeometry());
+        if (!attached) fail(label + " rail is attached to the wrong edge: " + geometry);
+    }
+
+    private void assertNearestScrollReveal(String label) throws Exception {
+        JSONObject geometry = new JSONObject(
+            runJavaScript(
+                "(() => { const target = document.activeElement;"
+                    + " const scrollport = target?.closest('.location-grid');"
+                    + " const rect = node => { const value = node?.getBoundingClientRect();"
+                    + " return value ? [value.left,value.top,value.right,value.bottom] : null; };"
+                    + " return {target:rect(target),scrollport:rect(scrollport),"
+                    + "scrollTop:scrollport?.scrollTop ?? 0,scrollHeight:scrollport?.scrollHeight ?? 0,"
+                    + "clientHeight:scrollport?.clientHeight ?? 0}; })()"
+            )
+        );
+        double[] target = requiredBounds(geometry, "target", label);
+        double[] scrollport = requiredBounds(geometry, "scrollport", label);
+        double bottomGap = scrollport[3] - target[3];
+        boolean nearest = geometry.getDouble("scrollHeight") > geometry.getDouble("clientHeight")
+            && geometry.getDouble("scrollTop") > 0
+            && bottomGap >= -1
+            && bottomGap <= 2;
+        Log.i("PKSXAcceptance", label + " bottomGap=" + bottomGap + " " + geometry);
+        if (!nearest) fail(label + " was not minimally revealed at the bottom edge: " + geometry);
     }
 
     private void focusAndShowIme(String selector) throws Exception {
@@ -1163,25 +1272,37 @@ public class ControllerNavigationTest {
                 decorBounds.right - bars.right,
                 decorBounds.bottom - bars.bottom
             );
-            double scaleX = webView.getWidth() / geometry.optDouble("innerWidth", 0);
-            double scaleY = webView.getHeight() / geometry.optDouble("innerHeight", 0);
+            double innerWidth = geometry.optDouble("innerWidth", Double.NaN);
+            double innerHeight = geometry.optDouble("innerHeight", Double.NaN);
+            if (
+                !Double.isFinite(innerWidth)
+                    || innerWidth <= 0
+                    || !Double.isFinite(innerHeight)
+                    || innerHeight <= 0
+            ) {
+                fail(label + " has invalid CSS viewport dimensions: " + geometry);
+            }
+            double scaleX = webView.getWidth() / innerWidth;
+            double scaleY = webView.getHeight() / innerHeight;
             RectF surface = screenBounds(
                 webViewOrigin,
                 scaleX,
                 scaleY,
-                jsonBounds(geometry.optJSONArray("surface"))
+                requiredBounds(geometry, "surface", label)
             );
             RectF target = screenBounds(
                 webViewOrigin,
                 scaleX,
                 scaleY,
-                jsonBounds(geometry.optJSONArray("target"))
+                requiredBounds(geometry, "target", label)
             );
-            double[] scrollportBounds = jsonBounds(geometry.optJSONArray("scrollport"));
+            double[] scrollportBounds = requiredBounds(geometry, "scrollport", label);
             RectF scrollport = screenBounds(webViewOrigin, scaleX, scaleY, scrollportBounds);
             contained.set(
                 webViewBounds.contains(safeBounds)
                     && contains(safeBounds, surface)
+                    && contains(safeBounds, target)
+                    && contains(surface, target)
                     && contains(scrollport, target)
             );
             evidence.set(
@@ -1194,17 +1315,35 @@ public class ControllerNavigationTest {
         if (!contained.get()) fail(label + " Safe Canvas containment failed: " + evidence.get());
     }
 
-    private double[] jsonBounds(JSONArray bounds) {
-        if (bounds == null || bounds.length() != 4) return new double[] { 0, 0, 0, 0 };
-        return new double[] {
+    private double[] requiredBounds(JSONObject geometry, String key, String label) {
+        JSONArray bounds = geometry.optJSONArray(key);
+        if (bounds == null || bounds.length() != 4) {
+            throw new AssertionError(label + " is missing required " + key + " bounds: " + geometry);
+        }
+        double[] values = new double[] {
             bounds.optDouble(0),
             bounds.optDouble(1),
             bounds.optDouble(2),
             bounds.optDouble(3)
         };
+        for (double value : values) {
+            if (!Double.isFinite(value)) {
+                throw new AssertionError(label + " has nonfinite " + key + " bounds: " + geometry);
+            }
+        }
+        if (values[2] <= values[0] || values[3] <= values[1]) {
+            throw new AssertionError(label + " has nonpositive " + key + " bounds: " + geometry);
+        }
+        return values;
+    }
+
+    private boolean sameEdge(double first, double second) {
+        return Math.abs(first - second) <= 1;
     }
 
     private final class NativeDisplayFixture implements AutoCloseable {
+        private final String originalSizeState;
+        private final String originalDensityState;
         private final String originalSizeOverride;
         private final String originalDensityOverride;
         private final String originalFixedRotation;
@@ -1216,8 +1355,10 @@ public class ControllerNavigationTest {
 
         NativeDisplayFixture() throws Exception {
             awaitImeHidden();
-            originalSizeOverride = settingOverride(shellCommand("wm size"), "Override size");
-            originalDensityOverride = settingOverride(shellCommand("wm density"), "Override density");
+            originalSizeState = shellCommand("wm size");
+            originalDensityState = shellCommand("wm density");
+            originalSizeOverride = settingOverride(originalSizeState, "Override size");
+            originalDensityOverride = settingOverride(originalDensityState, "Override density");
             originalFixedRotation = shellCommand("cmd window fixed-to-user-rotation");
             originalRotationMode = userRotation("");
             if (!originalRotationMode.matches("free|lock [0-3]")) {
@@ -1261,33 +1402,79 @@ public class ControllerNavigationTest {
         }
 
         @Override
-        public void close() throws Exception {
-            runJavaScript("document.activeElement?.blur()");
-            hideIme();
-            awaitImeHidden();
-            shellCommand("wm size " + (originalSizeOverride == null ? "reset" : originalSizeOverride));
-            shellCommand(
-                "wm density " + (originalDensityOverride == null ? "reset" : originalDensityOverride)
-            );
-            shellCommand("cmd window fixed-to-user-rotation enabled");
-            userRotation("lock " + originalAngle);
-            awaitDisplayRotation(originalAngle);
-            awaitWindowBounds(originalWindowBounds);
-            shellCommand("cmd window fixed-to-user-rotation " + originalFixedRotation);
-            userRotation(originalRotationMode);
-            restoreSecureSetting("stylus_handwriting_enabled", originalStylusHandwriting);
-            awaitShellState("cmd window user-rotation", originalRotationMode, "rotation mode");
-            awaitShellState(
-                "cmd window fixed-to-user-rotation",
-                originalFixedRotation,
-                "fixed-rotation policy"
-            );
+        public void close() {
+            Throwable failure = null;
+            failure = attemptCleanup(failure, "blur active control", () ->
+                runJavaScript("document.activeElement?.blur()"));
+            failure = attemptCleanup(failure, "hide IME", () -> hideIme());
+            failure = attemptCleanup(failure, "wait for hidden IME", () -> awaitImeHidden());
+            failure = attemptCleanup(failure, "restore display size", () ->
+                shellCommand("wm size " + (originalSizeOverride == null ? "reset" : originalSizeOverride)));
+            failure = attemptCleanup(failure, "restore display density", () ->
+                shellCommand(
+                    "wm density " + (originalDensityOverride == null ? "reset" : originalDensityOverride)
+                ));
+            failure = attemptCleanup(failure, "enable deterministic rotation restore", () ->
+                shellCommand("cmd window fixed-to-user-rotation enabled"));
+            failure = attemptCleanup(failure, "restore display angle", () ->
+                userRotation("lock " + originalAngle));
+            failure = attemptCleanup(failure, "wait for display angle", () ->
+                awaitDisplayRotation(originalAngle));
+            failure = attemptCleanup(failure, "wait for display bounds", () ->
+                awaitWindowBounds(originalWindowBounds));
+            failure = attemptCleanup(failure, "restore fixed-rotation policy", () ->
+                shellCommand("cmd window fixed-to-user-rotation " + originalFixedRotation));
+            failure = attemptCleanup(failure, "restore user-rotation policy", () ->
+                userRotation(originalRotationMode));
+            failure = attemptCleanup(failure, "restore handwriting setting", () ->
+                restoreSecureSetting("stylus_handwriting_enabled", originalStylusHandwriting));
+            failure = attemptCleanup(failure, "verify display size", () ->
+                awaitShellState("wm size", originalSizeState, "display size"));
+            failure = attemptCleanup(failure, "verify display density", () ->
+                awaitShellState("wm density", originalDensityState, "display density"));
+            failure = attemptCleanup(failure, "settle fixed-rotation policy", () ->
+                restoreShellState(
+                    "cmd window fixed-to-user-rotation " + originalFixedRotation,
+                    "cmd window fixed-to-user-rotation",
+                    originalFixedRotation,
+                    "fixed-rotation policy"
+                ));
+            failure = attemptCleanup(failure, "settle user-rotation policy", () ->
+                restoreShellState(
+                    "cmd window user-rotation " + originalRotationMode,
+                    "cmd window user-rotation",
+                    originalRotationMode,
+                    "rotation mode"
+                ));
+            if (failure != null) {
+                throw new AssertionError(
+                    "Native fixture cleanup failed; captured=" + originalGeometry + "; current="
+                        + nativeWindowGeometry(),
+                    failure
+                );
+            }
             Log.i(
                 "PKSXAcceptance",
                 "Native fixture restored captured=" + originalGeometry + " current="
                     + nativeWindowGeometry()
             );
         }
+    }
+
+    @FunctionalInterface
+    private interface CleanupStep {
+        void run() throws Throwable;
+    }
+
+    private Throwable attemptCleanup(Throwable failure, String label, CleanupStep step) {
+        try {
+            step.run();
+        } catch (Throwable stepFailure) {
+            AssertionError wrapped = new AssertionError(label, stepFailure);
+            if (failure == null) return wrapped;
+            failure.addSuppressed(wrapped);
+        }
+        return failure;
     }
 
     private String settingOverride(String state, String label) {
@@ -1307,6 +1494,26 @@ public class ControllerNavigationTest {
         }
         fail(
             "Android " + label + " was not restored: expected=" + expected + ", actual="
+                + actual + ", " + nativeWindowGeometry()
+        );
+    }
+
+    private void restoreShellState(
+        String restoreCommand,
+        String queryCommand,
+        String expected,
+        String label
+    ) throws Exception {
+        long deadline = SystemClock.uptimeMillis() + TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS);
+        String actual = null;
+        while (SystemClock.uptimeMillis() < deadline) {
+            shellCommand(restoreCommand);
+            actual = shellCommand(queryCommand);
+            if (expected.equals(actual)) return;
+            SystemClock.sleep(50);
+        }
+        fail(
+            "Android " + label + " did not settle: expected=" + expected + ", actual="
                 + actual + ", " + nativeWindowGeometry()
         );
     }
