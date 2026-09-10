@@ -1467,6 +1467,7 @@
 																			>
 																			<input
 																				type="number"
+																				enterkeyhint="done"
 																				aria-label={`${item.name} quantity`}
 																				value={quantityField.value}
 																				min="1"

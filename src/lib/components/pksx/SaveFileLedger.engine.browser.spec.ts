@@ -2188,4 +2188,13 @@ describe('SaveFileLedger states and feedback', () => {
 		expect(target('trainer-name').getAttribute('enterkeyhint')).toBe('done');
 		expect(target('money-value').getAttribute('enterkeyhint')).toBe('done');
 	});
+
+	test('maps typed Bag quantity to soft-keyboard Done', () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const item = pocket.items[0];
+		render(publicFixtureView, { destination: 'bag', harness: false });
+		expect(target(`item-${pocket.key}-${item.id}-quantity`).getAttribute('enterkeyhint')).toBe(
+			'done'
+		);
+	});
 });
