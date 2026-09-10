@@ -148,8 +148,17 @@
 			}
 		}
 		previousCommand = nextCommand;
+		refreshLastItemIndex();
 
 		if (rememberedTarget && !findIdentity(rememberedTarget)) reconcileMissingTarget();
+	}
+
+	function refreshLastItemIndex() {
+		if (!lastItemFocus) return;
+		const index = pockets
+			.find((pocket) => pocket.key === lastItemFocus?.pocketKey)
+			?.items.findIndex((item) => item.id === lastItemFocus?.itemId);
+		if (index !== undefined && index >= 0) lastItemFocus = { ...lastItemFocus, index };
 	}
 
 	function handleFocusIn(event: FocusEvent) {
@@ -240,7 +249,10 @@
 	}
 
 	function controlsFor(row: Element) {
-		return Array.from(row.querySelectorAll<HTMLElement>('[data-ledger-control]:not([disabled])'));
+		return [
+			...(row.matches('[data-ledger-control]:not([disabled])') ? [row as HTMLElement] : []),
+			...row.querySelectorAll<HTMLElement>('[data-ledger-control]:not([disabled])')
+		];
 	}
 
 	function focusRows() {
@@ -307,6 +319,12 @@
 	function focusPocketEntry(pocketKey: string) {
 		const add = findIdentity(addIdentity(pocketKey));
 		if (add) return focusElement(add);
+		if (
+			command?.kind === 'add-item' &&
+			command.pocketKey === pocketKey &&
+			focusIdentity(commandFirstIdentity(command))
+		)
+			return true;
 		const retry = findIdentity(retryIdentity(pocketKey));
 		if (retry) return focusElement(retry);
 		const pocket = pockets.find((candidate) => candidate.key === pocketKey);
@@ -403,9 +421,9 @@
 		pending.commit('blur');
 	}
 
-	function activateDraftOperator(fieldIdentity: string, action: () => void) {
+	function activateDraftOperator(fieldIdentity: string, action: (() => boolean) | undefined) {
+		if (action?.() !== true) return;
 		if (deferredBlur?.fieldIdentity === fieldIdentity) deferredBlur = null;
-		action();
 	}
 
 	function commitDraft(target: HTMLElement, reason: SaveFileLedgerCommitReason) {
@@ -609,8 +627,12 @@
 							>
 						</div>
 					{:else}
-						<div class="ledger-layout">
-							<div class="details-block" aria-label="Trainer and Money">
+						<div class="ledger-layout" class:bag-only={!trainerVisible && !moneyVisible}>
+							<div
+								class="details-block"
+								class:empty={!trainerVisible && !moneyVisible}
+								aria-label="Trainer and Money"
+							>
 								{#if trainerVisible}
 									<section class="details-section" aria-labelledby="ledger-trainer-title">
 										<header class="details-heading">
@@ -755,10 +777,13 @@
 												data-destination-focus="money-decrease"
 												aria-disabled={moneyBusy || moneyAtMin}
 												disabled={Boolean(editingUnavailable)}
-												onclick={() =>
-													activateDraftOperator('money-value', () => {
-														if (!moneyBusy && !moneyAtMin) onMoneyStep?.(-1, moneyField.value);
-													})}>−</button
+												onclick={() => {
+													if (!moneyBusy && !moneyAtMin)
+														activateDraftOperator(
+															'money-value',
+															() => onMoneyStep?.(-1, moneyField.value) ?? false
+														);
+												}}>−</button
 											>
 											<input
 												type="number"
@@ -789,10 +814,13 @@
 												data-destination-focus="money-increase"
 												aria-disabled={moneyBusy || moneyAtMax}
 												disabled={Boolean(editingUnavailable)}
-												onclick={() =>
-													activateDraftOperator('money-value', () => {
-														if (!moneyBusy && !moneyAtMax) onMoneyStep?.(1, moneyField.value);
-													})}>+</button
+												onclick={() => {
+													if (!moneyBusy && !moneyAtMax)
+														activateDraftOperator(
+															'money-value',
+															() => onMoneyStep?.(1, moneyField.value) ?? false
+														);
+												}}>+</button
 											>
 											<button
 												type="button"
@@ -801,10 +829,13 @@
 												data-destination-focus="money-max"
 												aria-disabled={moneyBusy || moneyAtMax}
 												disabled={Boolean(editingUnavailable)}
-												onclick={() =>
-													activateDraftOperator('money-value', () => {
-														if (!moneyBusy && !moneyAtMax) onMoneyStep?.('max', moneyField.value);
-													})}>Max</button
+												onclick={() => {
+													if (!moneyBusy && !moneyAtMax)
+														activateDraftOperator(
+															'money-value',
+															() => onMoneyStep?.('max', moneyField.value) ?? false
+														);
+												}}>Max</button
 											>
 											<DelayedSpinner active={moneyBusy} label="Updating Money" />
 											{#if moneyError}<small id="money-error" class="field-error" aria-live="polite"
@@ -871,6 +902,7 @@
 																Math.max(1, ...options.map((option) => option.maxQuantity))}
 															{@const addConfirmIdentity = `pocket-${pocket.key}-add-confirm`}
 															{@const addBusy = isPending(addConfirmIdentity)}
+															{@const addFocusFallbacks = JSON.stringify([addIdentity(pocket.key)])}
 															<div class="add-command" data-ledger-command aria-busy={addBusy}>
 																<label>
 																	<span>Item</span>
@@ -878,6 +910,7 @@
 																		aria-label={`Item to add to ${pocket.label}`}
 																		value={command.itemId ?? ''}
 																		data-ledger-control
+																		data-destination-fallbacks={addFocusFallbacks}
 																		data-destination-focus={`pocket-${pocket.key}-add-item`}
 																		disabled={Boolean(editingUnavailable)}
 																		onchange={(event) =>
@@ -901,6 +934,7 @@
 																		size={String(commandQuantityMax).length}
 																		style:--quantity-ch={String(commandQuantityMax).length}
 																		data-ledger-control
+																		data-destination-fallbacks={addFocusFallbacks}
 																		data-destination-focus={`pocket-${pocket.key}-add-quantity`}
 																		aria-invalid={command.quantityError ? 'true' : undefined}
 																		aria-describedby={command.quantityError
@@ -921,6 +955,7 @@
 																<button
 																	type="button"
 																	data-ledger-control
+																	data-destination-fallbacks={addFocusFallbacks}
 																	data-destination-focus={addConfirmIdentity}
 																	aria-disabled={addBusy}
 																	disabled={command.itemId === null || Boolean(editingUnavailable)}
@@ -932,6 +967,7 @@
 																	type="button"
 																	data-ledger-control
 																	data-controller-back
+																	data-destination-fallbacks={addFocusFallbacks}
 																	data-destination-focus={`pocket-${pocket.key}-add-cancel`}
 																	onclick={() => onCommandChange?.(null)}>Cancel</button
 																>
@@ -1009,6 +1045,10 @@
 																{@const focusFallbacks = JSON.stringify(
 																	itemFocusFallbacks(pocket.key, item.id)
 																)}
+																{@const removeFocusFallbacks = JSON.stringify([
+																	itemIdentity(pocket.key, item.id, 'remove'),
+																	...itemFocusFallbacks(pocket.key, item.id)
+																])}
 																<li
 																	class="item-row"
 																	data-ledger-row={`item-${pocket.key}-${item.id}`}
@@ -1032,7 +1072,7 @@
 																				data-ledger-control
 																				data-pocket-key={pocket.key}
 																				data-item-id={item.id}
-																				data-destination-fallbacks={focusFallbacks}
+																				data-destination-fallbacks={removeFocusFallbacks}
 																				data-destination-focus={removeConfirmIdentity}
 																				aria-disabled={removeBusy}
 																				disabled={Boolean(editingUnavailable)}
@@ -1044,7 +1084,7 @@
 																				type="button"
 																				data-ledger-control
 																				data-controller-back
-																				data-destination-fallbacks={focusFallbacks}
+																				data-destination-fallbacks={removeFocusFallbacks}
 																				data-destination-focus={itemIdentity(
 																					pocket.key,
 																					item.id,
@@ -1082,15 +1122,18 @@
 																				aria-disabled={itemBusy || quantityAtMin}
 																				disabled={Boolean(editingUnavailable)}
 																				onclick={() =>
-																					activateDraftOperator(quantityIdentity, () => {
-																						if (!itemBusy && !quantityAtMin)
+																					!itemBusy &&
+																					!quantityAtMin &&
+																					activateDraftOperator(
+																						quantityIdentity,
+																						() =>
 																							onItemQuantityStep?.(
 																								pocket.key,
 																								item.id,
 																								-1,
 																								quantityField.value
-																							);
-																					})}>−</button
+																							) ?? false
+																					)}>−</button
 																			>
 																			<input
 																				type="number"
@@ -1141,15 +1184,18 @@
 																				aria-disabled={itemBusy || quantityAtMax}
 																				disabled={Boolean(editingUnavailable)}
 																				onclick={() =>
-																					activateDraftOperator(quantityIdentity, () => {
-																						if (!itemBusy && !quantityAtMax)
+																					!itemBusy &&
+																					!quantityAtMax &&
+																					activateDraftOperator(
+																						quantityIdentity,
+																						() =>
 																							onItemQuantityStep?.(
 																								pocket.key,
 																								item.id,
 																								1,
 																								quantityField.value
-																							);
-																					})}>+</button
+																							) ?? false
+																					)}>+</button
 																			>
 																			<button
 																				type="button"
@@ -1242,12 +1288,12 @@
 
 	h1 {
 		font-size: var(--pksx-type-display, 24px);
-		line-height: 1;
+		line-height: 1.05;
 	}
 
 	h2 {
 		font-size: var(--pksx-type-title, 16px);
-		line-height: 1.15;
+		line-height: 1.05;
 	}
 
 	h3 {
@@ -1304,11 +1350,19 @@
 		overflow: hidden;
 	}
 
+	.ledger-layout.bag-only {
+		grid-template-rows: minmax(0, 1fr);
+	}
+
 	.details-block {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
 		gap: var(--pksx-space-2, 8px);
 		min-width: 0;
+	}
+
+	.details-block.empty {
+		display: none;
 	}
 
 	.details-section,
@@ -1535,7 +1589,7 @@
 		-webkit-box-orient: vertical;
 		-webkit-line-clamp: 2;
 		line-clamp: 2;
-		line-height: 1.2;
+		line-height: 1.25;
 	}
 
 	.quantity-controls,
@@ -1627,7 +1681,7 @@
 	}
 
 	@container save-file-ledger (aspect-ratio > 1 / 1) {
-		.ledger-layout {
+		.ledger-layout:not(.bag-only) {
 			grid-template-columns: 260px minmax(0, 1fr);
 			grid-template-rows: minmax(0, 1fr);
 		}

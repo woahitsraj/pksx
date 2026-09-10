@@ -16,6 +16,11 @@
 	import ToastRegion from '$lib/components/pksx/ToastRegion.svelte';
 	import { appChrome } from '$lib/pksx/app-chrome.svelte';
 	import { heightBandLock } from '$lib/pksx/height-band-lock';
+	import {
+		captureDestinationFocus,
+		resolveDestinationFocus,
+		type DestinationFocus
+	} from '$lib/pksx/destination-focus';
 	import { getSavesStorage } from '$lib/pksx/saves-cache';
 	import { theme } from '$lib/pksx/theme.svelte';
 	import { createToastHost, setToastHost } from '$lib/pksx/toast/host.svelte';
@@ -32,8 +37,6 @@
 	} from '$lib/pksx/controller-input';
 
 	type Destination = 'boxes' | 'trainer' | 'bag' | 'saves' | 'settings';
-	type DestinationFocus = { id: string; identity: string | null };
-
 	let { children } = $props();
 	const summonedWorkflow = setSummonedWorkflowHost(createSummonedWorkflowHost());
 	const toastHost = setToastHost(createToastHost());
@@ -435,26 +438,13 @@
 	}
 
 	function rememberControl(destination: Destination, control: HTMLElement, id: string) {
-		destinationFocus.set(destination, {
-			id,
-			identity: control.dataset.destinationFocus ?? null
-		});
+		destinationFocus.set(destination, captureDestinationFocus(control, id));
 	}
 
 	function resolveRememberedControl(route: HTMLElement, destination: Destination) {
 		const remembered = destinationFocus.get(destination);
 		if (!remembered) return null;
-		if (!remembered.identity) {
-			const target = document.getElementById(remembered.id);
-			return target && route.contains(target) && isFocusableTarget(target) ? target : null;
-		}
-		return (
-			Array.from(
-				route.querySelectorAll<HTMLElement>(
-					`[data-destination-focus="${CSS.escape(remembered.identity)}"]`
-				)
-			).find(isFocusableTarget) ?? null
-		);
+		return resolveDestinationFocus(route, remembered, isFocusableTarget);
 	}
 
 	function fallbackControl(route: HTMLElement, destination: Destination) {

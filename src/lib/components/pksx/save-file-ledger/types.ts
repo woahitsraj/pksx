@@ -66,7 +66,7 @@ export type SaveFileLedgerProps = {
 	onMoneyInput?: (value: string) => void;
 	onMoneyCommit?: (reason: SaveFileLedgerCommitReason) => void;
 	onMoneyAbandon?: () => void;
-	onMoneyStep?: (step: -1 | 1 | 'max', draft: string) => void;
+	onMoneyStep?: (step: -1 | 1 | 'max', draft: string) => boolean;
 	onItemQuantityInput?: (pocketKey: string, itemId: number, value: string) => void;
 	onItemQuantityCommit?: (
 		pocketKey: string,
@@ -74,7 +74,7 @@ export type SaveFileLedgerProps = {
 		reason: SaveFileLedgerCommitReason
 	) => void;
 	onItemQuantityAbandon?: (pocketKey: string, itemId: number) => void;
-	onItemQuantityStep?: (pocketKey: string, itemId: number, step: -1 | 1, draft: string) => void;
+	onItemQuantityStep?: (pocketKey: string, itemId: number, step: -1 | 1, draft: string) => boolean;
 	onCommandChange?: (command: SaveFileLedgerCommand | null) => void;
 	onAddItem?: (command: Extract<SaveFileLedgerCommand, { kind: 'add-item' }>) => void;
 	onRemoveItem?: (command: Extract<SaveFileLedgerCommand, { kind: 'remove-item' }>) => void;
