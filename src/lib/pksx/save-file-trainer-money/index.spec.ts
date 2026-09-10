@@ -337,6 +337,31 @@ describe('Save File Trainer and Money controller', () => {
 			error: 'The engine rejected this name.'
 		});
 		expect(invalid.toast.error).not.toHaveBeenCalled();
+		invalid.value.ledgerProps.onTrainerNameCommit?.('blur');
+		expect(invalid.enqueueEdit).toHaveBeenCalledOnce();
+		expect(invalid.value.ledgerProps.drafts?.trainerName).toEqual({
+			value: 'RED',
+			error: 'The engine rejected this name.'
+		});
+
+		const invalidMoney = controller();
+		invalidMoney.results.push({
+			ok: false,
+			status: 'rejected',
+			origin: invalidMoney.value.origin,
+			code: 'invalid-save-file-edit',
+			message: 'The engine rejected this Money value.',
+			workspace: workspace()
+		});
+		invalidMoney.value.ledgerProps.onMoneyInput?.('200');
+		invalidMoney.value.ledgerProps.onMoneyCommit?.('enter');
+		await settled();
+		invalidMoney.value.ledgerProps.onMoneyCommit?.('blur');
+		expect(invalidMoney.enqueueEdit).toHaveBeenCalledOnce();
+		expect(invalidMoney.value.ledgerProps.drafts?.money).toEqual({
+			value: '100',
+			error: 'The engine rejected this Money value.'
+		});
 
 		const invalidBlur = controller();
 		invalidBlur.results.push({
@@ -449,6 +474,7 @@ describe('Save File Trainer and Money controller', () => {
 			{ key: 'inventory:Items:1', sequence: 2 }
 		);
 		value.dispose();
+		let publishPending: (pending: readonly PendingSaveFileEdit[]) => void = () => undefined;
 
 		const remounted = createSaveFileTrainerMoneyController({
 			workspace: workspace(),
@@ -460,6 +486,7 @@ describe('Save File Trainer and Money controller', () => {
 				isPending: (_origin, key) =>
 					key === undefined ? pending.length > 0 : pending.some((edit) => edit.key === key),
 				subscribePending: (_origin, listener) => {
+					publishPending = listener;
 					listener([...pending]);
 					return () => undefined;
 				},
@@ -472,6 +499,14 @@ describe('Save File Trainer and Money controller', () => {
 			trainerMoneyPendingKeys.money,
 			'inventory:Items:1'
 		]);
+		pending.splice(0);
+		publishPending([]);
+		remounted.acceptWorkspace(reloaded);
+		expect(remounted.ledgerProps.pendingTargets).toEqual([]);
+		expect(remounted.ledgerProps.view).toMatchObject({
+			status: 'ready',
+			projection: { money: { value: 500 } }
+		});
 
 		const retryHarness = controller({ reload: async () => reloaded });
 		retryHarness.results.push({
@@ -523,8 +558,8 @@ describe('Save File Trainer and Money controller', () => {
 		remounted.ledgerProps.onMoneyInput?.('999');
 		remounted.rejectEditing('Bag editing stopped again.');
 		expect(remounted.ledgerProps.drafts).toMatchObject({
-			trainerName: { value: 'RED', error: null },
-			money: { value: '100', error: null }
+			trainerName: { value: 'BLUE', error: null },
+			money: { value: '500', error: null }
 		});
 	});
 });

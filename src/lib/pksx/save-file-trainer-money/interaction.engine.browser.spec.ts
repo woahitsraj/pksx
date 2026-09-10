@@ -318,7 +318,15 @@ describe('Save File Trainer and Money real public fixtures', () => {
 	}, 60_000);
 
 	test('enters unavailable from a real stale coordinator result and retries the session', async () => {
-		const { coordinator, harness, toast, workspace } = await setup(emeraldUrl, '011020251345.sav');
+		const applySaveFileEditOperation = vi.fn<EngineApi['applySaveFileEditOperation']>((...args) =>
+			engine.applySaveFileEditOperation(...args)
+		);
+		const instrumentedEngine: EngineApi = { ...engine, applySaveFileEditOperation };
+		const { coordinator, harness, toast, workspace } = await setup(
+			emeraldUrl,
+			'011020251345.sav',
+			instrumentedEngine
+		);
 		coordinator.replaceWorkspace(workspace, 0);
 		const accepted = workspace.workspace.saveFile!.money.value!;
 		const candidate = accepted === 0 ? 1 : 0;
@@ -335,15 +343,28 @@ describe('Save File Trainer and Money real public fixtures', () => {
 		expect(input('money-value').value).toBe(String(accepted));
 		expect(input('trainer-name').disabled).toBe(true);
 		expect(input('money-value').disabled).toBe(true);
+		await vi.waitFor(() =>
+			expect((document.activeElement as HTMLElement | null)?.dataset.destinationFocus).toBe(
+				'editing-retry'
+			)
+		);
 
 		target('editing-retry').click();
 		await vi.waitFor(() => expect(host.textContent).not.toContain('Editing unavailable.'));
+		await vi.waitFor(() =>
+			expect((document.activeElement as HTMLElement | null)?.dataset.destinationFocus).toBe(
+				'money-value'
+			)
+		);
+		expect(harness.currentLedgerProps().pendingTargets).toEqual([]);
+		expect(applySaveFileEditOperation).not.toHaveBeenCalled();
 		expect(input('trainer-name').disabled).toBe(false);
 		expect(input('money-value').disabled).toBe(false);
 
 		enterValue(input('money-value'), String(candidate));
 		press(input('money-value'), 'Enter');
 		await waitForAccepted(harness, (state) => state.workspace.saveFile?.money.value, candidate);
+		expect(applySaveFileEditOperation).toHaveBeenCalledOnce();
 		expect(toast.error).not.toHaveBeenCalled();
 	});
 });

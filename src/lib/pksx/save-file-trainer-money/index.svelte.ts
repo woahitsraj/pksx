@@ -106,6 +106,10 @@ export function createSaveFileTrainerMoneyController(
 
 	function onTrainerNameCommit(reason: 'enter' | 'blur') {
 		if (options.coordinator.isPending(origin, trainerMoneyPendingKeys.trainerName)) return;
+		if (reason === 'blur' && trainerNameError) {
+			restoreTrainerName();
+			return;
+		}
 		const profile = projection(workspace).trainerProfile;
 		const candidate = trainerNameDraft.trim();
 		const error = validateTrainerName(candidate, profile.trainerNameMaxLength);
@@ -152,6 +156,10 @@ export function createSaveFileTrainerMoneyController(
 
 	function onMoneyCommit(reason: 'enter' | 'blur') {
 		if (options.coordinator.isPending(origin, trainerMoneyPendingKeys.money)) return;
+		if (reason === 'blur' && moneyError) {
+			restoreMoney();
+			return;
+		}
 		const parsed = parseMoney(moneyDraft, workspace);
 		if (!parsed.ok) {
 			moneyError = parsed.message;
