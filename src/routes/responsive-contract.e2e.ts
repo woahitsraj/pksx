@@ -224,6 +224,13 @@ async function importPublicSave(page: Page) {
 }
 
 async function expectDestinationContract(page: Page, destination: Destination, budget: BudgetCase) {
+	if (destination.key === 'settings') {
+		await expect(
+			page.locator('[data-destination-root="settings"] [data-destination-focus="theme-light"]'),
+			'[FOCUS-4] Settings must establish its initial semantic focus after hydration'
+		).toBeFocused();
+	}
+
 	const result = await page.evaluate(
 		({ rootSelector, ownerSelector, expectedInsets, expectedSafe, expectedInitialFocus }) => {
 			const route = document.querySelector<HTMLElement>(rootSelector);
