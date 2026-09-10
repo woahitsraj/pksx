@@ -471,5 +471,9 @@ function sameOrigin(left: SaveFileEditOrigin, right: SaveFileEditOrigin) {
 }
 
 function errorMessage(error: unknown) {
-	return error instanceof Error ? error.message : String(error);
+	return error instanceof Error
+		? error.message
+		: typeof error === 'object' && error && 'message' in error && typeof error.message === 'string'
+			? error.message
+			: String(error);
 }

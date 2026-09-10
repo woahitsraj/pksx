@@ -717,14 +717,15 @@ describe('Save File Trainer and Money controller', () => {
 	test('shows thrown recovery failures as actionable retry feedback', async () => {
 		const harness = controller();
 		harness.value.rejectEditing('Editing stopped.');
-		harness.recoverWorkspace.mockRejectedValueOnce(
-			new Error('Storage is temporarily unavailable.')
-		);
+		harness.recoverWorkspace.mockRejectedValueOnce({
+			code: 'engine-unavailable',
+			message: 'Reload unavailable.'
+		});
 
 		await harness.value.ledgerProps.onRetryEditing?.();
 
 		expect(harness.value.editingUnavailable).toEqual({
-			message: 'Storage is temporarily unavailable.'
+			message: 'Reload unavailable.'
 		});
 	});
 });
