@@ -4592,6 +4592,7 @@ test('Saves imports distinct cards, opens cards and menus, and preserves failure
 });
 
 test('Saves menu activates its Save File before opening Trainer or Bag', async ({ page }) => {
+	await page.clock.install({ time: Date.now() });
 	await installWorkspaceResponseHold(page);
 	await openEmptySaves(page);
 	await chooseMainMenu(page, 'Saves');
@@ -4626,10 +4627,8 @@ test('Saves menu activates its Save File before opening Trainer or Bag', async (
 	await pressController(page, 'ArrowDown');
 	await expect(menu.getByRole('button', { name: 'Open Bag' })).toBeFocused();
 	await pressController(page, 'ArrowUp');
-	const now = Date.now();
-	await page.clock.setFixedTime(now);
-	await page.clock.pauseAt(now);
-	await page.clock.setSystemTime(now);
+	const pauseTime = await page.evaluate(() => Date.now());
+	await page.clock.pauseAt(pauseTime + 1_000);
 	await holdWorkspaceResponses(page, 1);
 	await menu.getByRole('button', { name: 'Open Trainer' }).click();
 	await expect(menu.locator('.save-file-menu')).toHaveAttribute('aria-busy', 'true');
