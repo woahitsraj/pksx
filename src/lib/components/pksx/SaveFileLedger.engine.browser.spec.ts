@@ -2184,7 +2184,7 @@ describe('SaveFileLedger states and feedback', () => {
 	});
 
 	test('maps Trainer and Money Enter to soft-keyboard Done', () => {
-		render(publicFixtureView, { harness: false });
+		render(publicFixtureView, { destination: 'trainer', harness: false });
 		expect(target('trainer-name').getAttribute('enterkeyhint')).toBe('done');
 		expect(target('money-value').getAttribute('enterkeyhint')).toBe('done');
 	});
