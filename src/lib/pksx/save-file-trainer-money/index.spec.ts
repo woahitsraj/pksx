@@ -126,9 +126,11 @@ function createCoordinator() {
 			);
 		}
 	);
+	const isCurrent = vi.fn(() => true);
 	const coordinator: SaveFileTrainerMoneyCoordinator = {
 		openWorkspace: vi.fn(() => origin),
 		recoverWorkspace,
+		isCurrent,
 		listPending: vi.fn(() => [...pending]),
 		isPending: vi.fn((_origin, key) =>
 			key === undefined ? pending.length > 0 : pending.some((edit) => edit.key === key)
@@ -140,7 +142,7 @@ function createCoordinator() {
 		}),
 		enqueueEdit
 	};
-	return { coordinator, enqueueEdit, pending, results, recoveries, recoverWorkspace };
+	return { coordinator, enqueueEdit, pending, results, recoveries, recoverWorkspace, isCurrent };
 }
 
 function controller(
@@ -491,6 +493,46 @@ describe('Save File Trainer and Money controller', () => {
 			);
 		}
 	);
+
+	test('toasts one authoritative failure after disposal and suppresses an obsolete failure', async () => {
+		let finishFailure!: (result: SaveFileEditResult) => void;
+		const failed = controller();
+		failed.results.push(new Promise((resolve) => (finishFailure = resolve)));
+		failed.value.ledgerProps.onMoneyInput?.('200');
+		failed.value.ledgerProps.onMoneyCommit?.('enter');
+		const mountedWorkspace = failed.value.workspace;
+		failed.value.dispose();
+		finishFailure({
+			ok: false,
+			status: 'failed',
+			origin: failed.value.origin,
+			code: 'backup-write-failed',
+			message: 'Storage is busy.',
+			workspace: workspace()
+		});
+		await settled();
+		expect(failed.toast.error).toHaveBeenCalledOnce();
+		expect(failed.toast.error).toHaveBeenCalledWith('Money could not be saved. Storage is busy.');
+		expect(failed.value.workspace).toBe(mountedWorkspace);
+
+		let finishObsolete!: (result: SaveFileEditResult) => void;
+		const obsolete = controller();
+		obsolete.results.push(new Promise((resolve) => (finishObsolete = resolve)));
+		obsolete.value.ledgerProps.onMoneyInput?.('200');
+		obsolete.value.ledgerProps.onMoneyCommit?.('enter');
+		obsolete.value.dispose();
+		obsolete.isCurrent.mockReturnValue(false);
+		finishObsolete({
+			ok: false,
+			status: 'failed',
+			origin: obsolete.value.origin,
+			code: 'backup-write-failed',
+			message: 'Late failure.',
+			workspace: workspace()
+		});
+		await settled();
+		expect(obsolete.toast.error).not.toHaveBeenCalled();
+	});
 
 	test('reconstructs pending state and adopts a published recovery before notifying listeners', async () => {
 		const reloaded = workspace({ name: 'BLUE', money: 500, byte: 3 });

@@ -20,6 +20,7 @@ export type SaveFileTrainerMoneyCoordinator = Pick<
 	SaveFileEditCoordinator,
 	| 'openWorkspace'
 	| 'recoverWorkspace'
+	| 'isCurrent'
 	| 'listPending'
 	| 'isPending'
 	| 'subscribePending'
@@ -235,7 +236,19 @@ export function createSaveFileTrainerMoneyController(
 		context: { field: EditableField; label: string; mode: CommitMode },
 		result: SaveFileEditResult
 	) {
-		if (disposed || !sameOrigin(requestOrigin, origin)) return;
+		if (disposed) {
+			if (
+				!result.ok &&
+				result.status === 'failed' &&
+				result.workspace &&
+				sameOrigin(requestOrigin, result.origin) &&
+				options.coordinator.isCurrent(requestOrigin)
+			) {
+				options.toast.error(`${context.label} could not be saved. ${result.message}`);
+			}
+			return;
+		}
+		if (!sameOrigin(requestOrigin, origin)) return;
 
 		if (result.ok) {
 			refreshWorkspace(result.workspace, context.field);
