@@ -66,10 +66,7 @@ test('one root Toast host delivers across Saves and Boxes without moving focus o
 			scrollHeight: shell.scrollHeight
 		}))
 	).toEqual(before);
-	await expect(page.locator('.toast-success').filter({ hasText: 'Backup saved for' })).toHaveCount(
-		0,
-		{ timeout: 5_000 }
-	);
+	await expect(announcements.filter({ hasText: 'Backup saved for' })).toHaveCount(0);
 	await expect(invokingSlot).toBeFocused();
 	expect(
 		await page.locator('.app-shell').evaluate((shell) => ({
