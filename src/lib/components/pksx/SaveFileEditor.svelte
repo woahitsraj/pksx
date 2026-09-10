@@ -1136,6 +1136,7 @@
 
 	.trainer-card span,
 	.mock-field small,
+	.currency-card p,
 	.notice p,
 	.item-list p,
 	.apply-copy > span {
@@ -1484,7 +1485,7 @@
 	.apply-bar {
 		grid-column: 1 / -1;
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto auto;
+		grid-template-columns: minmax(0, 1fr) auto auto auto;
 		align-items: center;
 		gap: 12px;
 		padding: 12px 16px;
@@ -1681,7 +1682,7 @@
 			right: 0;
 			bottom: 0;
 			left: 0;
-			grid-template-columns: auto minmax(0, 1fr) auto;
+			grid-template-columns: minmax(0, 1fr) auto auto;
 			border-right: 0;
 			border-bottom: 0;
 			border-left: 0;
