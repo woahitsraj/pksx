@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { asset } from '$app/paths';
 	import { page } from '$app/state';
-	import { onMount, tick } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import {
 		type EngineApi,
 		type EngineError,
@@ -75,6 +75,7 @@
 	} from '$lib/pksx/saves';
 	import {
 		getActiveWorkspaceService,
+		consumeActiveSaveAdoption,
 		getCachedActiveWorkspaceBox,
 		getSavesStorage,
 		getPkhexEngine,
@@ -140,18 +141,13 @@
 		stagePokemonEditorDraftEdits
 	} from '$lib/pksx/box-shell';
 	import {
-		closeSummonedWorkflows,
-		createSummonedWorkflowOwner,
 		dispatchSlotMenuAction,
-		dismissSummonedWorkflow,
 		getLaunchingSlot,
 		isDestinationInputSuspended,
-		openRelatedSummonedWorkflow,
-		openSummonedWorkflow,
 		type SummonedWorkflowKind,
-		type SummonedWorkflowLauncher,
-		type SummonedWorkflowOwner
+		type SummonedWorkflowLauncher
 	} from '$lib/pksx/summoned-workflow';
+	import { getSummonedWorkflowHost } from '$lib/pksx/summoned-workflow/host.svelte';
 	import { createSlotMenuCommands, type SlotMenuCommandKey } from '$lib/pksx/slot-menu';
 
 	type ToastView = {
@@ -201,6 +197,7 @@
 	const activeSavePaneId = 'pane-active-save';
 	const storage = getSavesStorage();
 	const workspaceService = getActiveWorkspaceService();
+	const summonedWorkflow = getSummonedWorkflowHost();
 
 	const slotPalette = [16, 28, 48, 100, 140, 180, 195, 210, 220, 260, 280, 295, 330, 52];
 	const topControlCount = 7;
@@ -459,7 +456,6 @@
 	let carryState = $state<CarryState | null>(null);
 	let clearSlotConfirmation = $state<ClearSlotConfirmation | null>(null);
 	let clearSlotConfirmFocusIndex = $state(0);
-	let summonedWorkflow = $state<SummonedWorkflowOwner>(createSummonedWorkflowOwner());
 	let toasts = $state<ToastView[]>([]);
 	let workbenchPanes = $state<BoxPaneState[]>([
 		createBoxPane('pane-pokemon-storage', pokemonStorageSource(), { boxCount: placeholderBoxCount })
@@ -473,6 +469,7 @@
 	let nextToastId = 1;
 	let engine: EngineApi | null = null;
 	let workspaceLoadRequest = 0;
+	let workspacePublicationRequest = 0;
 
 	const controllerConnected = $derived(appChrome.controllerStatus !== null);
 	const activeSummonedWorkflow = $derived(summonedWorkflow.active);
@@ -639,7 +636,6 @@
 			activeBox: activePaneBox,
 			fileName: loadedSave?.file.originalFileName ?? null,
 			busy,
-			backgroundInert: destinationInputSuspended,
 			hasLoadedSave: loadedSave !== null,
 			controllerInputActive: true,
 			importSave: (file) => void importSaveFile(file),
@@ -647,7 +643,7 @@
 		});
 
 		return () => {
-			updateAppChrome({ backgroundInert: false, controllerInputActive: false });
+			updateAppChrome({ controllerInputActive: false });
 		};
 	}
 
@@ -657,6 +653,7 @@
 	}
 
 	function dispatchToActiveSurface(action: NavigationAction): boolean {
+		if (activeSummonedWorkflow?.kind === 'backup-browser') return true;
 		if (action === 'sourceAction') {
 			handleSourceAction();
 			return true;
@@ -1164,6 +1161,7 @@
 	}
 
 	function handleAppKeydown(event: KeyboardEvent) {
+		if (activeSummonedWorkflow?.kind === 'backup-browser') return;
 		const action = keyboardAction(event);
 
 		if (!action) {
@@ -1319,47 +1317,57 @@
 	function slotLauncher(focus: SlotFocus): SummonedWorkflowLauncher {
 		return {
 			type: 'slot',
+			id:
+				focus.zone === 'party'
+					? `party-slot-${focus.slot}`
+					: `box-${activePaneBox}-slot-${focus.slot}`,
 			paneId: activePaneId,
 			box: focus.zone === 'box' ? activePaneBox : null,
 			focus
 		};
 	}
 
-	function controlLauncher(id: string, focus: ControllerFocus): SummonedWorkflowLauncher {
-		return { type: 'control', id, focus };
+	function controlLauncher(id: string): SummonedWorkflowLauncher {
+		return { type: 'control', id };
 	}
 
 	function launcherForFocus(focus: ControllerFocus): SummonedWorkflowLauncher {
 		return isSlotFocus(focus)
 			? slotLauncher(focus)
-			: controlLauncher(getFocusId(focus, activePaneBox), focus);
+			: controlLauncher(getFocusId(focus, activePaneBox));
 	}
 
 	function openSlotMenu(focus: SlotFocus) {
-		const nextOwner = openSummonedWorkflow(summonedWorkflow, 'slot-menu', slotLauncher(focus));
-		if (nextOwner === summonedWorkflow) return;
-
-		summonedWorkflow = nextOwner;
+		if (!summonedWorkflow.open('slot-menu', slotLauncher(focus))) return;
 		navigation = { ...navigation, focus: { zone: 'actions', index: 0 } };
 		queueMicrotask(focusActiveControl);
 	}
 
 	function openRelatedWorkflow(kind: SummonedWorkflowKind) {
 		const launcherFocus = navigation.focus;
-		summonedWorkflow = openRelatedSummonedWorkflow(
-			summonedWorkflow,
-			kind,
-			controlLauncher(getFocusId(launcherFocus, activePaneBox), launcherFocus)
-		);
+		summonedWorkflow.openRelated(kind, controlLauncher(getFocusId(launcherFocus, activePaneBox)));
 	}
 
 	function dismissActiveWorkflow() {
-		const dismissed = dismissSummonedWorkflow(summonedWorkflow);
-		summonedWorkflow = dismissed.owner;
-		if (dismissed.returnFocus) {
-			navigation = { ...navigation, focus: dismissed.returnFocus };
+		const launcher = summonedWorkflow.dismiss();
+		if (!launcher) return;
+		if (launcher.type === 'slot') {
+			const pane = workbenchPanes.find(({ id }) => id === launcher.paneId);
+			if (pane) {
+				activePaneId = pane.id;
+				navigation = {
+					...navigation,
+					activeBox: launcher.box ?? pane.activeBox,
+					boxCount: pane.boxCount,
+					focus: launcher.focus
+				};
+			}
 		}
-		queueMicrotask(focusActiveControl);
+		queueMicrotask(() => {
+			const target = document.getElementById(launcher.id);
+			if (target) target.focus();
+			else focusActiveControl();
+		});
 	}
 
 	function closeSlotMenu() {
@@ -1911,7 +1919,7 @@
 		pokemonEditor = null;
 		pokemonEditorFeedback = null;
 		const sourceFocus = summonedSlotLauncher?.focus ?? activeSlotFocus ?? focusBoxSlot(0);
-		summonedWorkflow = closeSummonedWorkflows();
+		summonedWorkflow.closeAll();
 		navigation = {
 			...navigation,
 			focus: sourceFocus
@@ -2016,7 +2024,7 @@
 
 		clearSlotConfirmation = null;
 		clearSlotConfirmFocusIndex = 0;
-		summonedWorkflow = closeSummonedWorkflows();
+		summonedWorkflow.closeAll();
 		activePaneId = pending.paneId;
 		if (pending.source.zone === 'box') {
 			workbenchPanes = setPaneActiveBox(workbenchPanes, pending.paneId, pending.source.box);
@@ -2178,11 +2186,7 @@
 		const launcherFocus = navigation.focus;
 		sourcePickerTargetPaneId = targetPaneId;
 		sourcePickerFocusIndex = 0;
-		summonedWorkflow = openSummonedWorkflow(
-			summonedWorkflow,
-			'source-picker',
-			launcherForFocus(launcherFocus)
-		);
+		summonedWorkflow.open('source-picker', launcherForFocus(launcherFocus));
 		queueMicrotask(() => focusSourcePickerControl(0));
 	}
 
@@ -2218,7 +2222,7 @@
 			focus: focusForSource()
 		};
 		sourcePickerTargetPaneId = null;
-		summonedWorkflow = closeSummonedWorkflows();
+		summonedWorkflow.closeAll();
 		if (source.type === 'save-file') {
 			void refreshPaneWorkspace(id, 0);
 		}
@@ -2249,7 +2253,7 @@
 			focus: focusForSource()
 		};
 		sourcePickerTargetPaneId = null;
-		summonedWorkflow = closeSummonedWorkflows();
+		summonedWorkflow.closeAll();
 		if (source.type === 'save-file') {
 			void refreshPaneWorkspace(paneId, 0);
 		} else {
@@ -2865,7 +2869,7 @@
 			if (request === pokemonCreationRequest) {
 				pokemonCreation = null;
 				pokemonCreationFeedback = null;
-				summonedWorkflow = closeSummonedWorkflows();
+				summonedWorkflow.closeAll();
 				navigation = {
 					...navigation,
 					focus:
@@ -3264,12 +3268,59 @@
 
 	onMount(() => {
 		const unsubscribe = workspaceService.subscribe((state) => {
+			const adoptAsActiveSave = state ? consumeActiveSaveAdoption(state.file.id) : false;
 			loadedSave = state;
+			if (!state) return;
+			if (initialStateReady && adoptAsActiveSave) {
+				installActiveSavePane(state, getCachedActiveWorkspaceBox());
+				queueMicrotask(focusActiveControl);
+				return;
+			}
+			void refreshPublishedSavePanes(state);
 		});
 		engine = getPkhexEngine();
 		void restoreInitialState();
 		return unsubscribe;
 	});
+
+	onDestroy(() => {
+		if (summonedWorkflow.active?.kind !== 'backup-browser') summonedWorkflow.closeAll();
+	});
+
+	async function refreshPublishedSavePanes(state: WorkspaceState) {
+		const request = ++workspacePublicationRequest;
+		const publishedBox = getCachedActiveWorkspaceBox();
+		const panes = workbenchPanes.filter(
+			(pane) => pane.source.type === 'save-file' && pane.source.id === state.file.id
+		);
+		const projections: Record<string, SavePaneWorkspace> = {};
+
+		await Promise.all(
+			panes.map(async (pane) => {
+				if (pane.activeBox === publishedBox) {
+					projections[pane.id] = { state, loadedBox: publishedBox };
+					return;
+				}
+				const paneState = await loadWorkspaceStateForSaveFile(state.file.id, pane.activeBox);
+				if (paneState) {
+					projections[pane.id] = { state: paneState, loadedBox: pane.activeBox };
+				}
+			})
+		);
+		if (request !== workspacePublicationRequest) return;
+
+		const refreshed = refreshSaveFilePaneWorkspaces(
+			workbenchPanes,
+			savePaneWorkspaces,
+			state,
+			(pane) => {
+				const projection = projections[pane.id];
+				return projection?.loadedBox === pane.activeBox ? projection : null;
+			}
+		);
+		workbenchPanes = refreshed.panes;
+		savePaneWorkspaces = refreshed.workspaces;
+	}
 
 	async function restoreInitialState() {
 		await restorePokemonStorage();
@@ -3622,6 +3673,7 @@
 	class="boxes-route"
 	aria-label="Boxes workspace"
 	data-initial-state={initialStateReady ? 'ready' : 'loading'}
+	data-active-save-file-id={loadedSave?.file.id ?? ''}
 	inert={destinationInputSuspended}
 >
 	{#if importError}

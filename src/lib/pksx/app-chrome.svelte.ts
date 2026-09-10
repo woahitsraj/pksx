@@ -9,7 +9,6 @@ export const appChrome = $state({
 	activeBox: 0,
 	fileName: null as string | null,
 	busy: false,
-	backgroundInert: false,
 	hasLoadedSave: false,
 	controllerInputActive: false,
 	controllerStatus: null as string | null,

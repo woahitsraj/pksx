@@ -12,11 +12,13 @@ export type SummonedWorkflowKind =
 	| 'pokemon-creation'
 	| 'pokemon-editor'
 	| 'pokemon-actions'
-	| 'legality-report';
+	| 'legality-report'
+	| 'backup-browser';
 
 export type SummonedWorkflowLauncher =
 	| {
 			type: 'slot';
+			id: string;
 			paneId: string;
 			box: number | null;
 			focus: SlotFocus;
@@ -24,7 +26,6 @@ export type SummonedWorkflowLauncher =
 	| {
 			type: 'control';
 			id: string;
-			focus: ControllerFocus;
 	  };
 
 export type SummonedWorkflow = {
@@ -64,15 +65,15 @@ export function openRelatedSummonedWorkflow(
 
 export function dismissSummonedWorkflow(owner: SummonedWorkflowOwner): {
 	owner: SummonedWorkflowOwner;
-	returnFocus: ControllerFocus | null;
+	returnLauncher: SummonedWorkflowLauncher | null;
 } {
 	if (!owner.active) {
-		return { owner, returnFocus: null };
+		return { owner, returnLauncher: null };
 	}
 
 	return {
 		owner: { active: owner.active.returnTo },
-		returnFocus: owner.active.launcher.focus
+		returnLauncher: owner.active.launcher
 	};
 }
 

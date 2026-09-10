@@ -1,11 +1,13 @@
 import {
 	bytesEqual,
 	copyBytes,
+	type BackupMetadata,
 	type BackupId,
 	type BackupReason,
+	type SavesStorage,
 	type StoredSaveFile
 } from '$lib/pksx/saves';
-import type { SaveWorkspace } from '$lib/engine';
+import type { EngineApi, SaveWorkspace } from '$lib/engine';
 
 export type RestoredBackupSource = {
 	id: BackupId;
@@ -93,4 +95,147 @@ export function markAutomaticBackupCreated(state: WorkspaceState): WorkspaceStat
 
 export function shouldCreateAutomaticBackup(state: WorkspaceState): boolean {
 	return !state.automaticBackupCreated;
+}
+
+export function createRestoredSaveFileName(fileName: string | null) {
+	if (!fileName) return 'pksx-restored.sav';
+	const lastDot = fileName.lastIndexOf('.');
+	return lastDot <= 0
+		? `${fileName}.restored`
+		: `${fileName.slice(0, lastDot)}.restored${fileName.slice(lastDot)}`;
+}
+
+export async function createManualBackup(input: {
+	storage: SavesStorage;
+	owner: StoredSaveFile;
+	workspaceBytes: Uint8Array;
+}): Promise<BackupMetadata> {
+	await requireSaveFileOwner(input.storage, input.owner);
+	return input.storage.createBackup({
+		saveFileId: input.owner.id,
+		bytes: copyBytes(input.workspaceBytes),
+		reason: 'manual'
+	});
+}
+
+export async function restoreBackupToWorkspace(input: {
+	storage: SavesStorage;
+	engine: EngineApi;
+	owner: StoredSaveFile;
+	backup: BackupMetadata;
+	box: number;
+	publish: (state: WorkspaceState, box: number) => void;
+}): Promise<WorkspaceState> {
+	const activeSaveFileId = await input.storage.getActiveSaveFileId();
+	if (activeSaveFileId !== input.owner.id) {
+		throw new Error('The active Save File changed while the Backup Browser was open.');
+	}
+
+	const owner = await requireSaveFileOwner(input.storage, input.owner);
+	await requireBackupOwner(input.storage, owner, input.backup);
+	const [backupBytes, currentSaveBytes] = await Promise.all([
+		input.storage.getBackupBytes(input.backup.id),
+		input.storage.getSaveBytes(owner.id)
+	]);
+	if (!backupBytes) throw new Error('The selected Backup bytes are missing.');
+	if (!currentSaveBytes) throw new Error('The original Save File bytes are missing.');
+
+	const loaded = await input.engine.loadSaveWorkspace(
+		backupBytes,
+		owner.originalFileName ?? undefined,
+		input.box
+	);
+	if (!loaded.ok) throw loaded.error;
+
+	const state = createRestoredWorkspaceState({
+		file: owner,
+		bytes: backupBytes,
+		workspace: loaded.value,
+		currentSaveBytes,
+		source: {
+			id: input.backup.id,
+			createdAt: input.backup.createdAt,
+			reason: input.backup.reason
+		}
+	});
+	await persistWorkspace(input.storage, state);
+	input.publish(state, input.box);
+	return state;
+}
+
+export async function preserveBackupAsSeparateSave(input: {
+	storage: SavesStorage;
+	engine: EngineApi;
+	owner: StoredSaveFile;
+	backup: BackupMetadata;
+	fileName: string;
+	box: number;
+	publish: (state: WorkspaceState, box: number) => void;
+}): Promise<WorkspaceState> {
+	const owner = await requireSaveFileOwner(input.storage, input.owner);
+	await requireBackupOwner(input.storage, owner, input.backup);
+	const backupBytes = await input.storage.getBackupBytes(input.backup.id);
+	if (!backupBytes) throw new Error('The selected Backup bytes are missing.');
+
+	const loaded = await input.engine.loadSaveWorkspace(backupBytes, input.fileName, input.box);
+	if (!loaded.ok) throw loaded.error;
+
+	const file = await input.storage.importSave({
+		bytes: backupBytes,
+		originalFileName: input.fileName
+	});
+	const restored = createRestoredWorkspaceState({
+		file: owner,
+		bytes: backupBytes,
+		workspace: loaded.value,
+		currentSaveBytes: backupBytes,
+		source: {
+			id: input.backup.id,
+			createdAt: input.backup.createdAt,
+			reason: input.backup.reason
+		}
+	});
+	const state = preserveRestoredWorkspaceAsSave(restored, file);
+	await persistWorkspace(input.storage, state);
+	input.publish(state, input.box);
+	return state;
+}
+
+export async function deleteOwnedBackup(input: {
+	storage: SavesStorage;
+	owner: StoredSaveFile;
+	backup: BackupMetadata;
+}): Promise<void> {
+	const owner = await requireSaveFileOwner(input.storage, input.owner);
+	await requireBackupOwner(input.storage, owner, input.backup);
+	await input.storage.deleteBackup(input.backup.id);
+}
+
+async function requireSaveFileOwner(storage: SavesStorage, owner: StoredSaveFile) {
+	const current = await storage.getSave(owner.id);
+	if (!current || current.importedAt !== owner.importedAt) {
+		throw new Error('The selected Save File is no longer available.');
+	}
+	return current;
+}
+
+async function requireBackupOwner(
+	storage: SavesStorage,
+	owner: StoredSaveFile,
+	backup: BackupMetadata
+) {
+	const current = (await storage.listBackups(owner.id)).find(({ id }) => id === backup.id);
+	if (!current || current.saveFileId !== owner.id || backup.saveFileId !== owner.id) {
+		throw new Error('The selected Backup is no longer available for this Save File.');
+	}
+	return current;
+}
+
+async function persistWorkspace(storage: SavesStorage, state: WorkspaceState) {
+	await storage.putWorkspace({
+		saveFileId: state.file.id,
+		bytes: state.bytes,
+		dirty: state.dirty,
+		automaticBackupCreated: state.automaticBackupCreated
+	});
 }

@@ -43,6 +43,7 @@ let savesSnapshotSeeded = false;
 let workspaceService: ActiveWorkspaceService | null = null;
 let workspaceServiceStart: Promise<void> | null = null;
 let activeWorkspaceBox = 0;
+let pendingActiveSaveAdoption: SaveFileId | null = null;
 
 export function getSavesStorage() {
 	return storage;
@@ -129,7 +130,12 @@ export function getCachedActiveWorkspaceBox() {
 	return activeWorkspaceBox;
 }
 
-export function setCachedActiveWorkspace(workspace: WorkspaceState | null, box = 0) {
+export function setCachedActiveWorkspace(
+	workspace: WorkspaceState | null,
+	box = 0,
+	options: { adoptAsActiveSave?: boolean } = {}
+) {
+	pendingActiveSaveAdoption = workspace && options.adoptAsActiveSave ? workspace.file.id : null;
 	getActiveWorkspaceService().set(workspace, box);
 	activeWorkspaceBox = box;
 	if (workspace) {
@@ -141,6 +147,12 @@ export function setCachedActiveWorkspace(workspace: WorkspaceState | null, box =
 	if (workspace && savesSnapshot) {
 		savesSnapshot = mergeWorkspaceIntoSnapshot(savesSnapshot, workspace);
 	}
+}
+
+export function consumeActiveSaveAdoption(saveFileId: SaveFileId) {
+	if (pendingActiveSaveAdoption !== saveFileId) return false;
+	pendingActiveSaveAdoption = null;
+	return true;
 }
 
 export function invalidateActiveWorkspaceCache(saveFileId?: SaveFileId) {

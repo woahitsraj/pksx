@@ -38,6 +38,7 @@
 		stageTrainerNameEdit,
 		type SaveFileEditorState
 	} from '$lib/pksx/save-file-editor';
+	import { getSummonedWorkflowHost } from '$lib/pksx/summoned-workflow/host.svelte';
 
 	type SaveEditorSection = 'trainer' | 'money' | 'bag';
 
@@ -47,6 +48,7 @@
 		{ key: 'bag' as const, label: 'Bag', detail: 'Inventory pockets', icon: '▤' }
 	];
 	const storage = getSavesStorage();
+	const summonedWorkflow = getSummonedWorkflowHost();
 	let engine: EngineApi | null = null;
 
 	let activeSection = $state<SaveEditorSection>('trainer');
@@ -440,6 +442,13 @@
 	function openBoxes() {
 		void goto(resolve('/'));
 	}
+
+	function openBackupBrowser() {
+		summonedWorkflow.open('backup-browser', {
+			type: 'control',
+			id: 'browse-backups-from-save-file'
+		});
+	}
 </script>
 
 <svelte:head>
@@ -447,15 +456,21 @@
 </svelte:head>
 
 {#if loading}
-	<section class="empty-editor" aria-live="polite">Loading Save File editor…</section>
+	<section class="empty-editor" aria-live="polite" inert={summonedWorkflow.active !== null}>
+		Loading Save File editor…
+	</section>
 {:else if !workspace || !editor || !projection}
-	<section class="empty-editor">
+	<section class="empty-editor" inert={summonedWorkflow.active !== null}>
 		<strong>No active Save File</strong>
 		<p>{loadError ?? 'Import or select a Save File before editing trainer data.'}</p>
 		<button type="button" onclick={openBoxes}>Back to Boxes</button>
 	</section>
 {:else}
-	<section class="save-file-route" aria-label="Save File Editor">
+	<section
+		class="save-file-route"
+		aria-label="Save File Editor"
+		inert={summonedWorkflow.active !== null}
+	>
 		<div class="mobile-heading">
 			<button type="button" aria-label="Back to boxes" data-controller-back onclick={openBoxes}
 				>‹</button
@@ -485,11 +500,20 @@
 					</button>
 				{/each}
 			</nav>
-			<div class="backup-ready">
+			<button
+				id="browse-backups-from-save-file"
+				type="button"
+				class="backup-ready"
+				onclick={openBackupBrowser}
+			>
 				<span>♢</span>
-				<strong>{workspace.automaticBackupCreated ? 'Backup created' : 'Backup ready'}</strong>
-				<small>auto before first write</small>
-			</div>
+				<strong>Browse Backups</strong>
+				<small
+					>{workspace.automaticBackupCreated
+						? 'automatic Backup created'
+						: 'manual and automatic'}</small
+				>
+			</button>
 		</aside>
 
 		<main class="editor-panel" aria-live="polite">
@@ -998,6 +1022,10 @@
 		padding: 12px;
 		border-radius: var(--pksx-radius-md);
 		background: var(--mock-card);
+		color: inherit;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
 	}
 
 	.backup-ready span {

@@ -313,3 +313,9 @@ html[data-input-modality='controller'] body :focus {
 		overflow: visible;
 	}
 }
+
+.app-shell.takeover-active {
+	height: 100dvh;
+	min-height: 100dvh;
+	overflow: hidden;
+}

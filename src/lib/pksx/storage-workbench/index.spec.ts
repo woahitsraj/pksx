@@ -179,6 +179,37 @@ describe('storage workbench panes', () => {
 		});
 		expect(refreshed.panes[1]).toEqual(panes[1]);
 	});
+
+	it('preserves duplicate pane identities and their own box projections after publication', () => {
+		const panes = [
+			createBoxPane('pane-a', saveSource, { activeBox: 2, boxCount: 14 }),
+			createBoxPane('pane-b', saveSource, { activeBox: 7, boxCount: 14 })
+		];
+		const stateForBox = (box: number) => ({
+			file: { id: 'save-1', originalFileName: 'emerald.sav' },
+			workspace: { summary: { boxCount: 14 } },
+			dirty: true,
+			box
+		});
+		const states = new Map([
+			['pane-a', { state: stateForBox(2), loadedBox: 2 }],
+			['pane-b', { state: stateForBox(7), loadedBox: 7 }]
+		]);
+
+		const refreshed = refreshSaveFilePaneWorkspaces(
+			panes,
+			{},
+			stateForBox(2),
+			(pane) => states.get(pane.id)!
+		);
+
+		expect(refreshed.panes.map(({ id, activeBox }) => ({ id, activeBox }))).toEqual([
+			{ id: 'pane-a', activeBox: 2 },
+			{ id: 'pane-b', activeBox: 7 }
+		]);
+		expect(refreshed.workspaces['pane-a']).toMatchObject({ loadedBox: 2, state: { box: 2 } });
+		expect(refreshed.workspaces['pane-b']).toMatchObject({ loadedBox: 7, state: { box: 7 } });
+	});
 });
 
 describe('pokemon storage slot operations', () => {

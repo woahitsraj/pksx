@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { focusActionCommand, focusBoxSlot, focusTopControl } from '../box-navigation';
+import { focusActionCommand, focusBoxSlot } from '../box-navigation';
 import {
 	createSummonedWorkflowOwner,
 	dismissSummonedWorkflow,
@@ -18,6 +18,7 @@ describe('summoned workflow ownership', () => {
 
 		const slotMenu = openSummonedWorkflow(createSummonedWorkflowOwner(), 'slot-menu', {
 			type: 'slot',
+			id: 'box-2-slot-8',
 			paneId: 'pane-active-save',
 			box: 2,
 			focus: { zone: 'box', slot: 8 }
@@ -32,21 +33,19 @@ describe('summoned workflow ownership', () => {
 
 		const editor = openRelatedSummonedWorkflow(slotMenu, 'pokemon-editor', {
 			type: 'control',
-			id: 'slot-action-0',
-			focus: focusActionCommand(0)
+			id: 'slot-action-0'
 		});
 		expect(editor.active?.kind).toBe('pokemon-editor');
 		expect(editor.active?.launcher).toEqual({
 			type: 'control',
-			id: 'slot-action-0',
-			focus: focusActionCommand(0)
+			id: 'slot-action-0'
 		});
 		expect(isSummonedWorkflowPresented(editor, 'slot-menu')).toBe(true);
 		expect(getLaunchingSlot(editor)?.focus).toEqual(focusBoxSlot(8));
 
 		const dismissed = dismissSummonedWorkflow(editor);
 		expect(dismissed.owner.active?.kind).toBe('slot-menu');
-		expect(dismissed.returnFocus).toEqual(focusActionCommand(0));
+		expect(dismissed.returnLauncher).toEqual({ type: 'control', id: 'slot-action-0' });
 		expect(isDestinationInputSuspended(dismissed.owner)).toBe(true);
 	});
 
@@ -68,17 +67,30 @@ describe('summoned workflow ownership', () => {
 	it('keeps an existing workflow when another root workflow tries to open', () => {
 		const sourcePicker = openSummonedWorkflow(createSummonedWorkflowOwner(), 'source-picker', {
 			type: 'control',
-			id: 'top-control-5',
-			focus: focusTopControl(5, 7)
+			id: 'top-control-5'
 		});
 
 		expect(
 			openSummonedWorkflow(sourcePicker, 'slot-menu', {
 				type: 'slot',
+				id: 'box-0-slot-0',
 				paneId: 'pane-pokemon-storage',
 				box: 0,
 				focus: { zone: 'box', slot: 0 }
 			})
 		).toBe(sourcePicker);
+	});
+
+	it('opens the route-independent Backup Browser and returns its destination launcher', () => {
+		const owner = openSummonedWorkflow(createSummonedWorkflowOwner(), 'backup-browser', {
+			type: 'control',
+			id: 'browse-backups'
+		});
+
+		expect(owner.active?.kind).toBe('backup-browser');
+		expect(dismissSummonedWorkflow(owner)).toEqual({
+			owner: createSummonedWorkflowOwner(),
+			returnLauncher: { type: 'control', id: 'browse-backups' }
+		});
 	});
 });

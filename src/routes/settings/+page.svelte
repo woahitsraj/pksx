@@ -9,6 +9,7 @@
 	import { appChrome } from '$lib/pksx/app-chrome.svelte';
 	import { isControllerKeyboardEvent } from '$lib/pksx/controller-input';
 	import { getPkhexEngine } from '$lib/pksx/saves-cache';
+	import { getSummonedWorkflowHost } from '$lib/pksx/summoned-workflow/host.svelte';
 	import { theme } from '$lib/pksx/theme.svelte';
 
 	type ReferenceRow = { action: string; controller: string; keyboard: string };
@@ -72,6 +73,7 @@
 	];
 
 	let route: HTMLElement;
+	const summonedWorkflow = getSummonedWorkflowHost();
 	let appVersion = $state('Loading…');
 	let platform = $state('Loading…');
 	let pkhexCoreVersion = $state('Loading…');
@@ -135,6 +137,7 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
+		if (summonedWorkflow.active) return;
 		const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		if (!active || !route.contains(active)) {
 			if (isControllerKeyboardEvent(event) && event.key.startsWith('Arrow')) {
@@ -178,6 +181,7 @@
 <section
 	class="settings-route pksx-density-container"
 	aria-labelledby="screen-title"
+	inert={summonedWorkflow.active !== null}
 	onfocusin={handleFocusIn}
 	{@attach settingsZone}
 >
