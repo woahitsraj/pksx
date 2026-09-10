@@ -129,6 +129,16 @@ public class ControllerNavigationTest {
             KeyEvent.KEYCODE_BUTTON_L1,
             "document.querySelector('.box-title h2')?.textContent?.includes('Box 01')"
         );
+
+        pressGamepadKey(
+            KeyEvent.KEYCODE_BUTTON_R2,
+            "document.querySelector('.box-title h2')?.textContent?.includes('Box 02')"
+        );
+
+        pressGamepadKey(
+            KeyEvent.KEYCODE_BUTTON_L2,
+            "document.querySelector('.box-title h2')?.textContent?.includes('Box 01')"
+        );
     }
 
     @Test
@@ -447,7 +457,15 @@ public class ControllerNavigationTest {
             KeyEvent.KEYCODE_BUTTON_A,
             "document.querySelector('.pokemon-editor') !== null"
         );
-        runJavaScript("document.querySelector('#pokemon-editor-nickname').focus()");
+        awaitJavaScript(controllerHighlightExpression("pokemon-editor-section-species-form"));
+        pressGamepadKey(
+            KeyEvent.KEYCODE_DPAD_DOWN,
+            controllerHighlightExpression("pokemon-editor-section-nickname")
+        );
+        pressGamepadKey(
+            KeyEvent.KEYCODE_DPAD_RIGHT,
+            controllerHighlightExpression("pokemon-editor-nickname")
+        );
         pressGamepadKey(
             KeyEvent.KEYCODE_BUTTON_Y,
             controllerHighlightExpression("pokemon-editor-nickname")

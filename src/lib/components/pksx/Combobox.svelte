@@ -20,7 +20,9 @@
 		searchLabel: string;
 		searchPlaceholder?: string;
 		disabled?: boolean;
+		requireExplicitEntry?: boolean;
 		onSelect: (value: string) => void;
+		onOpenChange?: (open: boolean) => void;
 	}
 
 	let {
@@ -33,7 +35,9 @@
 		searchLabel,
 		searchPlaceholder = 'Search',
 		disabled = false,
-		onSelect
+		requireExplicitEntry = false,
+		onSelect,
+		onOpenChange
 	}: Props = $props();
 
 	const uid = $props.id();
@@ -63,6 +67,7 @@
 		}
 
 		open = true;
+		onOpenChange?.(true);
 		search = '';
 		const selectedIndex = options.findIndex((option) => option.value === value);
 		activeIndex = selectedIndex >= 0 ? selectedIndex : 0;
@@ -74,6 +79,7 @@
 
 	function closePicker(restoreFocus = false) {
 		open = false;
+		onOpenChange?.(false);
 		search = '';
 		activeIndex = 0;
 		if (restoreFocus) void tick().then(() => trigger?.focus());
@@ -121,7 +127,9 @@
 	}
 
 	function handleTriggerKeydown(event: KeyboardEvent) {
-		if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+		if (requireExplicitEntry || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) {
+			return;
+		}
 		event.preventDefault();
 		event.stopPropagation();
 		openPicker(false);

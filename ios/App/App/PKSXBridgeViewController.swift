@@ -65,6 +65,8 @@ final class PKSXBridgeViewController: CAPBridgeViewController {
         bind(gamepad.buttonY, to: "y", controller: controller)
         bind(gamepad.leftShoulder, to: "PageUp", controller: controller)
         bind(gamepad.rightShoulder, to: "PageDown", controller: controller)
+        bind(gamepad.leftTrigger, to: "PageUp", controller: controller)
+        bind(gamepad.rightTrigger, to: "PageDown", controller: controller)
         bind(gamepad.buttonMenu, to: "Menu", controller: controller)
     }
 
@@ -113,6 +115,8 @@ final class PKSXBridgeViewController: CAPBridgeViewController {
             (gamepad.buttonY, "y"),
             (gamepad.leftShoulder, "PageUp"),
             (gamepad.rightShoulder, "PageDown"),
+            (gamepad.leftTrigger, "PageUp"),
+            (gamepad.rightTrigger, "PageDown"),
             (gamepad.buttonMenu, "Menu"),
         ]
         for (button, key) in buttons {

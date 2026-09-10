@@ -28,6 +28,15 @@ describe('readGamepadKeys', () => {
 
 		expect(readGamepadKeys(gamepad)).toEqual(['ArrowUp', 'ArrowRight']);
 	});
+
+	test('maps standard L2 and R2 triggers to section paging', () => {
+		expect(readGamepadKeys(createGamepad({ axes: [0, 0], pressedButtons: [6] }))).toEqual([
+			'PageUp'
+		]);
+		expect(readGamepadKeys(createGamepad({ axes: [0, 0], pressedButtons: [7] }))).toEqual([
+			'PageDown'
+		]);
+	});
 });
 
 function createGamepad({

@@ -409,23 +409,31 @@ test('shared density keeps focused Pokemon Editor controls at 16px across budget
 	]) {
 		await page.setViewportSize(size);
 		await expect(shell).toHaveCSS('--pksx-type-label', '12px');
-		await expect(label).toHaveCSS('font-size', '9.92px');
+		await editor.locator('#pokemon-editor-section-nickname').click();
+		await expect(label).toHaveCSS('font-size', '12px');
 
 		const input = editor.locator('#pokemon-editor-nickname');
 		const select = editor.locator('#pokemon-editor-nature');
-		for (const control of [input, select]) {
+		for (const [section, control] of [
+			['nickname', input],
+			['nature', select]
+		] as const) {
+			await editor.locator(`#pokemon-editor-section-${section}`).click();
 			await control.focus();
 			expect(
 				await control.evaluate((element) => parseFloat(getComputedStyle(element).fontSize))
 			).toBeGreaterThanOrEqual(16);
 		}
 		await expectEditableFontFloor(editor);
+		await editor.locator('#pokemon-editor-section-stats').click();
 		const statInput = editor.locator('#pokemon-editor-hp-iv');
 		await statInput.focus();
 		const statInputBounds = await statInput.boundingBox();
 		expect(statInputBounds?.width).toBeGreaterThanOrEqual(44);
-		expect(statInputBounds?.height).toBeGreaterThanOrEqual(38);
+		expect(statInputBounds?.height).toBeGreaterThanOrEqual(32);
+		expect(statInputBounds?.height).toBeLessThanOrEqual(44);
 
+		await editor.locator('#pokemon-editor-section-move-set').click();
 		await editor.getByRole('combobox', { name: 'Move 1' }).click();
 		const comboboxInput = editor.getByRole('searchbox', { name: 'Search moves for Move 1' });
 		await expect(comboboxInput).toBeFocused();

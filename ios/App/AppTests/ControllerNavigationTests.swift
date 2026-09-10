@@ -117,6 +117,25 @@ final class ControllerNavigationTests: XCTestCase {
             "document.querySelector('.box-title h2')?.textContent?.includes('Box 01')",
             in: webView
         )
+        controller.extendedGamepad?.leftShoulder.setValue(0)
+    }
+
+    func testTriggersPageBoxLocations() async throws {
+        let webView = try await controllerSurface()
+
+        controller.extendedGamepad?.rightTrigger.setValue(1)
+        try await waitForJavaScript(
+            "document.querySelector('.box-title h2')?.textContent?.includes('Box 02')",
+            in: webView
+        )
+        controller.extendedGamepad?.rightTrigger.setValue(0)
+
+        controller.extendedGamepad?.leftTrigger.setValue(1)
+        try await waitForJavaScript(
+            "document.querySelector('.box-title h2')?.textContent?.includes('Box 01')",
+            in: webView
+        )
+        controller.extendedGamepad?.leftTrigger.setValue(0)
     }
 
     func testStartAndXDispatchFreshDiscretePresses() async throws {

@@ -64,9 +64,19 @@ export function isNativeEditorActivation(
 			event.target.closest('.pokemon-editor button, .pokemon-creation button') !== null
 		);
 	if (event.key.length === 1) return true;
-	if (input instanceof HTMLInputElement && input.dataset.controllerEditing === 'false')
+	const editor = input.closest<HTMLElement>('.pokemon-editor');
+	if (
+		editor &&
+		input.id !== editor.dataset.editorEnteredField &&
+		input.getAttribute('data-controller-editing') !== 'true'
+	) {
 		return false;
+	}
+	if (!editor && input instanceof HTMLInputElement && input.dataset.controllerEditing === 'false') {
+		return false;
+	}
 	if (event.key === 'Escape') return false;
+	if (editor && ['up', 'down', 'left', 'right'].includes(action)) return true;
 
 	const nativeActions: NavigationAction[] =
 		input instanceof HTMLInputElement && input.type === 'number'

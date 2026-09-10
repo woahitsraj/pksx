@@ -100,6 +100,7 @@
 	import PokemonEditor from '$lib/components/pksx/PokemonEditor.svelte';
 	import SlotActionMenu from '$lib/components/pksx/SlotActionMenu.svelte';
 	import StorageSlot from '$lib/components/pksx/StorageSlot.svelte';
+	import TakeoverFrame from '$lib/components/pksx/TakeoverFrame.svelte';
 	import ToastRegion from '$lib/components/pksx/ToastRegion.svelte';
 	import type { SlotView } from '$lib/components/pksx/types';
 	import {
@@ -119,7 +120,23 @@
 		type PokemonEditorState
 	} from '$lib/pksx/pokemon-editor';
 	import {
+		createPokemonEditorSession,
+		enterPokemonEditorContent,
+		focusPokemonEditorApply as setPokemonEditorApplyFocus,
+		pagePokemonEditorSection,
+		pokemonEditorSectionControls,
+		requestPokemonEditorDismiss,
+		returnFromPokemonEditorInternalState,
+		selectPokemonEditorSection,
+		showPokemonEditorReview,
+		type PokemonEditorDraftSnapshot,
+		type PokemonEditorFocus,
+		type PokemonEditorSectionId,
+		type PokemonEditorSession
+	} from '$lib/pksx/pokemon-editor/session';
+	import {
 		createLegalityReportLoadingState,
+		createLegalityReportUnavailableState,
 		requestLegalityReport,
 		type LegalityReportState
 	} from '$lib/pksx/legality-report';
@@ -447,6 +464,9 @@
 	let pokemonCreationRequest = 0;
 	let pokemonEditor = $state<PokemonEditorState | null>(null);
 	let pokemonEditorFeedback = $state<string | null>(null);
+	let pokemonEditorSession = $state<PokemonEditorSession>(createPokemonEditorSession());
+	let pokemonEditorDraft = $state<PokemonEditorDraftSnapshot | null>(null);
+	let pokemonEditorDraftDirty = $state(false);
 	let pokemonEditorApplyRequest = 0;
 	let pokemonSpeciesFormProjection = $state<PokemonSpeciesFormEditProjection | null>(null);
 	let pokemonSpeciesFormError = $state<string | null>(null);
@@ -889,29 +909,121 @@
 	}
 
 	function dispatchPokemonEditor(action: NavigationAction) {
-		if (changeFocusedPokemonEditorSelect(action)) {
+		if (action === 'previousBox' || action === 'nextBox') {
+			exitPokemonEditorEnteredField();
+			pageActivePokemonEditorSection(action === 'previousBox' ? -1 : 1);
 			return;
 		}
 
-		switch (action) {
-			case 'left':
-			case 'up':
-				focusPokemonEditorControl(-1);
-				break;
-			case 'right':
-			case 'down':
-				focusPokemonEditorControl(1);
-				break;
-			case 'confirm':
-				activatePokemonEditorControl();
-				break;
-			case 'back':
-				closePokemonEditor();
-				break;
-			case 'previousBox':
-			case 'nextBox':
-			case 'sourceAction':
-				break;
+		if (pokemonEditorSession.view === 'discard') {
+			dispatchPokemonEditorDiscard(action);
+			return;
+		}
+
+		if (pokemonEditorSession.view === 'review') {
+			if (action === 'back') requestClosePokemonEditor();
+			else if (action === 'confirm') {
+				const focus = pokemonEditorSession.focus;
+				if (focus.zone === 'review') document.getElementById(focus.control)?.click();
+			}
+			return;
+		}
+
+		if (dispatchPokemonEditorEnteredField(action)) {
+			return;
+		}
+
+		if (action === 'back') {
+			requestClosePokemonEditor();
+			return;
+		}
+
+		if (pokemonEditorSession.focus.zone === 'rail') {
+			dispatchPokemonEditorRail(action);
+			return;
+		}
+
+		if (pokemonEditorSession.focus.zone === 'content') {
+			if (
+				document.activeElement instanceof HTMLElement &&
+				document.activeElement.closest('.editor-actions')
+			) {
+				dispatchPokemonEditorActions(action);
+			} else {
+				dispatchPokemonEditorContent(action);
+			}
+		}
+	}
+
+	function dispatchPokemonEditorRail(action: NavigationAction) {
+		const sideRail = pokemonEditorUsesSideRail();
+		if (
+			(sideRail && (action === 'up' || action === 'down')) ||
+			(!sideRail && (action === 'left' || action === 'right'))
+		) {
+			pageActivePokemonEditorSection(action === 'up' || action === 'left' ? -1 : 1);
+			return;
+		}
+		if (action === 'confirm' || (sideRail ? action === 'right' : action === 'down')) {
+			focusPokemonEditorContent();
+		}
+	}
+
+	function dispatchPokemonEditorContent(action: NavigationAction) {
+		if (action === 'confirm') {
+			activatePokemonEditorControl();
+			return;
+		}
+		if (action !== 'left' && action !== 'right' && action !== 'up' && action !== 'down') return;
+
+		const sideRail = pokemonEditorUsesSideRail();
+		const controls = pokemonEditorContentControls();
+		const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		if (!active || !controls.includes(active)) {
+			focusPokemonEditorContent();
+			return;
+		}
+		const candidate = closestDirectionalControl(active, controls, action);
+		if (candidate) {
+			candidate.focus();
+			candidate.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+			return;
+		}
+		if ((sideRail && action === 'left') || (!sideRail && action === 'up')) {
+			focusPokemonEditorRail();
+			return;
+		}
+		if (action === 'down') focusPokemonEditorActions();
+	}
+
+	function dispatchPokemonEditorActions(action: NavigationAction) {
+		if (action === 'confirm') {
+			activatePokemonEditorControl();
+			return;
+		}
+		const controls = pokemonEditorActionControls();
+		const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		const index = active instanceof HTMLButtonElement ? controls.indexOf(active) : -1;
+		if (action === 'left' || action === 'right') {
+			const offset = action === 'left' ? -1 : 1;
+			controls[(Math.max(0, index) + offset + controls.length) % controls.length]?.focus();
+		} else if (action === 'up') {
+			focusPokemonEditorContent(true);
+		}
+	}
+
+	function dispatchPokemonEditorDiscard(action: NavigationAction) {
+		const controls = ['pokemon-editor-keep-editing', 'pokemon-editor-discard-edits']
+			.map((id) => document.getElementById(id))
+			.filter((element): element is HTMLButtonElement => element instanceof HTMLButtonElement);
+		const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		const index = active ? controls.indexOf(active as HTMLButtonElement) : -1;
+		if (action === 'left' || action === 'right' || action === 'up' || action === 'down') {
+			controls[index === 0 ? 1 : 0]?.focus();
+		} else if (action === 'confirm') {
+			controls[Math.max(0, index)]?.click();
+		} else if (action === 'back') {
+			keepEditingPokemonEditor();
 		}
 	}
 
@@ -1037,7 +1149,7 @@
 		}
 	}
 
-	function pokemonEditorControls() {
+	function pokemonEditorContentControls() {
 		const openCombobox = document.querySelector<HTMLElement>(
 			'.pokemon-editor [data-combobox-open="true"]'
 		);
@@ -1047,90 +1159,135 @@
 			).filter((control) => control.getClientRects().length > 0);
 		}
 
-		return [
-			'#pokemon-editor-close',
-			'.species-form-controls select:not([disabled])',
-			'#pokemon-editor-nickname',
-			'#pokemon-editor-nature',
-			'#pokemon-editor-held-item',
-			'#pokemon-editor-ability',
-			'#pokemon-editor-met-location',
-			'#pokemon-editor-met-level',
-			'#pokemon-editor-origin-game',
-			'#pokemon-editor-ball',
-			'#pokemon-editor-met-date',
-			'.trainer-edit-controls input:not([disabled]), .trainer-edit-controls select:not([disabled])',
-			'.battle-field-controls select:not([disabled])',
-			'#pokemon-editor-mode',
-			'.level-edit-controls input:not([disabled])',
-			'.stat-edit-controls input:not([disabled])',
-			'.move-edit-controls .pksx-combobox-trigger:not([disabled]), .move-edit-controls input:not([disabled])',
-			'#pokemon-editor-apply',
-			'#pokemon-editor-cancel',
-			'#pokemon-editor-close-footer'
-		]
-			.flatMap((selector) => Array.from(document.querySelectorAll<HTMLElement>(selector)))
-			.filter((control) => {
-				if (
-					control instanceof HTMLButtonElement ||
-					control instanceof HTMLInputElement ||
-					control instanceof HTMLSelectElement
-				) {
-					return !control.disabled;
-				}
-				return true;
-			});
+		const controls = Array.from(
+			document.querySelectorAll<HTMLElement>(
+				'.pokemon-editor .editor-content button:not([disabled]), .pokemon-editor .editor-content input:not([disabled]), .pokemon-editor .editor-content select:not([disabled]), .pokemon-editor .editor-content [tabindex="0"]'
+			)
+		).filter((control) => {
+			return (
+				control.getClientRects().length > 0 && !control.closest('[data-editor-active="false"]')
+			);
+		});
+		if (controls.length > 0) return controls;
+
+		const fallback = document.getElementById(
+			`pokemon-editor-content-${pokemonEditorSession.section}`
+		);
+		return fallback instanceof HTMLElement && fallback.getClientRects().length > 0
+			? [fallback]
+			: [];
 	}
 
-	function changeFocusedPokemonEditorSelect(action: NavigationAction) {
-		const select = document.activeElement;
-		if (
-			!(select instanceof HTMLSelectElement) ||
-			!select.closest('.pokemon-editor') ||
-			(action !== 'left' && action !== 'right' && action !== 'confirm')
-		) {
-			return false;
-		}
+	function pokemonEditorActionControls() {
+		return Array.from(
+			document.querySelectorAll<HTMLButtonElement>(
+				'.pokemon-editor .editor-actions button:not([disabled])'
+			)
+		).filter((control) => control.getClientRects().length > 0);
+	}
 
-		const options = Array.from(select.options).filter((option) => !option.disabled);
-		if (options.length === 0) {
+	function focusPokemonEditorActions() {
+		const target = pokemonEditorActionControls()[0];
+		if (!target) return;
+		target.focus();
+		target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	}
+
+	function pokemonEditorUsesSideRail() {
+		const editor = document.querySelector<HTMLElement>('.pokemon-editor');
+		return editor ? editor.clientWidth > editor.clientHeight : true;
+	}
+
+	function closestDirectionalControl(
+		origin: HTMLElement,
+		controls: HTMLElement[],
+		direction: Extract<NavigationAction, 'left' | 'right' | 'up' | 'down'>
+	) {
+		const source = origin.getBoundingClientRect();
+		const sourceX = source.left + source.width / 2;
+		const sourceY = source.top + source.height / 2;
+		let best: { control: HTMLElement; score: number } | null = null;
+
+		for (const control of controls) {
+			if (control === origin) continue;
+			const rect = control.getBoundingClientRect();
+			const dx = rect.left + rect.width / 2 - sourceX;
+			const dy = rect.top + rect.height / 2 - sourceY;
+			const primary =
+				direction === 'left' ? -dx : direction === 'right' ? dx : direction === 'up' ? -dy : dy;
+			if (primary <= 1) continue;
+			const cross = direction === 'left' || direction === 'right' ? Math.abs(dy) : Math.abs(dx);
+			const score = primary + cross * 2;
+			if (!best || score < best.score) best = { control, score };
+		}
+		return best?.control ?? null;
+	}
+
+	function dispatchPokemonEditorEnteredField(action: NavigationAction) {
+		const editor = document.querySelector<HTMLElement>('.pokemon-editor');
+		const enteredId = editor?.dataset.editorEnteredField;
+		if (!editor || !enteredId) return false;
+
+		const field = document.getElementById(enteredId);
+		if (!(field instanceof HTMLElement) || !editor.contains(field)) return false;
+
+		if (action === 'back') {
+			exitPokemonEditorEnteredField();
 			return true;
 		}
 
+		if (
+			field instanceof HTMLSelectElement &&
+			(action === 'left' || action === 'right' || action === 'up' || action === 'down')
+		) {
+			changeEnteredPokemonEditorSelect(field, action === 'left' || action === 'up' ? -1 : 1);
+			return true;
+		}
+
+		if (
+			field instanceof HTMLInputElement &&
+			field.type === 'number' &&
+			(action === 'up' || action === 'down')
+		) {
+			if (action === 'up') field.stepUp();
+			else field.stepDown();
+			field.dispatchEvent(new Event('input', { bubbles: true }));
+			return true;
+		}
+
+		return (
+			field instanceof HTMLInputElement &&
+			(action === 'left' || action === 'right' || action === 'up' || action === 'down')
+		);
+	}
+
+	function changeEnteredPokemonEditorSelect(select: HTMLSelectElement, offset: -1 | 1) {
+		const options = Array.from(select.options).filter((option) => !option.disabled);
+		if (options.length === 0) return;
 		const current = Math.max(
 			0,
 			options.findIndex((option) => option.value === select.value)
 		);
-		const direction = action === 'left' ? -1 : 1;
-		const next = options[(current + direction + options.length) % options.length];
-		if (!next) {
-			return true;
-		}
-
+		const next = options[(current + offset + options.length) % options.length];
+		if (!next) return;
 		select.value = next.value;
 		select.dispatchEvent(new Event('change', { bubbles: true }));
-		return true;
 	}
 
-	function focusPokemonEditorControl(direction: -1 | 1) {
-		const controls = pokemonEditorControls();
-		if (controls.length === 0) {
+	function exitPokemonEditorEnteredField() {
+		const editor = document.querySelector<HTMLElement>('.pokemon-editor');
+		const enteredId = editor?.dataset.editorEnteredField;
+		const field = enteredId ? document.getElementById(enteredId) : null;
+		if (!(field instanceof HTMLElement) || !editor?.contains(field)) return;
+
+		if (field.closest('[data-combobox-open="true"]')) {
+			field.click();
 			return;
 		}
 
-		const activeElement = document.activeElement;
-		const currentIndex =
-			activeElement instanceof HTMLElement ? controls.indexOf(activeElement) : -1;
-		const nextIndex =
-			currentIndex >= 0
-				? (currentIndex + direction + controls.length) % controls.length
-				: direction > 0
-					? 0
-					: controls.length - 1;
-
-		const control = controls[nextIndex];
-		control.focus();
-		control.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+		const active = document.activeElement;
+		if (active instanceof HTMLElement && editor.contains(active)) active.blur();
+		field.focus();
 	}
 
 	function activatePokemonEditorControl() {
@@ -1156,7 +1313,6 @@
 				activeElement.click();
 				return;
 			}
-			focusPokemonEditorControl(1);
 			return;
 		}
 
@@ -3165,6 +3321,9 @@
 		pokemonEditor = result.state;
 		pokemonEditorPaneId = focusedSlotPane?.id ?? null;
 		pokemonEditorFeedback = null;
+		pokemonEditorSession = createPokemonEditorSession();
+		pokemonEditorDraft = null;
+		pokemonEditorDraftDirty = false;
 		openRelatedWorkflow('pokemon-editor');
 		pokemonSpeciesFormProjection = null;
 		pokemonSpeciesFormError = null;
@@ -3172,7 +3331,7 @@
 			speciesId: result.state.slot.speciesId ?? 0,
 			form: result.state.slot.form ?? 0
 		});
-		void tick().then(focusPokemonEditorClose);
+		void tick().then(focusPokemonEditorRail);
 	}
 
 	function closePokemonEditor() {
@@ -3180,11 +3339,107 @@
 		pokemonEditor = null;
 		pokemonEditorPaneId = null;
 		pokemonEditorFeedback = null;
+		pokemonEditorSession = createPokemonEditorSession();
+		pokemonEditorDraft = null;
+		pokemonEditorDraftDirty = false;
 		pokemonSpeciesFormRequest += 1;
 		pokemonSpeciesFormProjection = null;
 		pokemonSpeciesFormError = null;
 		pokemonSpeciesFormLoading = false;
 		dismissActiveWorkflow();
+	}
+
+	function requestClosePokemonEditor() {
+		const result = requestPokemonEditorDismiss(pokemonEditorSession, pokemonEditorDraftDirty);
+		pokemonEditorSession = result.session;
+		if (result.effect === 'dismiss') {
+			closePokemonEditor();
+			return;
+		}
+		queueMicrotask(focusPokemonEditorSession);
+	}
+
+	function discardPokemonEditorEdits() {
+		pokemonEditorDraft = null;
+		pokemonEditorDraftDirty = false;
+		closePokemonEditor();
+	}
+
+	function keepEditingPokemonEditor() {
+		pokemonEditorSession = returnFromPokemonEditorInternalState(pokemonEditorSession);
+		queueMicrotask(focusPokemonEditorSession);
+	}
+
+	function showPokemonEditorDeltaReview() {
+		pokemonEditorSession = showPokemonEditorReview(pokemonEditorSession);
+		queueMicrotask(focusPokemonEditorSession);
+	}
+
+	function rememberPokemonEditorDraft(draft: PokemonEditorDraftSnapshot, dirty: boolean) {
+		pokemonEditorDraft = draft;
+		pokemonEditorDraftDirty = dirty;
+	}
+
+	function rememberPokemonEditorFocus(focus: PokemonEditorFocus) {
+		pokemonEditorSession = { ...pokemonEditorSession, focus };
+	}
+
+	function choosePokemonEditorSection(section: PokemonEditorSectionId) {
+		pokemonEditorSession = selectPokemonEditorSection(pokemonEditorSession, section);
+		queueMicrotask(focusPokemonEditorSession);
+	}
+
+	function pageActivePokemonEditorSection(offset: -1 | 1) {
+		pokemonEditorSession = pagePokemonEditorSection(pokemonEditorSession, offset);
+		void tick().then(focusPokemonEditorSession);
+	}
+
+	function focusPokemonEditorRail() {
+		pokemonEditorSession = {
+			...pokemonEditorSession,
+			focus: { zone: 'rail', section: pokemonEditorSession.section }
+		};
+		revealPokemonEditorRailSection(pokemonEditorSession.section);
+	}
+
+	function focusPokemonEditorContent(preferLast = false) {
+		const controls = pokemonEditorContentControls();
+		const preferred = pokemonEditorSectionControls[pokemonEditorSession.section]
+			.map((id) => document.getElementById(id))
+			.find(
+				(element): element is HTMLElement =>
+					element instanceof HTMLElement && controls.includes(element)
+			);
+		const control = preferLast ? controls.at(-1) : (preferred ?? controls[0]);
+		const fallback = document.getElementById(
+			`pokemon-editor-content-${pokemonEditorSession.section}`
+		);
+		const target = control ?? fallback;
+		if (!(target instanceof HTMLElement)) return;
+		pokemonEditorSession = enterPokemonEditorContent(pokemonEditorSession, target.id);
+		target.focus();
+		target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	}
+
+	function focusPokemonEditorSession() {
+		const focus = pokemonEditorSession.focus;
+		keepPokemonEditorRailSectionVisible(pokemonEditorSession.section);
+		if (focus.zone === 'rail') {
+			document.getElementById(`pokemon-editor-section-${focus.section}`)?.focus();
+			return;
+		}
+		document.getElementById(focus.control)?.focus();
+	}
+
+	function revealPokemonEditorRailSection(section: PokemonEditorSectionId) {
+		const target = document.getElementById(`pokemon-editor-section-${section}`);
+		target?.focus();
+		keepPokemonEditorRailSectionVisible(section);
+	}
+
+	function keepPokemonEditorRailSectionVisible(section: PokemonEditorSectionId) {
+		const target = document.getElementById(`pokemon-editor-section-${section}`);
+		target?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 	}
 
 	async function openLegalityReport() {
@@ -3227,24 +3482,55 @@
 		}
 	}
 
+	async function openPokemonEditorLegalityReport() {
+		const editor = pokemonEditor;
+		if (activeSummonedWorkflow?.kind !== 'pokemon-editor' || !editor) return;
+
+		const request = (legalityReportRequest += 1);
+		legalityReport = createLegalityReportLoadingState(editor.slot, editor.source.location);
+		const focus = pokemonEditorSession.focus;
+		const launcherId =
+			focus.zone === 'rail'
+				? `pokemon-editor-section-${focus.section}`
+				: focus.control || `pokemon-editor-content-${pokemonEditorSession.section}`;
+		summonedWorkflow.openRelated('legality-report', controlLauncher(launcherId));
+		if (editor.source.owner !== 'save-file') {
+			legalityReport = createLegalityReportUnavailableState(editor.slot, editor.source.location);
+			return;
+		}
+
+		const editorPane = workbenchPanes.find((pane) => pane.id === pokemonEditorPaneId);
+		const result = await requestLegalityReport({
+			workspace: saveWorkspaceForPane(editorPane)?.state ?? null,
+			engine,
+			slot: editor.slot,
+			source: editor.source.slotRef,
+			location: editor.source.location
+		});
+
+		if (request !== legalityReportRequest) return;
+		legalityReport = result.state;
+		if (result.state.status === 'error') showToast('error', result.state.message);
+	}
+
 	function closeLegalityReport() {
 		legalityReportRequest += 1;
 		legalityReport = { status: 'idle' };
 		dismissActiveWorkflow();
 	}
 
-	function focusPokemonEditorClose() {
-		document.getElementById('pokemon-editor-close')?.focus();
-	}
-
 	function focusPokemonEditorApply() {
 		const apply = document.getElementById('pokemon-editor-apply');
 		if (apply instanceof HTMLButtonElement && !apply.disabled) {
+			pokemonEditorSession = setPokemonEditorApplyFocus(
+				pokemonEditorSession,
+				'pokemon-editor-apply'
+			);
 			apply.focus();
 			return;
 		}
 
-		focusPokemonEditorClose();
+		document.getElementById('pokemon-editor-close')?.focus();
 	}
 
 	function cancelPokemonEditorEdits() {
@@ -3254,6 +3540,8 @@
 
 		pokemonEditor = cancelPokemonEditor(pokemonEditor);
 		pokemonEditorFeedback = null;
+		pokemonEditorDraft = null;
+		pokemonEditorDraftDirty = false;
 		void previewPokemonSpeciesFormEdit({
 			speciesId: pokemonEditor.slot.speciesId ?? 0,
 			form: pokemonEditor.slot.form ?? 0
@@ -3471,6 +3759,8 @@
 		pokemonEditor = result.state;
 		pokemonEditorFeedback = result.outcome.message;
 		if (result.outcome.status === 'success') {
+			pokemonEditorDraft = null;
+			pokemonEditorDraftDirty = false;
 			showToast('success', result.outcome.message);
 			void previewPokemonSpeciesFormEdit({
 				speciesId: result.state.slot.speciesId ?? 0,
@@ -4345,21 +4635,37 @@
 
 {#if activeSummonedWorkflow?.kind === 'pokemon-editor' && pokemonEditor}
 	{#key pokemonEditorDraftResetKey(pokemonEditor)}
-		<PokemonEditor
-			editor={pokemonEditor}
-			{saveSummary}
-			spriteUrl={spriteUrlFor(pokemonEditor.slot)}
-			slotHueStyle={slotStyle(pokemonEditor.slot, activePaneBox)}
-			feedback={pokemonEditorFeedback}
-			applying={busy}
-			speciesFormProjection={pokemonSpeciesFormProjection}
-			speciesFormLoading={pokemonSpeciesFormLoading}
-			speciesFormError={pokemonSpeciesFormError}
-			onPreviewSpeciesForm={previewPokemonSpeciesFormEdit}
-			onApply={applyPokemonEditor}
-			onCancelEdits={cancelPokemonEditorEdits}
-			onClose={closePokemonEditor}
-		/>
+		<TakeoverFrame
+			labelledby="pokemon-editor-title"
+			describedby="pokemon-editor-status"
+			{busy}
+			onBack={requestClosePokemonEditor}
+		>
+			<PokemonEditor
+				editor={pokemonEditor}
+				{saveSummary}
+				spriteUrl={spriteUrlFor(pokemonEditor.slot)}
+				slotHueStyle={slotStyle(pokemonEditor.slot, activePaneBox)}
+				feedback={pokemonEditorFeedback}
+				applying={busy}
+				session={pokemonEditorSession}
+				initialDraft={pokemonEditorDraft}
+				speciesFormProjection={pokemonSpeciesFormProjection}
+				speciesFormLoading={pokemonSpeciesFormLoading}
+				speciesFormError={pokemonSpeciesFormError}
+				onDraftChange={rememberPokemonEditorDraft}
+				onFocusChange={rememberPokemonEditorFocus}
+				onSelectSection={choosePokemonEditorSection}
+				onShowReview={showPokemonEditorDeltaReview}
+				onKeepEditing={keepEditingPokemonEditor}
+				onDiscard={discardPokemonEditorEdits}
+				onOpenLegality={openPokemonEditorLegalityReport}
+				onPreviewSpeciesForm={previewPokemonSpeciesFormEdit}
+				onApply={applyPokemonEditor}
+				onCancelEdits={cancelPokemonEditorEdits}
+				onClose={requestClosePokemonEditor}
+			/>
+		</TakeoverFrame>
 	{/key}
 {/if}
 

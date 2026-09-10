@@ -103,8 +103,10 @@ public class MainActivity extends BridgeActivity {
             case KeyEvent.KEYCODE_BUTTON_START:
                 return "Menu";
             case KeyEvent.KEYCODE_BUTTON_L1:
+            case KeyEvent.KEYCODE_BUTTON_L2:
                 return "PageUp";
             case KeyEvent.KEYCODE_BUTTON_R1:
+            case KeyEvent.KEYCODE_BUTTON_R2:
                 return "PageDown";
             default:
                 return null;
