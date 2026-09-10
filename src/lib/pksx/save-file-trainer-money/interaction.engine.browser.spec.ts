@@ -372,6 +372,63 @@ describe('Save File Trainer and Money real public fixtures', () => {
 		60_000
 	);
 
+	test.each([
+		{ editingAtSettlement: true, expectedValue: 'draft' },
+		{ editingAtSettlement: false, expectedValue: 'accepted' }
+	])(
+		'handles an asynchronous Engine rejection with the field $expectedValue at settlement',
+		async ({ editingAtSettlement, expectedValue }) => {
+			let releaseEdit!: () => void;
+			const editGate = new Promise<void>((resolve) => (releaseEdit = resolve));
+			const applySaveFileEditOperation = vi.fn<EngineApi['applySaveFileEditOperation']>(
+				async () => {
+					await editGate;
+					return {
+						ok: false,
+						value: null,
+						error: {
+							code: 'invalid-save-file-edit',
+							message: 'The engine rejected this Money value.'
+						}
+					};
+				}
+			);
+			const instrumentedEngine: EngineApi = { ...engine, applySaveFileEditOperation };
+			const { harness, toast, workspace } = await setup(
+				emeraldUrl,
+				'011020251345.sav',
+				instrumentedEngine
+			);
+			const accepted = workspace.workspace.saveFile!.money.value!;
+			const candidate = accepted === 0 ? 1 : 0;
+			const money = input('money-value');
+			money.focus();
+			enterValue(money, String(candidate));
+			press(money, 'Enter');
+			await vi.waitFor(() => expect(applySaveFileEditOperation).toHaveBeenCalledOnce());
+
+			if (!editingAtSettlement) {
+				expect(harness.handleBack()).toBe(false);
+			}
+			releaseEdit();
+			await vi.waitFor(() => expect(input('money-value').getAttribute('aria-busy')).toBe('false'));
+			await tick();
+
+			expect(input('money-value').value).toBe(
+				expectedValue === 'draft' ? String(candidate) : String(accepted)
+			);
+			expect(input('money-value').getAttribute('aria-invalid')).toBe('true');
+			expect(toast.error).not.toHaveBeenCalled();
+			if (editingAtSettlement) {
+				expect(harness.handleBack()).toBe(true);
+				await tick();
+				expect(input('money-value').value).toBe(String(accepted));
+			}
+			expect(harness.handleBack()).toBe(false);
+		},
+		60_000
+	);
+
 	test('blocks pending Enter-blur duplication and restores one failed field with one Toast', async () => {
 		let releaseEdit!: () => void;
 		const editGate = new Promise<void>((resolve) => (releaseEdit = resolve));

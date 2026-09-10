@@ -169,11 +169,15 @@ async function settled() {
 	await Promise.resolve();
 }
 
+function commitContext(reason: 'enter' | 'blur', isEditing = () => true) {
+	return { reason, isEditing };
+}
+
 describe('Save File Trainer and Money controller', () => {
 	test('keeps invalid Trainer drafts local and restores them on blur or abandon', () => {
 		const { value, enqueueEdit } = controller();
 		value.ledgerProps.onTrainerNameInput?.('');
-		value.ledgerProps.onTrainerNameCommit?.('enter');
+		expect(value.ledgerProps.onTrainerNameCommit?.(commitContext('enter'))).toBe('invalid');
 		expect(value.ledgerProps.drafts?.trainerName).toEqual({
 			value: '',
 			error: 'Trainer name must be between 1 and 7 characters.'
@@ -187,7 +191,9 @@ describe('Save File Trainer and Money controller', () => {
 		});
 
 		value.ledgerProps.onTrainerNameInput?.('TOO-LONG');
-		value.ledgerProps.onTrainerNameCommit?.('blur');
+		expect(value.ledgerProps.onTrainerNameCommit?.(commitContext('blur', () => false))).toBe(
+			'invalid'
+		);
 		expect(value.ledgerProps.drafts?.trainerName).toEqual({
 			value: 'RED',
 			error: 'Trainer name must be between 1 and 7 characters.'
@@ -197,12 +203,14 @@ describe('Save File Trainer and Money controller', () => {
 	test('commits normalized name, immediate gender, and strict Money boundaries', async () => {
 		const { value, enqueueEdit } = controller();
 		value.ledgerProps.onTrainerNameInput?.(' BLUE ');
-		value.ledgerProps.onTrainerNameCommit?.('enter');
+		const nameOutcome = value.ledgerProps.onTrainerNameCommit?.(commitContext('enter'));
+		expect(nameOutcome).toBeInstanceOf(Promise);
 		expect(enqueueEdit).toHaveBeenLastCalledWith(value.origin, {
 			key: trainerMoneyPendingKeys.trainerName,
 			operation: { trainerProfile: { trainerName: 'BLUE' } }
 		});
-		await settled();
+		await expect(nameOutcome).resolves.toBe('complete');
+		expect(value.workspace.workspace.saveFile?.trainerProfile.trainerName).toBe('BLUE');
 
 		value.ledgerProps.onTrainerGenderSelect?.('female');
 		expect(enqueueEdit).toHaveBeenLastCalledWith(value.origin, {
@@ -212,12 +220,12 @@ describe('Save File Trainer and Money controller', () => {
 		await settled();
 
 		value.ledgerProps.onMoneyInput?.('10.5');
-		value.ledgerProps.onMoneyCommit?.('enter');
+		expect(value.ledgerProps.onMoneyCommit?.(commitContext('enter'))).toBe('invalid');
 		expect(value.ledgerProps.drafts?.money?.value).toBe('10.5');
 		expect(value.ledgerProps.drafts?.money?.error).toMatch('Money must be a whole number');
 		expect(enqueueEdit).toHaveBeenCalledTimes(2);
 
-		value.ledgerProps.onMoneyCommit?.('blur');
+		expect(value.ledgerProps.onMoneyCommit?.(commitContext('blur', () => false))).toBe('invalid');
 		expect(value.ledgerProps.drafts?.money?.value).toBe('100');
 		expect(enqueueEdit).toHaveBeenCalledTimes(2);
 	});
@@ -225,7 +233,7 @@ describe('Save File Trainer and Money controller', () => {
 	test('commits changed Trainer and Money values on valid blur', async () => {
 		const name = controller();
 		name.value.ledgerProps.onTrainerNameInput?.('BLUE');
-		name.value.ledgerProps.onTrainerNameCommit?.('blur');
+		name.value.ledgerProps.onTrainerNameCommit?.(commitContext('blur', () => false));
 		expect(name.enqueueEdit).toHaveBeenCalledWith(name.value.origin, {
 			key: trainerMoneyPendingKeys.trainerName,
 			operation: { trainerProfile: { trainerName: 'BLUE' } }
@@ -234,7 +242,7 @@ describe('Save File Trainer and Money controller', () => {
 
 		const money = controller();
 		money.value.ledgerProps.onMoneyInput?.('222');
-		money.value.ledgerProps.onMoneyCommit?.('blur');
+		money.value.ledgerProps.onMoneyCommit?.(commitContext('blur', () => false));
 		expect(money.enqueueEdit).toHaveBeenCalledWith(money.value.origin, {
 			key: trainerMoneyPendingKeys.money,
 			operation: { money: 222 }
@@ -246,8 +254,8 @@ describe('Save File Trainer and Money controller', () => {
 		const name = controller();
 		name.results.push(new Promise((resolve) => (finishName = resolve)));
 		name.value.ledgerProps.onTrainerNameInput?.('BLUE');
-		name.value.ledgerProps.onTrainerNameCommit?.('enter');
-		name.value.ledgerProps.onTrainerNameCommit?.('blur');
+		name.value.ledgerProps.onTrainerNameCommit?.(commitContext('enter'));
+		name.value.ledgerProps.onTrainerNameCommit?.(commitContext('blur', () => false));
 		expect(name.enqueueEdit).toHaveBeenCalledOnce();
 		finishName({
 			ok: true,
@@ -261,8 +269,8 @@ describe('Save File Trainer and Money controller', () => {
 		const money = controller();
 		money.results.push(new Promise((resolve) => (finishMoney = resolve)));
 		money.value.ledgerProps.onMoneyInput?.('200');
-		money.value.ledgerProps.onMoneyCommit?.('enter');
-		money.value.ledgerProps.onMoneyCommit?.('blur');
+		money.value.ledgerProps.onMoneyCommit?.(commitContext('enter'));
+		money.value.ledgerProps.onMoneyCommit?.(commitContext('blur', () => false));
 		expect(money.value.ledgerProps.onMoneyStep?.(1, '200')).toBe(false);
 		expect(money.enqueueEdit).toHaveBeenCalledOnce();
 		finishMoney({
@@ -313,9 +321,9 @@ describe('Save File Trainer and Money controller', () => {
 	test('settles known no-ops before the coordinator', () => {
 		const { value, enqueueEdit } = controller();
 		value.ledgerProps.onTrainerNameInput?.(' RED ');
-		value.ledgerProps.onTrainerNameCommit?.('enter');
+		expect(value.ledgerProps.onTrainerNameCommit?.(commitContext('enter'))).toBe('complete');
 		value.ledgerProps.onMoneyInput?.('0100');
-		value.ledgerProps.onMoneyCommit?.('enter');
+		expect(value.ledgerProps.onMoneyCommit?.(commitContext('enter'))).toBe('complete');
 		value.ledgerProps.onTrainerGenderSelect?.('male');
 		expect(enqueueEdit).not.toHaveBeenCalled();
 		expect(value.ledgerProps.drafts?.trainerName?.value).toBe('RED');
@@ -332,7 +340,7 @@ describe('Save File Trainer and Money controller', () => {
 		});
 		value.ledgerProps.onMoneyInput?.('456');
 		value.ledgerProps.onTrainerNameInput?.('BLUE');
-		value.ledgerProps.onTrainerNameCommit?.('enter');
+		value.ledgerProps.onTrainerNameCommit?.(commitContext('enter'));
 		await settled();
 		expect(value.ledgerProps.view).toMatchObject({
 			status: 'ready',
@@ -358,14 +366,14 @@ describe('Save File Trainer and Money controller', () => {
 			workspace: workspace()
 		});
 		invalid.value.ledgerProps.onTrainerNameInput?.('BLUE');
-		invalid.value.ledgerProps.onTrainerNameCommit?.('enter');
-		await settled();
+		const invalidOutcome = invalid.value.ledgerProps.onTrainerNameCommit?.(commitContext('enter'));
+		await expect(invalidOutcome).resolves.toBe('invalid');
 		expect(invalid.value.ledgerProps.drafts?.trainerName).toEqual({
 			value: 'BLUE',
 			error: 'The engine rejected this name.'
 		});
 		expect(invalid.toast.error).not.toHaveBeenCalled();
-		invalid.value.ledgerProps.onTrainerNameCommit?.('blur');
+		invalid.value.ledgerProps.onTrainerNameCommit?.(commitContext('blur', () => false));
 		expect(invalid.enqueueEdit).toHaveBeenCalledOnce();
 		expect(invalid.value.ledgerProps.drafts?.trainerName).toEqual({
 			value: 'RED',
@@ -382,9 +390,9 @@ describe('Save File Trainer and Money controller', () => {
 			workspace: workspace()
 		});
 		invalidMoney.value.ledgerProps.onMoneyInput?.('200');
-		invalidMoney.value.ledgerProps.onMoneyCommit?.('enter');
+		invalidMoney.value.ledgerProps.onMoneyCommit?.(commitContext('enter'));
 		await settled();
-		invalidMoney.value.ledgerProps.onMoneyCommit?.('blur');
+		invalidMoney.value.ledgerProps.onMoneyCommit?.(commitContext('blur', () => false));
 		expect(invalidMoney.enqueueEdit).toHaveBeenCalledOnce();
 		expect(invalidMoney.value.ledgerProps.drafts?.money).toEqual({
 			value: '100',
@@ -401,7 +409,7 @@ describe('Save File Trainer and Money controller', () => {
 			workspace: workspace()
 		});
 		invalidBlur.value.ledgerProps.onTrainerNameInput?.('BLUE');
-		invalidBlur.value.ledgerProps.onTrainerNameCommit?.('blur');
+		invalidBlur.value.ledgerProps.onTrainerNameCommit?.(commitContext('blur', () => false));
 		await settled();
 		expect(invalidBlur.value.ledgerProps.drafts?.trainerName).toEqual({
 			value: 'RED',
@@ -436,7 +444,7 @@ describe('Save File Trainer and Money controller', () => {
 			workspace: workspace()
 		});
 		isolated.value.ledgerProps.onMoneyInput?.('200');
-		isolated.value.ledgerProps.onMoneyCommit?.('enter');
+		isolated.value.ledgerProps.onMoneyCommit?.(commitContext('enter'));
 		await settled();
 		expect(isolated.value.ledgerProps.drafts?.money?.value).toBe('100');
 		expect(isolated.toast.error).toHaveBeenCalledWith('Money could not be saved. Storage is busy.');
@@ -450,7 +458,7 @@ describe('Save File Trainer and Money controller', () => {
 			workspace: workspace()
 		});
 		isolated.value.ledgerProps.onTrainerNameInput?.('GREEN');
-		isolated.value.ledgerProps.onTrainerNameCommit?.('enter');
+		isolated.value.ledgerProps.onTrainerNameCommit?.(commitContext('enter'));
 		await settled();
 		expect(isolated.toast.error).toHaveBeenCalledOnce();
 
@@ -463,12 +471,41 @@ describe('Save File Trainer and Money controller', () => {
 			message: 'The Workspace changed.'
 		});
 		durable.value.ledgerProps.onMoneyInput?.('200');
-		durable.value.ledgerProps.onMoneyCommit?.('enter');
+		durable.value.ledgerProps.onMoneyCommit?.(commitContext('enter'));
 		await settled();
 		expect(durable.value.ledgerProps.view).toMatchObject({
 			status: 'ready',
 			editingUnavailable: { message: 'The Workspace changed.' }
 		});
+	});
+
+	test('restores an engine-rejected draft when its edit session ends before settlement', async () => {
+		let finish!: (result: SaveFileEditResult) => void;
+		let editing = true;
+		const rejected = controller();
+		rejected.results.push(new Promise((resolve) => (finish = resolve)));
+		rejected.value.ledgerProps.onMoneyInput?.('200');
+		const outcome = rejected.value.ledgerProps.onMoneyCommit?.(
+			commitContext('enter', () => editing)
+		);
+		expect(outcome).toBeInstanceOf(Promise);
+
+		editing = false;
+		finish({
+			ok: false,
+			status: 'rejected',
+			origin: rejected.value.origin,
+			code: 'invalid-save-file-edit',
+			message: 'The engine rejected this Money value.',
+			workspace: workspace()
+		});
+
+		await expect(outcome).resolves.toBe('invalid');
+		expect(rejected.value.ledgerProps.drafts?.money).toEqual({
+			value: '100',
+			error: 'The engine rejected this Money value.'
+		});
+		expect(rejected.toast.error).not.toHaveBeenCalled();
 	});
 
 	test.each(['engine-unavailable', 'backup-write-failed', 'workspace-persistence-failed'] as const)(
@@ -484,8 +521,8 @@ describe('Save File Trainer and Money controller', () => {
 				workspace: workspace()
 			});
 			failed.value.ledgerProps.onMoneyInput?.('200');
-			failed.value.ledgerProps.onMoneyCommit?.('enter');
-			await settled();
+			const outcome = failed.value.ledgerProps.onMoneyCommit?.(commitContext('enter'));
+			await expect(outcome).resolves.toBe('complete');
 			expect(failed.value.ledgerProps.drafts?.money?.value).toBe('100');
 			expect(failed.toast.error).toHaveBeenCalledOnce();
 			expect(failed.toast.error).toHaveBeenCalledWith(
@@ -499,7 +536,7 @@ describe('Save File Trainer and Money controller', () => {
 		const failed = controller();
 		failed.results.push(new Promise((resolve) => (finishFailure = resolve)));
 		failed.value.ledgerProps.onMoneyInput?.('200');
-		failed.value.ledgerProps.onMoneyCommit?.('enter');
+		failed.value.ledgerProps.onMoneyCommit?.(commitContext('enter'));
 		const mountedWorkspace = failed.value.workspace;
 		failed.value.dispose();
 		finishFailure({
@@ -519,7 +556,7 @@ describe('Save File Trainer and Money controller', () => {
 		const obsolete = controller();
 		obsolete.results.push(new Promise((resolve) => (finishObsolete = resolve)));
 		obsolete.value.ledgerProps.onMoneyInput?.('200');
-		obsolete.value.ledgerProps.onMoneyCommit?.('enter');
+		obsolete.value.ledgerProps.onMoneyCommit?.(commitContext('enter'));
 		obsolete.value.dispose();
 		obsolete.isCurrent.mockReturnValue(false);
 		finishObsolete({
@@ -583,12 +620,12 @@ describe('Save File Trainer and Money controller', () => {
 			message: 'Editing stopped.'
 		});
 		retryHarness.value.ledgerProps.onMoneyInput?.('200');
-		retryHarness.value.ledgerProps.onMoneyCommit?.('enter');
+		retryHarness.value.ledgerProps.onMoneyCommit?.(commitContext('enter'));
 		await settled();
 		retryHarness.value.ledgerProps.onTrainerNameInput?.('');
-		retryHarness.value.ledgerProps.onTrainerNameCommit?.('enter');
+		retryHarness.value.ledgerProps.onTrainerNameCommit?.(commitContext('enter'));
 		retryHarness.value.ledgerProps.onMoneyInput?.('invalid');
-		retryHarness.value.ledgerProps.onMoneyCommit?.('enter');
+		retryHarness.value.ledgerProps.onMoneyCommit?.(commitContext('enter'));
 		let publishedWorkspace: WorkspaceState | null = null;
 		const recoveredOrigin = { saveFileId: 'save-1', workspaceId: 'workspace-recovered' };
 		retryHarness.recoverWorkspace.mockImplementationOnce(async (_origin, { isCurrent }) => {
@@ -653,7 +690,7 @@ describe('Save File Trainer and Money controller', () => {
 			message: 'The Save File was deleted.'
 		});
 		harness.value.ledgerProps.onMoneyInput?.('200');
-		harness.value.ledgerProps.onMoneyCommit?.('enter');
+		harness.value.ledgerProps.onMoneyCommit?.(commitContext('enter'));
 		await settled();
 		const originalOrigin = harness.value.origin;
 		const originalWorkspace = harness.value.workspace;

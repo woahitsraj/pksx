@@ -1,5 +1,9 @@
 import type { SaveFileEditOperation, TrainerGender } from '$lib/engine';
-import type { SaveFileLedgerProps } from '$lib/components/pksx/save-file-ledger/types';
+import type {
+	SaveFileLedgerCommitContext,
+	SaveFileLedgerCommitOutcome,
+	SaveFileLedgerProps
+} from '$lib/components/pksx/save-file-ledger/types';
 import type { WorkspaceState } from '$lib/pksx/backup-workflow';
 import type {
 	SaveFileEditCoordinator,
@@ -55,6 +59,12 @@ export type SaveFileTrainerMoneyLedgerProps = Pick<
 
 type EditableField = 'trainer-name' | 'trainer-gender' | 'money';
 type CommitMode = 'enter' | 'blur' | 'immediate' | 'operator';
+type MutationContext = {
+	field: EditableField;
+	label: string;
+	mode: CommitMode;
+	isEditing?: () => boolean;
+};
 
 export type SaveFileTrainerMoneyController = ReturnType<
 	typeof createSaveFileTrainerMoneyController
@@ -105,30 +115,40 @@ export function createSaveFileTrainerMoneyController(
 		trainerNameError = null;
 	}
 
-	function onTrainerNameCommit(reason: 'enter' | 'blur') {
-		if (options.coordinator.isPending(origin, trainerMoneyPendingKeys.trainerName)) return;
-		if (reason === 'blur' && trainerNameError) {
+	function onTrainerNameCommit(
+		context: SaveFileLedgerCommitContext
+	): SaveFileLedgerCommitOutcome | Promise<SaveFileLedgerCommitOutcome> {
+		if (options.coordinator.isPending(origin, trainerMoneyPendingKeys.trainerName)) {
+			return 'complete';
+		}
+		if (context.reason === 'blur' && trainerNameError) {
 			restoreTrainerName();
-			return;
+			return 'invalid';
 		}
 		const profile = projection(workspace).trainerProfile;
 		const candidate = trainerNameDraft.trim();
 		const error = validateTrainerName(candidate, profile.trainerNameMaxLength);
 		if (error) {
 			trainerNameError = error;
-			if (reason === 'blur') restoreTrainerName();
-			return;
+			if (context.reason === 'blur') restoreTrainerName();
+			return 'invalid';
 		}
 		if (candidate === (profile.trainerName ?? '')) {
 			restoreTrainerName();
 			trainerNameError = null;
-			return;
+			return 'complete';
 		}
-		enqueue(
-			{ field: 'trainer-name', label: 'Trainer name', mode: reason },
+		const admitted = enqueue(
+			{
+				field: 'trainer-name',
+				label: 'Trainer name',
+				mode: context.reason,
+				isEditing: context.isEditing
+			},
 			trainerMoneyPendingKeys.trainerName,
 			{ trainerProfile: { trainerName: candidate } }
 		);
+		return admitted === false ? 'complete' : admitted;
 	}
 
 	function onTrainerNameAbandon() {
@@ -140,7 +160,7 @@ export function createSaveFileTrainerMoneyController(
 		trainerGenderError = null;
 		const profile = projection(workspace).trainerProfile;
 		if (gender === profile.gender) return;
-		enqueue(
+		void enqueue(
 			{ field: 'trainer-gender', label: 'Trainer gender', mode: 'immediate' },
 			gender === 'male'
 				? trainerMoneyPendingKeys.trainerGenderMale
@@ -155,19 +175,22 @@ export function createSaveFileTrainerMoneyController(
 		moneyError = null;
 	}
 
-	function onMoneyCommit(reason: 'enter' | 'blur') {
-		if (options.coordinator.isPending(origin, trainerMoneyPendingKeys.money)) return;
-		if (reason === 'blur' && moneyError) {
+	function onMoneyCommit(
+		context: SaveFileLedgerCommitContext
+	): SaveFileLedgerCommitOutcome | Promise<SaveFileLedgerCommitOutcome> {
+		if (options.coordinator.isPending(origin, trainerMoneyPendingKeys.money)) return 'complete';
+		if (context.reason === 'blur' && moneyError) {
 			restoreMoney();
-			return;
+			return 'invalid';
 		}
 		const parsed = parseMoney(moneyDraft, workspace);
 		if (!parsed.ok) {
 			moneyError = parsed.message;
-			if (reason === 'blur') restoreMoney();
-			return;
+			if (context.reason === 'blur') restoreMoney();
+			return 'invalid';
 		}
-		commitMoney(parsed.value, reason);
+		const admitted = commitMoney(parsed.value, context.reason, context.isEditing);
+		return admitted === false ? 'complete' : admitted;
 	}
 
 	function onMoneyAbandon() {
@@ -191,37 +214,39 @@ export function createSaveFileTrainerMoneyController(
 		const limits = projection(workspace).money;
 		const value =
 			step === 'max' ? limits.max : Math.max(limits.min, Math.min(limits.max, parsed.value + step));
-		return commitMoney(value, 'operator');
+		return commitMoney(value, 'operator') !== false;
 	}
 
-	function commitMoney(value: number, mode: CommitMode) {
+	function commitMoney(value: number, mode: CommitMode, isEditing?: () => boolean) {
 		const accepted = projection(workspace).money.value;
 		if (value === accepted) {
 			restoreMoney();
 			moneyError = null;
-			return true;
+			return 'complete' as const;
 		}
-		return enqueue({ field: 'money', label: 'Money', mode }, trainerMoneyPendingKeys.money, {
-			money: value
-		});
+		return enqueue(
+			{ field: 'money', label: 'Money', mode, ...(isEditing ? { isEditing } : {}) },
+			trainerMoneyPendingKeys.money,
+			{ money: value }
+		);
 	}
 
 	function enqueue(
-		context: { field: EditableField; label: string; mode: CommitMode },
+		context: MutationContext,
 		key: string,
 		operation: SaveFileEditOperation
-	) {
+	): false | Promise<SaveFileLedgerCommitOutcome> {
 		if (editingUnavailable || options.coordinator.isPending(origin, key)) return false;
 		const requestOrigin = origin;
-		void options.coordinator
+		return options.coordinator
 			.enqueueEdit(requestOrigin, { key, operation })
 			.then((result) => settle(requestOrigin, context, result))
 			.catch((error: unknown) => {
 				if (!disposed && sameOrigin(requestOrigin, origin)) {
 					rejectEditing(errorMessage(error));
 				}
+				return 'complete';
 			});
-		return true;
 	}
 
 	function trainerGenderPending() {
@@ -233,9 +258,9 @@ export function createSaveFileTrainerMoneyController(
 
 	function settle(
 		requestOrigin: SaveFileEditOrigin,
-		context: { field: EditableField; label: string; mode: CommitMode },
+		context: MutationContext,
 		result: SaveFileEditResult
-	) {
+	): SaveFileLedgerCommitOutcome {
 		if (disposed) {
 			if (
 				!result.ok &&
@@ -246,38 +271,39 @@ export function createSaveFileTrainerMoneyController(
 			) {
 				options.toast.error(`${context.label} could not be saved. ${result.message}`);
 			}
-			return;
+			return 'complete';
 		}
-		if (!sameOrigin(requestOrigin, origin)) return;
+		if (!sameOrigin(requestOrigin, origin)) return 'complete';
 
 		if (result.ok) {
 			refreshWorkspace(result.workspace, context.field);
 			clearFieldError(context.field);
-			return;
+			return 'complete';
 		}
 
 		if (result.code === 'stale-workspace' || result.code === 'save-file-deleted') {
 			rejectEditing(result.message);
-			return;
+			return 'complete';
 		}
 
 		if (result.code === 'invalid-save-file-edit') {
 			if (result.workspace) refreshWorkspace(result.workspace);
 			setFieldError(context.field, result.message);
-			if (context.mode !== 'enter') restoreField(context.field);
-			return;
+			if (context.mode !== 'enter' || !context.isEditing?.()) restoreField(context.field);
+			return 'invalid';
 		}
 
 		if (result.workspace) {
 			refreshWorkspace(result.workspace, context.field);
 		} else {
 			rejectEditing(result.message);
-			return;
+			return 'complete';
 		}
 
 		if (result.code !== 'queued-operation-cancelled') {
 			options.toast.error(`${context.label} could not be saved. ${result.message}`);
 		}
+		return 'complete';
 	}
 
 	async function onRetryEditing() {
