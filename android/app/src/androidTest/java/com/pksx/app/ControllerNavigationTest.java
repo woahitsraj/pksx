@@ -580,15 +580,19 @@ public class ControllerNavigationTest {
             awaitJavaScript("document.querySelector('#box-0-slot-0')?.textContent.includes('ARON')");
             runJavaScript("document.querySelector('#box-0-slot-0').focus()");
             awaitBoxesState(1, "save-file", "box-0", "box-0-slot-0", null);
+            JSONObject paneIdentity = capturePaneIdentity("single-pane portrait");
             assertNativeSafeCanvas("single-pane portrait");
 
             fixture.setViewport(360, 640, 1, false);
             awaitBoxesState(1, "save-file", "box-0", "box-0-slot-0", null);
+            awaitCapturedIdentity("single-pane landscape", paneIdentity, paneIdentityExpression());
             assertNativeSafeCanvas("single-pane landscape");
             pressGamepadKey(KeyEvent.KEYCODE_DPAD_RIGHT, "document.activeElement?.id === 'box-0-slot-1'");
             pressGamepadKey(KeyEvent.KEYCODE_DPAD_LEFT, "document.activeElement?.id === 'box-0-slot-0'");
 
             fixture.setViewport(360, 640, 0, false);
+            awaitBoxesState(1, "save-file", "box-0", "box-0-slot-0", null);
+            awaitCapturedIdentity("single-pane portrait restored", paneIdentity, paneIdentityExpression());
             pressGamepadKey(
                 KeyEvent.KEYCODE_BUTTON_X,
                 "document.querySelector('[role=dialog][aria-label=\"Box Menu\"]')"
@@ -615,15 +619,19 @@ public class ControllerNavigationTest {
                     + " && document.activeElement?.id === 'box-1-slot-7'"
             );
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-7", null);
+            paneIdentity = capturePaneIdentity("two-pane portrait");
+            JSONObject scrollBeforeRotation = captureFocusedScrollState("two-pane portrait Slot 8");
 
             fixture.setViewport(360, SQUARE_NATIVE_HEIGHT, 0, false);
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-7", null);
+            awaitCapturedIdentity("two-pane square", paneIdentity, paneIdentityExpression());
             awaitJavaScript(
                 "innerWidth === 360 && innerHeight === 360 && (() => {"
                     + " const panes = [...document.querySelectorAll('.box-pane')]"
                     + ".map(pane => pane.getBoundingClientRect());"
                     + " return panes.length === 2 && panes[1].top >= panes[0].bottom - 1; })()"
             );
+            assertRotationScrollReveal("portrait to square Slot 8", scrollBeforeRotation);
             assertNativeSafeCanvas("two-pane square");
             for (int step = 0; step < 3; step++) {
                 pressGamepadKey(KeyEvent.KEYCODE_DPAD_DOWN, null);
@@ -637,6 +645,7 @@ public class ControllerNavigationTest {
 
             fixture.setViewport(360, 640, 1, false);
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-7", null);
+            awaitCapturedIdentity("two-pane landscape", paneIdentity, paneIdentityExpression());
             awaitJavaScript(
                 "(() => { const panes = [...document.querySelectorAll('.box-pane')]"
                     + ".map(pane => pane.getBoundingClientRect());"
@@ -664,12 +673,15 @@ public class ControllerNavigationTest {
                 pressGamepadKey(KeyEvent.KEYCODE_DPAD_RIGHT, null);
             }
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-0", "move ARON");
+            paneIdentity = capturePaneIdentity("Carry landscape");
 
             fixture.setViewport(360, SQUARE_NATIVE_HEIGHT, 0, false);
             awaitJavaScript("innerWidth === 360 && innerHeight === 360");
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-0", "move ARON");
+            awaitCapturedIdentity("Carry square", paneIdentity, paneIdentityExpression());
             fixture.setViewport(360, 640, 0, false);
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-0", "move ARON");
+            awaitCapturedIdentity("Carry portrait", paneIdentity, paneIdentityExpression());
             assertNativeSafeCanvas("Carry portrait");
             pressGamepadKey(
                 KeyEvent.KEYCODE_BUTTON_B,
@@ -685,13 +697,14 @@ public class ControllerNavigationTest {
                     + " && document.activeElement?.id === 'box-menu-command-0'"
             );
             awaitBoxMenuState();
+            JSONObject menuIdentity = captureBoxMenuIdentity("Box Menu portrait");
             assertEdgeMenuAttachment("Box Menu portrait", false);
             fixture.setViewport(360, SQUARE_NATIVE_HEIGHT, 0, false);
             awaitJavaScript("innerWidth === 360 && innerHeight === 360");
-            awaitBoxMenuState();
+            awaitBoxMenuState(menuIdentity);
             assertEdgeMenuAttachment("Box Menu square", false);
             fixture.setViewport(360, 640, 1, false);
-            awaitBoxMenuState();
+            awaitBoxMenuState(menuIdentity);
             assertEdgeMenuAttachment("Box Menu landscape", true);
             assertNativeSafeCanvas("Box Menu landscape");
             pressGamepadKey(
@@ -717,12 +730,13 @@ public class ControllerNavigationTest {
                     + " && !document.body.textContent.includes('Quick Actions')"
             );
             assertEditorRailAttachment("Pokemon Editor landscape", true);
+            JSONObject editorIdentity = capturePokemonEditorIdentity("Pokemon Editor landscape");
             fixture.setViewport(360, SQUARE_NATIVE_HEIGHT, 0, false);
             awaitJavaScript("innerWidth === 360 && innerHeight === 360");
-            awaitPokemonEditorState("pokemon-editor-section-nickname");
+            awaitPokemonEditorState("pokemon-editor-section-nickname", editorIdentity);
             assertEditorRailAttachment("Pokemon Editor square", false);
             fixture.setViewport(360, 640, 0, false);
-            awaitPokemonEditorState("pokemon-editor-section-nickname");
+            awaitPokemonEditorState("pokemon-editor-section-nickname", editorIdentity);
             assertEditorRailAttachment("Pokemon Editor portrait", false);
             assertNativeSafeCanvas("Pokemon Editor portrait");
             pressGamepadKey(
@@ -1076,6 +1090,85 @@ public class ControllerNavigationTest {
         );
     }
 
+    private String paneIdentityExpression() {
+        return "(() => { const panes=[...document.querySelectorAll('.box-pane')];"
+            + " const active=document.querySelector('.box-pane.active-pane');"
+            + " return {paneIds:panes.map(pane => pane.dataset.paneId),"
+            + "activePaneId:active?.dataset.paneId ?? null}; })()";
+    }
+
+    private JSONObject capturePaneIdentity(String label) throws Exception {
+        return captureIdentity(label, paneIdentityExpression());
+    }
+
+    private JSONObject captureBoxMenuIdentity(String label) throws Exception {
+        JSONObject identity = captureIdentity(label, boxMenuIdentityExpression());
+        String heading = identity.optString("collectionHeading");
+        String owner = identity.optString("ownerSourceLabel");
+        if (!"emerald.sav".equals(heading) || !heading.equals(owner)) {
+            fail(label + " collection does not match its source owner: " + identity);
+        }
+        return identity;
+    }
+
+    private String boxMenuIdentityExpression() {
+        return "(() => { const panes=[...document.querySelectorAll('.box-pane')];"
+            + " const active=document.querySelector('.box-pane.active-pane');"
+            + " const control=document.getElementById('collection-control-' + active?.dataset.paneId);"
+            + " return {paneIds:panes.map(pane => pane.dataset.paneId),"
+            + "activePaneId:active?.dataset.paneId ?? null,"
+            + "activeSourceId:active?.dataset.sourceId ?? null,"
+            + "activeLocation:active?.dataset.location ?? null,"
+            + "collectionHeading:document.querySelector('.box-menu h2')?.textContent?.trim() ?? null,"
+            + "ownerSourceLabel:control?.getAttribute('aria-label')"
+            + "?.replace(/^Open Box Menu for /,'') ?? null}; })()";
+    }
+
+    private JSONObject capturePokemonEditorIdentity(String label) throws Exception {
+        JSONObject identity = captureIdentity(label, pokemonEditorIdentityExpression());
+        if (
+            !"ARON".equals(identity.optString("pokemonTitle"))
+                || !"Box 01 · Slot 1 · Row A / Col 1".equals(identity.optString("sourceLocation"))
+        ) {
+            fail(label + " is missing Pokemon or source-location ownership: " + identity);
+        }
+        return identity;
+    }
+
+    private String pokemonEditorIdentityExpression() {
+        return "(() => { const panes=[...document.querySelectorAll('.box-pane')];"
+            + " const active=document.querySelector('.box-pane.active-pane');"
+            + " const editor=document.querySelector('.pokemon-editor');"
+            + " return {paneIds:panes.map(pane => pane.dataset.paneId),"
+            + "activePaneId:active?.dataset.paneId ?? null,"
+            + "activeSourceId:active?.dataset.sourceId ?? null,"
+            + "activeLocation:active?.dataset.location ?? null,"
+            + "pokemonTitle:editor?.querySelector('#pokemon-editor-title')?.textContent?.trim() ?? null,"
+            + "sourceLocation:editor?.querySelector('.identity-line > span')?.textContent?.trim() ?? null}; })()";
+    }
+
+    private JSONObject captureIdentity(String label, String expression) throws Exception {
+        JSONObject identity = new JSONObject(runJavaScript(expression));
+        JSONArray paneIds = identity.optJSONArray("paneIds");
+        String activePaneId = identity.optString("activePaneId");
+        if (paneIds == null || paneIds.length() == 0 || activePaneId.isEmpty()) {
+            fail(label + " is missing pane ownership: " + identity);
+        }
+        Log.i("PKSXAcceptance", label + " identity=" + identity);
+        return identity;
+    }
+
+    private void awaitCapturedIdentity(String label, JSONObject expected, String expression)
+        throws Exception {
+        awaitJavaScript(
+            "(() => { const expected=" + expected + "; const actual=" + expression + ";"
+                + " return Object.keys(expected).every(key => Array.isArray(expected[key])"
+                + " ? JSON.stringify(actual[key]) === JSON.stringify(expected[key])"
+                + " : actual[key] === expected[key]); })()"
+        );
+        Log.i("PKSXAcceptance", label + " preserved identity=" + expected);
+    }
+
     private void awaitBoxMenuState() throws Exception {
         awaitJavaScript(
             "document.querySelectorAll('[role=dialog]').length === 1"
@@ -1086,6 +1179,11 @@ public class ControllerNavigationTest {
                 + " && document.querySelector('[data-source-id=\"pokemon-storage\"]')"
                 + "?.dataset.location === 'box-1'"
         );
+    }
+
+    private void awaitBoxMenuState(JSONObject identity) throws Exception {
+        awaitBoxMenuState();
+        awaitCapturedIdentity("Box Menu", identity, boxMenuIdentityExpression());
     }
 
     private void awaitPokemonEditorState(String activeElementId) throws Exception {
@@ -1102,6 +1200,12 @@ public class ControllerNavigationTest {
                 + "'"
                 + " && !document.body.textContent.includes('Quick Actions'); })()"
         );
+    }
+
+    private void awaitPokemonEditorState(String activeElementId, JSONObject identity)
+        throws Exception {
+        awaitPokemonEditorState(activeElementId);
+        awaitCapturedIdentity("Pokemon Editor", identity, pokemonEditorIdentityExpression());
     }
 
     private void assertEdgeMenuAttachment(String label, boolean trailing) throws Exception {
@@ -1179,7 +1283,57 @@ public class ControllerNavigationTest {
     }
 
     private void assertNearestScrollReveal(String label) throws Exception {
-        JSONObject geometry = new JSONObject(
+        JSONObject geometry = focusedScrollGeometry();
+        double[] target = requiredBounds(geometry, "target", label);
+        double[] scrollport = requiredBounds(geometry, "scrollport", label);
+        double bottomGap = scrollport[3] - target[3];
+        boolean nearest = geometry.getDouble("scrollHeight") > geometry.getDouble("clientHeight")
+            && geometry.getDouble("scrollTop") > 0
+            && bottomGap >= -1
+            && bottomGap <= 2;
+        Log.i("PKSXAcceptance", label + " bottomGap=" + bottomGap + " " + geometry);
+        if (!nearest) fail(label + " was not minimally revealed at the bottom edge: " + geometry);
+    }
+
+    private JSONObject captureFocusedScrollState(String label) throws Exception {
+        JSONObject geometry = focusedScrollGeometry();
+        double[] target = requiredBounds(geometry, "target", label);
+        double[] scrollport = requiredBounds(geometry, "scrollport", label);
+        if (!contains(scrollport, target)) {
+            fail(label + " was not visible before rotation: " + geometry);
+        }
+        Log.i("PKSXAcceptance", label + " pre-rotation scroll=" + geometry);
+        return geometry;
+    }
+
+    private void assertRotationScrollReveal(String label, JSONObject before) throws Exception {
+        JSONObject after = focusedScrollGeometry();
+        double[] target = requiredBounds(after, "target", label);
+        double[] scrollport = requiredBounds(after, "scrollport", label);
+        double beforeScroll = before.getDouble("scrollTop");
+        double afterScroll = after.getDouble("scrollTop");
+        double contentTop = target[1] - scrollport[1] + afterScroll;
+        double contentBottom = target[3] - scrollport[1] + afterScroll;
+        double clientHeight = after.getDouble("clientHeight");
+        boolean fitsAtPreviousOffset = contentTop >= beforeScroll - 1
+            && contentBottom <= beforeScroll + clientHeight + 1;
+        boolean minimal = fitsAtPreviousOffset
+            ? sameEdge(afterScroll, beforeScroll)
+            : contentTop < beforeScroll
+                ? afterScroll < beforeScroll && sameEdge(target[1], scrollport[1])
+                : afterScroll > beforeScroll && sameEdge(target[3], scrollport[3]);
+        Log.i(
+            "PKSXAcceptance",
+            label + " fitsAtPreviousOffset=" + fitsAtPreviousOffset + " before=" + before
+                + " after=" + after
+        );
+        if (!contains(scrollport, target) || !minimal) {
+            fail(label + " did not preserve the minimum visible scroll: before=" + before + ", after=" + after);
+        }
+    }
+
+    private JSONObject focusedScrollGeometry() throws Exception {
+        return new JSONObject(
             runJavaScript(
                 "(() => { const target = document.activeElement;"
                     + " const scrollport = target?.closest('.location-grid');"
@@ -1190,15 +1344,6 @@ public class ControllerNavigationTest {
                     + "clientHeight:scrollport?.clientHeight ?? 0}; })()"
             )
         );
-        double[] target = requiredBounds(geometry, "target", label);
-        double[] scrollport = requiredBounds(geometry, "scrollport", label);
-        double bottomGap = scrollport[3] - target[3];
-        boolean nearest = geometry.getDouble("scrollHeight") > geometry.getDouble("clientHeight")
-            && geometry.getDouble("scrollTop") > 0
-            && bottomGap >= -1
-            && bottomGap <= 2;
-        Log.i("PKSXAcceptance", label + " bottomGap=" + bottomGap + " " + geometry);
-        if (!nearest) fail(label + " was not minimally revealed at the bottom edge: " + geometry);
     }
 
     private void focusAndShowIme(String selector) throws Exception {
@@ -1902,6 +2047,13 @@ public class ControllerNavigationTest {
         inner.top >= outer.top - 1 &&
         inner.right <= outer.right + 1 &&
         inner.bottom <= outer.bottom + 1;
+    }
+
+    private boolean contains(double[] outer, double[] inner) {
+        return inner[0] >= outer[0] - 1
+            && inner[1] >= outer[1] - 1
+            && inner[2] <= outer[2] + 1
+            && inner[3] <= outer[3] + 1;
     }
 
     private void pressGamepadKey(int keyCode, String expectedState) throws Exception {
