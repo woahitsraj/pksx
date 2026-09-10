@@ -94,7 +94,7 @@
 			targetBeforeEditingUnavailable = rememberedTarget;
 			focusIdentity('editing-retry');
 		} else if (!unavailable && editingWasUnavailable) {
-			focusIdentity(targetBeforeEditingUnavailable ?? '') || focusInitial();
+			if (!focusIdentity(targetBeforeEditingUnavailable ?? '')) focusInitial();
 			targetBeforeEditingUnavailable = null;
 		}
 		editingWasUnavailable = unavailable;
@@ -103,8 +103,9 @@
 			focusIdentity(commandFirstIdentity(nextCommand));
 		} else if (!nextCommand && previousCommand) {
 			if (previousCommand.kind === 'add-item') {
-				focusIdentity(addIdentity(previousCommand.pocketKey)) ||
+				if (!focusIdentity(addIdentity(previousCommand.pocketKey))) {
 					focusPocketEntry(previousCommand.pocketKey);
+				}
 			} else {
 				focusAfterRemove(previousCommand.pocketKey, previousCommand.itemId);
 			}
