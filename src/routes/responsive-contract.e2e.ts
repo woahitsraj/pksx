@@ -78,6 +78,7 @@ const destinations: Destination[] = [
 		path: '/bag',
 		key: 'bag',
 		scrollOwner: '[data-testid="bag-ledger-scrollport"]',
+		// The matrix holds catalogue readiness until this loading-state first stop is asserted.
 		initialFocus: 'item-Items-18-decrease'
 	},
 	{
@@ -110,6 +111,92 @@ async function setSafeArea(page: Page, insets: Insets) {
 		root.style.setProperty('--safe-area-inset-bottom', `${bottom}px`);
 		root.style.setProperty('--safe-area-inset-left', `${left}px`);
 	}, insets);
+}
+
+async function installCatalogueResponseHold(page: Page) {
+	await page.addInitScript(() => {
+		type TestWindow = typeof window & {
+			__pksxHeldCatalogueResponses?: number;
+			__pksxReleaseCatalogueResponses?: () => void;
+		};
+		const testWindow = window as TestWindow;
+		const NativeWorker = window.Worker;
+		const heldRequestIds = new Set<string>();
+		const releases: Array<() => void> = [];
+		testWindow.__pksxHeldCatalogueResponses = 0;
+		testWindow.__pksxReleaseCatalogueResponses = () => {
+			heldRequestIds.clear();
+			for (const release of releases.splice(0)) release();
+		};
+
+		window.Worker = new Proxy(NativeWorker, {
+			construct(Target, args: ConstructorParameters<typeof Worker>) {
+				const worker = new Target(...args);
+				const postMessage = worker.postMessage.bind(worker);
+				worker.postMessage = new Proxy(postMessage, {
+					apply(target, thisArg, args) {
+						const request = args[0] as { id?: string; method?: string } | null;
+						if (
+							request?.id &&
+							request.method === 'getSaveFileInventoryCatalogue' &&
+							sessionStorage.getItem('__pksxHoldCatalogueResponse') === 'true'
+						) {
+							sessionStorage.removeItem('__pksxHoldCatalogueResponse');
+							heldRequestIds.add(request.id);
+						}
+						return Reflect.apply(target, thisArg, args);
+					}
+				}) as typeof worker.postMessage;
+				const addEventListener = worker.addEventListener.bind(worker);
+				worker.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject) => {
+					if (type !== 'message') {
+						addEventListener(type, listener);
+						return;
+					}
+					addEventListener(type, (event: Event) => {
+						const response = (event as MessageEvent).data as { id?: string } | null;
+						const invoke = () => {
+							if (typeof listener === 'function') listener.call(worker, event);
+							else listener.handleEvent(event);
+						};
+						if (!response?.id || !heldRequestIds.delete(response.id)) {
+							invoke();
+							return;
+						}
+						testWindow.__pksxHeldCatalogueResponses =
+							(testWindow.__pksxHeldCatalogueResponses ?? 0) + 1;
+						releases.push(invoke);
+					});
+				}) as typeof worker.addEventListener;
+				return worker;
+			}
+		}) as typeof Worker;
+	});
+}
+
+async function armCatalogueResponseHold(page: Page) {
+	await page.evaluate(() => sessionStorage.setItem('__pksxHoldCatalogueResponse', 'true'));
+}
+
+async function waitForHeldCatalogueResponse(page: Page) {
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(window as typeof window & { __pksxHeldCatalogueResponses?: number })
+						.__pksxHeldCatalogueResponses ?? 0
+			)
+		)
+		.toBeGreaterThanOrEqual(1);
+}
+
+async function releaseCatalogueResponses(page: Page) {
+	await page.evaluate(() => {
+		sessionStorage.removeItem('__pksxHoldCatalogueResponse');
+		(
+			window as typeof window & { __pksxReleaseCatalogueResponses?: () => void }
+		).__pksxReleaseCatalogueResponses?.();
+	});
 }
 
 async function openDestination(page: Page, destination: Destination, budget: BudgetCase) {
@@ -534,11 +621,11 @@ async function attachTargetScreenshot(
 		const publicSaveCard = page.locator('.save-card').filter({ hasText: '011020251345.sav' });
 		await expect(
 			publicSaveCard,
-			'[SAVEFILE-1] target evidence must render the imported public Save card'
+			'[SAVES-1] target evidence must render the imported public Save card'
 		).toBeVisible();
 		await expect(
 			page.locator('.save-card[aria-busy="true"]'),
-			'[SAVEFILE-1] target evidence must show settled Save card details'
+			'[SAVES-2] target evidence must show settled Save card details'
 		).toHaveCount(0);
 	}
 	const fileName = `responsive-${budget.name}-${destination.key}.png`;
@@ -563,12 +650,23 @@ for (const budget of floorAndTargetCases) {
 	test(`@responsive-matrix [BUDGET-1][FOCUS-1][FOCUS-4] ${budget.name} renders all five destinations`, async ({
 		page
 	}, testInfo) => {
+		await installCatalogueResponseHold(page);
 		await importPublicSave(page);
 
 		for (const destination of destinations) {
 			await test.step(destination.name, async () => {
+				if (destination.key === 'bag') await armCatalogueResponseHold(page);
 				const root = await openDestination(page, destination, budget);
-				await expectDestinationContract(page, destination, budget);
+				if (destination.key === 'bag') {
+					await waitForHeldCatalogueResponse(page);
+					try {
+						await expectDestinationContract(page, destination, budget);
+					} finally {
+						await releaseCatalogueResponses(page);
+					}
+				} else {
+					await expectDestinationContract(page, destination, budget);
+				}
 				await expectDensityContract(root, `${destination.name} ${budget.name}`);
 				await expectFixtureEditables(root, destination, `${destination.name} ${budget.name}`);
 				if (budget.portrait && destination.key === 'boxes')
