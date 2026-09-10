@@ -4368,19 +4368,21 @@ test('Saves imports distinct cards, opens cards and menus, and preserves failure
 		buffer: fixture
 	});
 
-	await expect(page.getByText('alpha.sav imported and made active.')).toBeVisible({
+	const alphaToast = page.locator('.toast-success').filter({
+		hasText: 'alpha.sav imported and made active.'
+	});
+	await expect(alphaToast).toBeVisible({
 		timeout: 15000
 	});
-	let dismissNotification = page.getByRole('button', { name: 'Dismiss notification' });
-	await dismissNotification.focus();
+	await expect(grid).toBeFocused();
 	const alphaTarget = await grid.getAttribute('aria-activedescendant');
 	await page.keyboard.press('ArrowLeft');
-	await page.keyboard.press('x');
-	await expect(dismissNotification).toBeFocused();
+	await expect(grid).toBeFocused();
 	await expect(grid).toHaveAttribute('aria-activedescendant', alphaTarget!);
-	await expect(page.getByRole('dialog', { name: 'Save File Menu' })).toBeHidden();
-	await page.keyboard.press('Enter');
-	await expect(dismissNotification).toBeHidden();
+	await page.keyboard.press('x');
+	await expect(page.getByRole('dialog', { name: 'Save File Menu' })).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(grid).toBeFocused();
 	await expect(page).toHaveURL(/\/saves$/);
 	const alphaCard = page.locator('.save-card').filter({ hasText: 'alpha.sav' });
 	await expect(alphaCard).toContainText('Pokemon Emerald');
@@ -4414,13 +4416,12 @@ test('Saves imports distinct cards, opens cards and menus, and preserves failure
 		buffer: fixture
 	});
 
-	await expect(page.getByText('beta.sav imported and made active.')).toBeVisible({
+	await expect(
+		page.locator('.toast-success').filter({ hasText: 'beta.sav imported and made active.' })
+	).toBeVisible({
 		timeout: 15000
 	});
-	dismissNotification = page.getByRole('button', { name: 'Dismiss notification' });
-	await dismissNotification.focus();
-	await page.keyboard.press('Space');
-	await expect(dismissNotification).toBeHidden();
+	await expect(grid).toBeFocused();
 	await expect(page).toHaveURL(/\/saves$/);
 	await expect(page.locator('.save-card')).toHaveCount(2);
 	await expect(page.locator('.save-card.active')).toContainText('beta.sav');

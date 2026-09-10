@@ -23,35 +23,35 @@
 </script>
 
 <div class="toast-region" role="region" aria-label="Notifications">
-	{#each toasts as toast (toast.id)}
-		<section
-			class={['toast', `toast-${toast.tone}`]}
-			role={toast.tone === 'error' ? 'alert' : 'status'}
-			aria-atomic="true"
-			transition:toastSlide
-		>
-			<span class="toast-mark" aria-hidden="true"></span>
-			<span>{toast.message}</span>
-		</section>
-	{/each}
+	<div class="toast-list" role="status" aria-live="polite" aria-relevant="additions text">
+		{#each toasts as toast (toast.id)}
+			<section class={['toast', `toast-${toast.tone}`]} transition:toastSlide>
+				<span class="toast-mark" aria-hidden="true"></span>
+				<span>{toast.message}</span>
+			</section>
+		{/each}
+	</div>
 </div>
 
 <style>
 	.toast-region {
 		position: fixed;
 		z-index: 900;
-		right: max(var(--pksx-safe-area-right), var(--pksx-space-2, 8px));
-		bottom: max(var(--pksx-safe-area-bottom), var(--pksx-space-2, 8px));
+		right: calc(var(--pksx-safe-area-right) + var(--pksx-space-2, 8px));
+		bottom: calc(var(--pksx-safe-area-bottom) + var(--pksx-space-2, 8px));
 		width: min(
 			360px,
 			calc(
-				100% - max(var(--pksx-safe-area-left), var(--pksx-space-2, 8px)) -
-					max(var(--pksx-safe-area-right), var(--pksx-space-2, 8px))
+				100% - var(--pksx-safe-area-left) - var(--pksx-safe-area-right) - var(--pksx-space-2, 8px) -
+					var(--pksx-space-2, 8px)
 			)
 		);
+		pointer-events: none;
+	}
+
+	.toast-list {
 		display: grid;
 		gap: var(--pksx-space-2, 8px);
-		pointer-events: none;
 	}
 
 	.toast {

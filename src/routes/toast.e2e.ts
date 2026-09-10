@@ -22,10 +22,11 @@ test('one root Toast host delivers across Saves and Boxes without moving focus o
 
 	const notifications = page.getByRole('region', { name: 'Notifications' });
 	await expect(notifications).toHaveCount(1);
+	const announcements = notifications.getByRole('status');
+	await expect(announcements).toHaveCount(1);
+	await expect(announcements).toBeEmpty();
 	await page.getByLabel('Import Save File').setInputFiles(emeraldFixturePath);
-	await expect(
-		notifications.getByRole('status').filter({ hasText: 'imported and made active' })
-	).toBeVisible({
+	await expect(announcements.filter({ hasText: 'imported and made active' })).toBeVisible({
 		timeout: 15_000
 	});
 	await expect(page.getByRole('grid', { name: 'Save Files' })).toBeFocused();
@@ -54,10 +55,21 @@ test('one root Toast host delivers across Saves and Boxes without moving focus o
 		.getByRole('dialog', { name: 'Box Menu' })
 		.getByRole('button', { name: 'Save a backup' })
 		.click();
-	await expect(
-		notifications.getByRole('status').filter({ hasText: 'Backup saved for' })
-	).toBeVisible();
+	await expect(announcements.filter({ hasText: 'Backup saved for' })).toBeVisible();
 	await expect(notifications).toHaveCount(1);
+	await expect(invokingSlot).toBeFocused();
+	expect(
+		await page.locator('.app-shell').evaluate((shell) => ({
+			width: shell.getBoundingClientRect().width,
+			height: shell.getBoundingClientRect().height,
+			scrollWidth: shell.scrollWidth,
+			scrollHeight: shell.scrollHeight
+		}))
+	).toEqual(before);
+	await expect(page.locator('.toast-success').filter({ hasText: 'Backup saved for' })).toHaveCount(
+		0,
+		{ timeout: 5_000 }
+	);
 	await expect(invokingSlot).toBeFocused();
 	expect(
 		await page.locator('.app-shell').evaluate((shell) => ({

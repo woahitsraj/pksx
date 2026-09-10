@@ -18,7 +18,6 @@ export type ToastHost = {
 	readonly toasts: readonly ToastView[];
 	success(message: string): void;
 	error(message: string): void;
-	dismiss(id: string): void;
 	dispose(): void;
 };
 
@@ -55,7 +54,6 @@ export function createToastHost(): ToastHost {
 		error(message) {
 			deliver('error', message);
 		},
-		dismiss,
 		dispose() {
 			for (const id of [...timers.keys()]) dismiss(id);
 		}

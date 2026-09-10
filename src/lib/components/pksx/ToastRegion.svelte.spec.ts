@@ -14,31 +14,27 @@ afterEach(async () => {
 	document.body.replaceChildren();
 });
 
-test('announces deliveries without taking focus or changing destination layout', () => {
-	const destination = document.createElement('main');
+test('announces deliveries after mount without taking focus', () => {
 	const invokingControl = document.createElement('button');
 	invokingControl.textContent = 'Save';
-	destination.append(invokingControl);
-	document.body.append(destination);
+	document.body.append(invokingControl);
 
 	host = createToastHost();
 	component = mount(ToastRegion, { target: document.body, props: { toasts: host.toasts } });
+	const liveRegion = document.querySelector('[role="status"]');
+	expect(liveRegion).not.toBeNull();
+	expect(liveRegion?.textContent?.trim()).toBe('');
 	invokingControl.focus();
-	const before = destination.getBoundingClientRect();
 
 	host.success('Boxes action completed.');
 	host.error('Save File action failed.');
 	flushSync();
 
-	expect(document.querySelector('[role="status"]')?.textContent).toContain(
-		'Boxes action completed.'
-	);
-	expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-		'Save File action failed.'
-	);
+	expect(liveRegion?.textContent).toContain('Boxes action completed.');
+	expect(liveRegion?.textContent).toContain('Save File action failed.');
+	expect(document.querySelector('[role="alert"]')).toBeNull();
 	expect(document.querySelectorAll('.toast')).toHaveLength(2);
 	expect(document.querySelector('.toast-region button')).toBeNull();
 	expect(getComputedStyle(document.querySelector('.toast-region')!).pointerEvents).toBe('none');
 	expect(document.activeElement).toBe(invokingControl);
-	expect(destination.getBoundingClientRect()).toEqual(before);
 });
