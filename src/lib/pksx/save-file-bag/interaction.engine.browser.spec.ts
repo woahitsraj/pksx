@@ -40,8 +40,7 @@ afterAll(() => {
 
 async function setup(
 	engineForCoordinator: EngineApi = engine,
-	catalogueEngine: Pick<EngineApi, 'getSaveFileInventoryCatalogue'> = engine,
-	reloadWorkspace?: () => Promise<WorkspaceState | null>
+	catalogueEngine: Pick<EngineApi, 'getSaveFileInventoryCatalogue'> = engine
 ) {
 	const response = await fetch(emeraldUrl);
 	const fixtureBytes = new Uint8Array(await response.arrayBuffer());
@@ -101,8 +100,7 @@ async function setup(
 			activeBox: 0,
 			coordinator,
 			engine: catalogueEngine,
-			toast,
-			reloadWorkspace
+			toast
 		}
 	});
 	await tick();
@@ -424,7 +422,7 @@ describe('Save File Bag with a real public fixture', () => {
 		expect(fixtureBytes).toEqual(unchangedFixture);
 	}, 60_000);
 
-	test('uses one shared session for Bag origin, pending state, and Retry', async () => {
+	test('uses one shared session for Bag origin, pending state, and coordinator Retry', async () => {
 		const firstEdit = deferred<void>();
 		const fatalEdit = deferred<void>();
 		let editCall = 0;
@@ -436,7 +434,14 @@ describe('Save File Bag with a real public fixture', () => {
 				return engine.applySaveFileEditOperation(...args);
 			}
 		);
-		const coordinatorEngine: EngineApi = { ...engine, applySaveFileEditOperation };
+		const loadSaveWorkspace = vi.fn<EngineApi['loadSaveWorkspace']>((...args) =>
+			engine.loadSaveWorkspace(...args)
+		);
+		const coordinatorEngine: EngineApi = {
+			...engine,
+			applySaveFileEditOperation,
+			loadSaveWorkspace
+		};
 		const staleCatalogue =
 			deferred<Awaited<ReturnType<EngineApi['getSaveFileInventoryCatalogue']>>>();
 		let catalogueCall = 0;
@@ -447,8 +452,6 @@ describe('Save File Bag with a real public fixture', () => {
 				return engine.getSaveFileInventoryCatalogue(...args);
 			}
 		);
-		let reloadValue: WorkspaceState | null = null;
-		const reloadWorkspace = vi.fn(async () => reloadValue);
 		const {
 			fixtureBytes,
 			unchangedFixture,
@@ -460,7 +463,8 @@ describe('Save File Bag with a real public fixture', () => {
 			openWorkspace,
 			subscribePending,
 			harness
-		} = await setup(coordinatorEngine, { getSaveFileInventoryCatalogue }, reloadWorkspace);
+		} = await setup(coordinatorEngine, { getSaveFileInventoryCatalogue });
+		const recoverWorkspace = vi.spyOn(coordinator, 'recoverWorkspace');
 		await vi.waitFor(() =>
 			expect((target(`pocket-${pocket.key}-add`) as HTMLButtonElement).disabled).toBe(false)
 		);
@@ -494,9 +498,10 @@ describe('Save File Bag with a real public fixture', () => {
 		});
 		props.onItemQuantityCommit?.(pocket.key, item.id, 'enter');
 		await vi.waitFor(() => expect(harness.currentPendingTargets().length).toBeGreaterThan(0));
-		reloadValue = harness.currentWorkspace();
+		const recoveryBasis = harness.currentWorkspace();
+		const recoveryBytes = recoveryBasis.bytes.slice();
 		const originBeforeFailure = harness.currentOrigin();
-		coordinator.replaceWorkspace(reloadValue, 0);
+		coordinator.replaceWorkspace(recoveryBasis, 0);
 		fatalEdit.resolve();
 		await vi.waitFor(() => {
 			const view = harness.currentLedgerProps().view;
@@ -516,7 +521,15 @@ describe('Save File Bag with a real public fixture', () => {
 			expect(view.status).toBe('ready');
 			if (view.status === 'ready') expect(view.editingUnavailable).toBeNull();
 		});
-		expect(reloadWorkspace).toHaveBeenCalledOnce();
+		expect(recoverWorkspace).toHaveBeenCalledOnce();
+		expect(recoverWorkspace).toHaveBeenCalledWith(originBeforeFailure, {
+			isCurrent: expect.any(Function)
+		});
+		expect(loadSaveWorkspace).toHaveBeenCalledOnce();
+		expect(loadSaveWorkspace.mock.calls[0][0]).toEqual(recoveryBytes);
+		expect(loadSaveWorkspace.mock.calls[0][0]).not.toBe(recoveryBasis.bytes);
+		expect(harness.currentWorkspace().bytes).toEqual(recoveryBytes);
+		expect(harness.currentWorkspace().workspace).toEqual(recoveryBasis.workspace);
 		expect(subscribePending).toHaveBeenCalledTimes(2);
 		await vi.waitFor(() =>
 			expect(harness.currentLedgerProps().catalogues?.[pocket.key]?.status).toBe('ready')

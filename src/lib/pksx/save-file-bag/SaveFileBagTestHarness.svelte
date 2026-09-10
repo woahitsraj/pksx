@@ -15,25 +15,16 @@
 		coordinator: SaveFileEditCoordinator;
 		engine: Pick<EngineApi, 'getSaveFileInventoryCatalogue'>;
 		toast: Pick<ToastHost, 'error'>;
-		reloadWorkspace?: () => Promise<WorkspaceState | null>;
 	}
 
-	let {
-		workspace: initialWorkspace,
-		activeBox,
-		coordinator,
-		engine,
-		toast,
-		reloadWorkspace
-	}: Props = $props();
+	let { workspace: initialWorkspace, activeBox, coordinator, engine, toast }: Props = $props();
 	const coordinatorInstance = untrack(() => coordinator);
 	const edits = untrack(() =>
 		createSaveFileTrainerMoneyController({
 			workspace: initialWorkspace,
 			activeBox,
 			coordinator: coordinatorInstance,
-			toast,
-			reloadWorkspace: reloadWorkspace ?? (async () => initialWorkspace)
+			toast
 		})
 	);
 	const bag = untrack(() =>
