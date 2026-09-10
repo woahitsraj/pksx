@@ -37,9 +37,7 @@ vi.mock('$lib/pksx/saves-cache', () => ({
 		const saveFileId = await fakes.storage!.getActiveSaveFileId();
 		if (!saveFileId) return null;
 		const cached = fakes.service!.current;
-		return cached?.file.id === saveFileId
-			? cached
-			: await fakes.service!.hydrate(saveFileId, 0);
+		return cached?.file.id === saveFileId ? cached : await fakes.service!.hydrate(saveFileId, 0);
 	}
 }));
 
