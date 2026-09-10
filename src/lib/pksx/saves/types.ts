@@ -110,6 +110,18 @@ export type PutWorkspaceInput = {
 	expectedUpdatedAt?: string | null;
 };
 
+export type EnsureAutomaticBackupInput = {
+	saveFileId: SaveFileId;
+	importedAt: string;
+	expectedUpdatedAt: string | null;
+	reason: BackupReason;
+};
+
+export type EnsureAutomaticBackupResult = {
+	workspace: StoredWorkspace;
+	established: boolean;
+};
+
 export type SavesStorage = {
 	importSave(input: ImportSaveInput): Promise<StoredSaveFile>;
 	getSave(saveFileId: SaveFileId): Promise<StoredSaveFile | null>;
@@ -124,6 +136,7 @@ export type SavesStorage = {
 	setActiveSaveFileId(saveFileId: SaveFileId): Promise<StoredSaveFile>;
 	deleteSave(saveFileId: SaveFileId): Promise<void>;
 	createBackup(input: CreateBackupInput): Promise<BackupMetadata>;
+	ensureAutomaticBackup(input: EnsureAutomaticBackupInput): Promise<EnsureAutomaticBackupResult>;
 	listBackups(saveFileId: SaveFileId): Promise<BackupMetadata[]>;
 	getBackupBytes(backupId: BackupId): Promise<Uint8Array | null>;
 	deleteBackup(backupId: BackupId): Promise<void>;

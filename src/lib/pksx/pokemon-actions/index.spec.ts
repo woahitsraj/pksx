@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createMockEngine, type PokemonActionPreview } from '$lib/engine';
-import { createCleanWorkspaceState } from '$lib/pksx/backup-workflow';
+import { createCleanWorkspaceState, type WorkspaceState } from '$lib/pksx/backup-workflow';
 import {
 	applyPokemonAction,
 	clearPokemonActionSelection,
@@ -134,7 +134,11 @@ describe('Pokemon Actions', () => {
 	});
 
 	it('backs up and dirties Save File-owned applies', async () => {
-		const createAutomaticBackup = vi.fn(async () => undefined);
+		const prepareAutomaticBackup = vi.fn(async (state: WorkspaceState) => ({
+			state: { ...state, automaticBackupCreated: true },
+			revision: 'revision-1',
+			established: true
+		}));
 		const persistWorkspace = vi.fn(async () => undefined);
 		const result = await applyPokemonAction(
 			createMockEngine(),
@@ -146,7 +150,7 @@ describe('Pokemon Actions', () => {
 			},
 			{ kind: 'evolve', choiceId: '26:0:7:0:0' },
 			{
-				createAutomaticBackup,
+				prepareAutomaticBackup,
 				persistWorkspace,
 				persistStoredPokemon: vi.fn()
 			}
@@ -157,26 +161,29 @@ describe('Pokemon Actions', () => {
 			owner: 'save-file',
 			workspace: { dirty: true, automaticBackupCreated: true }
 		});
-		expect(createAutomaticBackup).toHaveBeenCalledWith(workspace, 'evolution');
-		expect(persistWorkspace).toHaveBeenCalledOnce();
+		expect(prepareAutomaticBackup).toHaveBeenCalledWith(workspace, 'evolution');
+		expect(persistWorkspace).toHaveBeenCalledWith(
+			expect.objectContaining({ dirty: true }),
+			'revision-1'
+		);
 	});
 
 	it('persists Pokemon Storage applies without creating a Save File Backup', async () => {
-		const createAutomaticBackup = vi.fn();
+		const prepareAutomaticBackup = vi.fn();
 		const persistStoredPokemon = vi.fn(async () => undefined);
 		const result = await applyPokemonAction(
 			createMockEngine(),
 			{ owner: 'pokemon-storage', entityBytesBase64: 'bW9jay1waWthY2h1' },
 			{ kind: 'evolve', choiceId: '26:0:7:0:0' },
 			{
-				createAutomaticBackup,
+				prepareAutomaticBackup,
 				persistWorkspace: vi.fn(),
 				persistStoredPokemon
 			}
 		);
 
 		expect(result).toMatchObject({ ok: true, owner: 'pokemon-storage' });
-		expect(createAutomaticBackup).not.toHaveBeenCalled();
+		expect(prepareAutomaticBackup).not.toHaveBeenCalled();
 		expect(persistStoredPokemon).toHaveBeenCalledOnce();
 	});
 
@@ -199,7 +206,11 @@ describe('Pokemon Actions', () => {
 			},
 			{ kind: 'evolve', choiceId: 'missing' },
 			{
-				createAutomaticBackup: vi.fn(),
+				prepareAutomaticBackup: vi.fn(async (state: WorkspaceState) => ({
+					state,
+					revision: 'revision-1',
+					established: false
+				})),
 				persistWorkspace,
 				persistStoredPokemon: vi.fn()
 			}

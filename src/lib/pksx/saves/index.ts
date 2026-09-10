@@ -1,4 +1,5 @@
 export { bytesEqual, copyBytes } from './bytes';
+export { stableAutomaticBackupId } from './automatic-backup';
 export { WorkspaceRevisionConflictError } from './workspace-revision';
 export { CapacitorSavesStorage } from './capacitor-storage';
 export { deleteIndexedDbSaves, IndexedDbSavesStorage } from './indexed-db-storage';
@@ -10,6 +11,8 @@ export type {
 	BackupMetadata,
 	BackupReason,
 	CreateBackupInput,
+	EnsureAutomaticBackupInput,
+	EnsureAutomaticBackupResult,
 	ImportSaveInput,
 	PutWorkspaceInput,
 	SavesStorage,

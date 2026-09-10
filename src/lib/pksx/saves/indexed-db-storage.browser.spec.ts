@@ -177,6 +177,70 @@ describe('IndexedDbSavesStorage', () => {
 		expect(await storage.getWorkspace(saveFile.id)).toEqual(second);
 	});
 
+	it('atomically prepares one automatic Backup and preserves it across a byte-identical Restore', async () => {
+		const bytes = new Uint8Array([1, 2, 3]);
+		const saveFile = await storage.importSave({ bytes, originalFileName: null });
+		const first = await storage.ensureAutomaticBackup({
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			expectedUpdatedAt: null,
+			reason: 'trainer-editing'
+		});
+		const repeated = await storage.ensureAutomaticBackup({
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			expectedUpdatedAt: first.workspace.updatedAt,
+			reason: 'inventory-editing'
+		});
+		expect(first.established).toBe(true);
+		expect(repeated).toEqual({ workspace: first.workspace, established: false });
+		expect(await storage.listBackups(saveFile.id)).toEqual([
+			expect.objectContaining({
+				reason: 'trainer-editing',
+				createdAt: '2026-05-16T12:00:00.000Z'
+			})
+		]);
+
+		const restored = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes,
+			dirty: false,
+			automaticBackupCreated: false,
+			expectedUpdatedAt: first.workspace.updatedAt
+		});
+		await storage.ensureAutomaticBackup({
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			expectedUpdatedAt: restored.updatedAt,
+			reason: 'inventory-editing'
+		});
+		expect(new Set((await storage.listBackups(saveFile.id)).map(({ id }) => id)).size).toBe(2);
+	});
+
+	it('rejects obsolete automatic Backup preparation without changing Backup or Workspace state', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		const current = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+
+		await expect(
+			storage.ensureAutomaticBackup({
+				saveFileId: saveFile.id,
+				importedAt: saveFile.importedAt,
+				expectedUpdatedAt: null,
+				reason: 'save-file-editing'
+			})
+		).rejects.toBeInstanceOf(WorkspaceRevisionConflictError);
+		expect(await storage.getWorkspace(saveFile.id)).toEqual(current);
+		expect(await storage.listBackups(saveFile.id)).toEqual([]);
+	});
+
 	it('clears persisted workspace bytes for a save artifact', async () => {
 		const saveFile = await storage.importSave({
 			bytes: new Uint8Array([1, 2, 3]),

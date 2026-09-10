@@ -5,8 +5,7 @@ import type {
 	SlotOperation,
 	SlotOperationResult
 } from '$lib/engine';
-import type { WorkspaceState } from '$lib/pksx/backup-workflow';
-import { markAutomaticBackupCreated, shouldCreateAutomaticBackup } from '$lib/pksx/backup-workflow';
+import type { PreparedAutomaticBackup, WorkspaceState } from '$lib/pksx/backup-workflow';
 
 export type StorageOperationKind = SlotOperation['kind'];
 export type PendingStorageSlotOperation = {
@@ -62,8 +61,8 @@ export type StorageOperationResultState =
 
 export type StorageOperationApplyServices = {
 	engine: EngineApi | null;
-	createAutomaticBackup: (state: WorkspaceState) => Promise<void>;
-	persistWorkspace: (state: WorkspaceState) => Promise<void>;
+	prepareAutomaticBackup: (state: WorkspaceState) => Promise<PreparedAutomaticBackup>;
+	persistWorkspace: (state: WorkspaceState, expectedUpdatedAt: string) => Promise<void>;
 	locationForSlotRef: (ref: SaveSlotRef) => string;
 };
 
@@ -210,13 +209,8 @@ export async function applyStorageOperation(
 		return validation;
 	}
 
-	let workingState = state;
-	let createdAutomaticBackup = false;
-	if (shouldCreateAutomaticBackup(workingState)) {
-		await services.createAutomaticBackup(workingState);
-		workingState = markAutomaticBackupCreated(workingState);
-		createdAutomaticBackup = true;
-	}
+	const prepared = await services.prepareAutomaticBackup(state);
+	const workingState = prepared.state;
 
 	const result = await services.engine.applySlotOperation(
 		workingState.bytes,
@@ -236,7 +230,7 @@ export async function applyStorageOperation(
 
 	const nextState = applySlotOperationResult(workingState, result.value);
 	if (nextState.dirty) {
-		await services.persistWorkspace(nextState);
+		await services.persistWorkspace(nextState, prepared.revision);
 	}
 
 	const focusRef = operation.kind === 'clear' ? operation.source : operation.destination;
@@ -251,7 +245,7 @@ export async function applyStorageOperation(
 			locationForSlotRef: services.locationForSlotRef
 		}),
 		focusRef,
-		createdAutomaticBackup,
+		createdAutomaticBackup: prepared.established,
 		dirtyChanged: nextState.dirty !== state.dirty,
 		mutated: result.value.mutated,
 		effect

@@ -8,12 +8,13 @@ import type {
 import { createPersistedWorkspaceState, type WorkspaceState } from '$lib/pksx/backup-workflow';
 import type {
 	BackupMetadata,
+	EnsureAutomaticBackupInput,
 	PutWorkspaceInput,
 	SavesStorage,
 	StoredSaveFile,
 	StoredWorkspace
 } from '$lib/pksx/saves';
-import { WorkspaceRevisionConflictError } from '$lib/pksx/saves';
+import { stableAutomaticBackupId, WorkspaceRevisionConflictError } from '$lib/pksx/saves';
 import { SaveFileEditCoordinator } from '.';
 
 type Harness = ReturnType<typeof createHarness>;
@@ -71,6 +72,48 @@ function createHarness(...states: WorkspaceState[]) {
 			};
 			backups.set(metadata.id, { metadata, bytes: new Uint8Array(input.bytes) });
 			return metadata;
+		}),
+		ensureAutomaticBackup: vi.fn(async (input: EnsureAutomaticBackupInput) => {
+			const file = files.get(input.saveFileId);
+			if (!file || file.importedAt !== input.importedAt) {
+				throw new Error('The selected Save File is no longer available.');
+			}
+			const previous = workspaces.get(input.saveFileId);
+			if ((previous?.updatedAt ?? null) !== input.expectedUpdatedAt) {
+				throw new WorkspaceRevisionConflictError();
+			}
+			if (previous?.automaticBackupCreated) {
+				return { workspace: previous, established: false };
+			}
+			const bytes = previous?.bytes ?? imported.get(input.saveFileId);
+			if (!bytes) throw new Error('The Save File bytes are no longer available.');
+			const id = stableAutomaticBackupId({
+				saveFileId: input.saveFileId,
+				importedAt: input.importedAt,
+				persistedRevision: previous?.updatedAt ?? file.importedAt,
+				bytes
+			});
+			if (!backups.has(id)) {
+				backups.set(id, {
+					metadata: {
+						id,
+						saveFileId: input.saveFileId,
+						reason: input.reason,
+						byteLength: bytes.byteLength,
+						createdAt: '2026-09-10T12:00:00.000Z'
+					},
+					bytes: new Uint8Array(bytes)
+				});
+			}
+			const stored = {
+				saveFileId: input.saveFileId,
+				bytes: new Uint8Array(bytes),
+				dirty: previous?.dirty ?? false,
+				automaticBackupCreated: true,
+				updatedAt: `2026-09-10T12:00:0${timestamp++}.000Z`
+			};
+			workspaces.set(input.saveFileId, stored);
+			return { workspace: stored, established: true };
 		}),
 		listBackups: vi.fn(async (id: string) =>
 			[...backups.values()]
@@ -284,12 +327,39 @@ describe('Save File edit coordinator', () => {
 		gate.resolve(mutationResult([state], state.bytes, { money: 200 }));
 
 		await expect(pending).resolves.toMatchObject({ ok: true, status: 'committed' });
-		expect(harness.storage.createBackup).toHaveBeenCalledTimes(1);
+		expect(harness.storage.ensureAutomaticBackup).toHaveBeenCalledTimes(2);
+		expect(harness.backups).toHaveLength(1);
 		expect(harness.engine.applySaveFileEditOperation).toHaveBeenCalledTimes(2);
 		expect(vi.mocked(harness.engine.applySaveFileEditOperation).mock.calls[1][0]).toEqual(
 			new Uint8Array([9])
 		);
 		expect(harness.workspaces.get(state.file.id)?.bytes).toEqual(new Uint8Array([10]));
+	});
+
+	it('retries automatic Backup preparation after a same-origin revision conflict', async () => {
+		const state = workspace('save-1', 1);
+		const harness = createHarness(state);
+		vi.mocked(harness.storage.ensureAutomaticBackup).mockImplementationOnce(async () => {
+			harness.workspaces.set(state.file.id, {
+				saveFileId: state.file.id,
+				bytes: new Uint8Array(state.bytes),
+				dirty: false,
+				automaticBackupCreated: false,
+				updatedAt: 'concurrent-write'
+			});
+			throw new WorkspaceRevisionConflictError();
+		});
+		const edits = coordinator(harness);
+
+		await expect(
+			edits.enqueueEdit(edits.openWorkspace(state), {
+				key: 'money',
+				operation: { money: 200 }
+			})
+		).resolves.toMatchObject({ ok: true, status: 'committed' });
+		expect(harness.storage.ensureAutomaticBackup).toHaveBeenCalledTimes(2);
+		expect(harness.engine.applySaveFileEditOperation).toHaveBeenCalledTimes(1);
+		expect(harness.backups.size).toBe(1);
 	});
 
 	it('reapplies after a final conditional write loses to the same Workspace', async () => {
@@ -397,7 +467,7 @@ describe('Save File edit coordinator', () => {
 		expect(pending).toEqual([0]);
 		expect(harness.engine.loadSaveWorkspace).not.toHaveBeenCalled();
 		expect(harness.engine.applySaveFileEditOperation).not.toHaveBeenCalled();
-		expect(harness.storage.createBackup).not.toHaveBeenCalled();
+		expect(harness.storage.ensureAutomaticBackup).not.toHaveBeenCalled();
 		expect(harness.storage.putWorkspace).not.toHaveBeenCalled();
 	});
 
@@ -450,26 +520,27 @@ describe('Save File edit coordinator', () => {
 			operation: { trainerProfile: { trainerName: 'BLUE' } }
 		});
 
-		expect(harness.storage.createBackup).toHaveBeenCalledTimes(1);
-		expect(harness.storage.createBackup).toHaveBeenCalledWith(
+		expect(harness.storage.ensureAutomaticBackup).toHaveBeenCalledTimes(2);
+		expect([...harness.backups.values()].map(({ metadata }) => metadata)).toEqual([
 			expect.objectContaining({
 				reason: 'save-file-editing',
 				id: expect.stringMatching(/^save-file-edit-/)
 			})
-		);
+		]);
 	});
 
 	it('reconciles the stable Backup identity after an interrupted attempt and recreation', async () => {
 		const state = workspace();
 		const harness = createHarness(state);
-		vi.mocked(harness.storage.putWorkspace).mockRejectedValueOnce(new Error('interrupted'));
+		vi.mocked(harness.storage.ensureAutomaticBackup).mockRejectedValueOnce(
+			new Error('interrupted')
+		);
 		const firstCoordinator = coordinator(harness);
 		const failed = await firstCoordinator.enqueueEdit(firstCoordinator.openWorkspace(state), {
 			key: 'money',
 			operation: { money: 200 }
 		});
 		expect(failed).toMatchObject({ ok: false, code: 'backup-write-failed' });
-		const backupId = vi.mocked(harness.storage.createBackup).mock.calls[0][0].id;
 
 		const recreated = coordinator(harness);
 		const retried = await recreated.enqueueEdit(recreated.openWorkspace(state), {
@@ -477,22 +548,24 @@ describe('Save File edit coordinator', () => {
 			operation: { money: 200 }
 		});
 		expect(retried).toMatchObject({ ok: true, status: 'committed' });
-		expect(harness.storage.createBackup).toHaveBeenCalledTimes(1);
-		expect([...harness.backups.keys()]).toEqual([backupId]);
+		expect(harness.backups.size).toBe(1);
+		expect([...harness.backups.keys()][0]).toMatch(/^save-file-edit-/);
 	});
 
 	it('uses the persisted revision to distinguish a byte-identical restored Workspace', async () => {
 		const state = workspace();
 		const harness = createHarness(state);
-		vi.mocked(harness.storage.putWorkspace).mockRejectedValueOnce(new Error('interrupted'));
 		const firstCoordinator = coordinator(harness);
 		await firstCoordinator.enqueueEdit(firstCoordinator.openWorkspace(state), {
 			key: 'money',
 			operation: { money: 200 }
 		});
-		const firstId = vi.mocked(harness.storage.createBackup).mock.calls[0][0].id;
+		const firstId = [...harness.backups.keys()][0];
 		harness.workspaces.set(state.file.id, {
 			...harness.workspaces.get(state.file.id)!,
+			bytes: new Uint8Array(state.bytes),
+			dirty: state.dirty,
+			automaticBackupCreated: false,
 			updatedAt: '2026-09-10T13:00:00.000Z'
 		});
 
@@ -501,15 +574,15 @@ describe('Save File edit coordinator', () => {
 			key: 'money',
 			operation: { money: 200 }
 		});
-		const secondId = vi.mocked(harness.storage.createBackup).mock.calls[1][0].id;
+		const secondId = [...harness.backups.keys()].find((id) => id !== firstId);
 		expect(secondId).not.toBe(firstId);
 	});
 
 	it('prevents mutation and cancels queued edits when Backup creation fails', async () => {
 		const state = workspace();
 		const harness = createHarness(state);
-		const gate = deferred<BackupMetadata>();
-		vi.mocked(harness.storage.createBackup).mockImplementationOnce(() => gate.promise);
+		const gate = deferred<never>();
+		vi.mocked(harness.storage.ensureAutomaticBackup).mockImplementationOnce(() => gate.promise);
 		const edits = coordinator(harness);
 		const origin = edits.openWorkspace(state);
 		const first = edits.enqueueEdit(origin, { key: 'money', operation: { money: 200 } });
@@ -531,13 +604,9 @@ describe('Save File edit coordinator', () => {
 	it('restores the last persisted Workspace and cancels later edits after persistence failure', async () => {
 		const state = workspace();
 		const harness = createHarness(state);
-		vi.mocked(harness.storage.putWorkspace)
-			.mockImplementationOnce(async (input) => {
-				const stored = { ...input, bytes: new Uint8Array(input.bytes), updatedAt: 'backup-marker' };
-				harness.workspaces.set(input.saveFileId, stored);
-				return stored;
-			})
-			.mockRejectedValueOnce(new Error('workspace unavailable'));
+		vi.mocked(harness.storage.putWorkspace).mockRejectedValueOnce(
+			new Error('workspace unavailable')
+		);
 		const edits = coordinator(harness);
 		const origin = edits.openWorkspace(state);
 		const first = edits.enqueueEdit(origin, { key: 'money', operation: { money: 200 } });
@@ -595,8 +664,10 @@ describe('Save File edit coordinator', () => {
 	it('does not publish stale state when identity changes during the Backup write', async () => {
 		const state = workspace();
 		const harness = createHarness(state);
-		const backupGate = deferred<BackupMetadata>();
-		vi.mocked(harness.storage.createBackup).mockImplementationOnce(() => backupGate.promise);
+		const backupGate = deferred<Awaited<ReturnType<SavesStorage['ensureAutomaticBackup']>>>();
+		vi.mocked(harness.storage.ensureAutomaticBackup).mockImplementationOnce(
+			() => backupGate.promise
+		);
 		const publish = vi.fn();
 		const edits = new SaveFileEditCoordinator({
 			storage: harness.storage,
@@ -605,14 +676,17 @@ describe('Save File edit coordinator', () => {
 		});
 		const origin = edits.openWorkspace(state);
 		const pending = edits.enqueueEdit(origin, { key: 'money', operation: { money: 200 } });
-		await vi.waitFor(() => expect(harness.storage.createBackup).toHaveBeenCalled());
+		await vi.waitFor(() => expect(harness.storage.ensureAutomaticBackup).toHaveBeenCalled());
 		edits.replaceWorkspace({ ...state, bytes: new Uint8Array(state.bytes) });
 		backupGate.resolve({
-			id: 'backup',
-			saveFileId: state.file.id,
-			reason: 'save-file-editing',
-			byteLength: 1,
-			createdAt: '2026-09-10T12:00:00.000Z'
+			workspace: {
+				saveFileId: state.file.id,
+				bytes: state.bytes,
+				dirty: false,
+				automaticBackupCreated: true,
+				updatedAt: 'backup-marker'
+			},
+			established: true
 		});
 
 		await expect(pending).resolves.toMatchObject({ ok: false, code: 'stale-workspace' });

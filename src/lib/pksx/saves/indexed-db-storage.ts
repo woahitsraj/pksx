@@ -1,10 +1,13 @@
-import { copyBytes } from './bytes';
+import { stableAutomaticBackupId } from './automatic-backup';
+import { bytesEqual, copyBytes } from './bytes';
 import { clonePokemonStorage } from './pokemon-storage';
 import { nextWorkspaceRevision, WorkspaceRevisionConflictError } from './workspace-revision';
 import type {
 	BackupId,
 	BackupMetadata,
 	CreateBackupInput,
+	EnsureAutomaticBackupInput,
+	EnsureAutomaticBackupResult,
 	ImportSaveInput,
 	SavesStorage,
 	StoredPokemonStorage,
@@ -350,6 +353,103 @@ export class IndexedDbSavesStorage implements SavesStorage {
 		return { ...backup };
 	}
 
+	async ensureAutomaticBackup(
+		input: EnsureAutomaticBackupInput
+	): Promise<EnsureAutomaticBackupResult> {
+		const database = await openSavesDatabase(this.#databaseName);
+		const transaction = database.transaction(
+			[saveFilesStore, saveBytesStore, workspacesStore, backupsStore, backupBytesStore],
+			'readwrite'
+		);
+		try {
+			const saveFile = await requestToPromise<StoredSaveFile | undefined>(
+				transaction.objectStore(saveFilesStore).get(input.saveFileId)
+			);
+			if (!saveFile || saveFile.importedAt !== input.importedAt) {
+				throw new Error('The selected Save File is no longer available.');
+			}
+
+			const workspaceStore = transaction.objectStore(workspacesStore);
+			const previous = await requestToPromise<WorkspaceRecord | undefined>(
+				workspaceStore.get(input.saveFileId)
+			);
+			if ((previous?.updatedAt ?? null) !== input.expectedUpdatedAt) {
+				throw new WorkspaceRevisionConflictError();
+			}
+			if (previous?.automaticBackupCreated) {
+				await transactionDone(transaction);
+				return { workspace: cloneWorkspace(previous), established: false };
+			}
+
+			const bytes = previous
+				? previous.bytes
+				: (
+						await requestToPromise<SaveBytesRecord | undefined>(
+							transaction.objectStore(saveBytesStore).get(input.saveFileId)
+						)
+					)?.bytes;
+			if (!bytes) throw new Error('The Save File bytes are no longer available.');
+
+			const backupId = stableAutomaticBackupId({
+				saveFileId: input.saveFileId,
+				importedAt: input.importedAt,
+				persistedRevision: previous?.updatedAt ?? saveFile.importedAt,
+				bytes
+			});
+			const backupStore = transaction.objectStore(backupsStore);
+			const backupBytesStoreObject = transaction.objectStore(backupBytesStore);
+			const [existingBackup, existingBytes] = await Promise.all([
+				requestToPromise<BackupMetadata | undefined>(backupStore.get(backupId)),
+				requestToPromise<BackupBytesRecord | undefined>(backupBytesStoreObject.get(backupId))
+			]);
+			if (
+				existingBackup &&
+				(existingBackup.saveFileId !== input.saveFileId ||
+					existingBackup.byteLength !== bytes.byteLength)
+			) {
+				throw new Error('The automatic Backup identity belongs to different content.');
+			}
+			if (existingBytes && !bytesEqual(existingBytes.bytes, bytes)) {
+				throw new Error('The automatic Backup bytes do not match their identity.');
+			}
+			if (!existingBytes) {
+				backupBytesStoreObject.put({
+					backupId,
+					bytes: copyBytes(bytes)
+				} satisfies BackupBytesRecord);
+			}
+			if (!existingBackup) {
+				backupStore.put({
+					id: backupId,
+					saveFileId: input.saveFileId,
+					reason: input.reason,
+					byteLength: bytes.byteLength,
+					createdAt: this.#now()
+				} satisfies BackupMetadata);
+			}
+
+			const workspace: StoredWorkspace = {
+				saveFileId: input.saveFileId,
+				bytes: copyBytes(bytes),
+				dirty: previous?.dirty ?? false,
+				automaticBackupCreated: true,
+				updatedAt: nextWorkspaceRevision(previous?.updatedAt, this.#now())
+			};
+			workspaceStore.put({ ...workspace, bytes: copyBytes(bytes) } satisfies WorkspaceRecord);
+			await transactionDone(transaction);
+			return { workspace: cloneWorkspace(workspace), established: true };
+		} catch (error) {
+			try {
+				transaction.abort();
+			} catch {
+				// The transaction already completed or aborted.
+			}
+			throw error;
+		} finally {
+			database.close();
+		}
+	}
+
 	async listBackups(saveFileId: SaveFileId): Promise<BackupMetadata[]> {
 		const database = await openSavesDatabase(this.#databaseName);
 		try {
@@ -464,4 +564,8 @@ function transactionDone(transaction: IDBTransaction): Promise<void> {
 			reject(transaction.error ?? new Error('IndexedDB transaction failed'));
 		transaction.oncomplete = () => resolve();
 	});
+}
+
+function cloneWorkspace(workspace: StoredWorkspace): StoredWorkspace {
+	return { ...workspace, bytes: copyBytes(workspace.bytes) };
 }

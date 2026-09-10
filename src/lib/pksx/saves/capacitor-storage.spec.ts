@@ -1,18 +1,20 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { bytesEqual } from './bytes';
+import { stableAutomaticBackupId } from './automatic-backup';
 import { CapacitorSavesStorage, type NativeFileStore } from './capacitor-storage';
 import { WorkspaceRevisionConflictError } from './workspace-revision';
 
 describe('CapacitorSavesStorage', () => {
 	let files: Map<string, string | Uint8Array>;
 	let storage: CapacitorSavesStorage;
+	let fileStore: NativeFileStore;
 	let failCatalogWrites: number;
 
 	beforeEach(() => {
 		files = new Map();
 		failCatalogWrites = 0;
 		const ids = ['save-1', 'backup-1'];
-		const fileStore: NativeFileStore = {
+		fileStore = {
 			async readText(path) {
 				const value = files.get(path);
 				return typeof value === 'string' ? value : null;
@@ -180,5 +182,84 @@ describe('CapacitorSavesStorage', () => {
 			})
 		).rejects.toThrow('catalog unavailable');
 		expect(await storage.getWorkspace(saveFile.id)).toEqual(persisted);
+	});
+
+	it('reconciles orphan automatic Backup bytes after catalog failure and recreation', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1, 2, 3]),
+			originalFileName: null
+		});
+		failCatalogWrites = 1;
+
+		await expect(
+			storage.ensureAutomaticBackup({
+				saveFileId: saveFile.id,
+				importedAt: saveFile.importedAt,
+				expectedUpdatedAt: null,
+				reason: 'inventory-editing'
+			})
+		).rejects.toThrow('catalog unavailable');
+		expect(await storage.getWorkspace(saveFile.id)).toBeNull();
+		expect(await storage.listBackups(saveFile.id)).toEqual([]);
+		const orphanPath = [...files.keys()].find((path) => path.startsWith('backups/'));
+		expect(orphanPath).toBeDefined();
+
+		const recreated = new CapacitorSavesStorage({
+			fileStore,
+			now: () => '2026-05-16T12:00:00.000Z'
+		});
+		const prepared = await recreated.ensureAutomaticBackup({
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			expectedUpdatedAt: null,
+			reason: 'inventory-editing'
+		});
+
+		expect(prepared.established).toBe(true);
+		expect(await recreated.listBackups(saveFile.id)).toHaveLength(1);
+		expect([...files.keys()].filter((path) => path.startsWith('backups/'))).toEqual([orphanPath]);
+	});
+
+	it('preserves reconciled automatic Backup metadata and distinguishes a byte-identical Restore', async () => {
+		const bytes = new Uint8Array([4, 5, 6]);
+		const saveFile = await storage.importSave({ bytes, originalFileName: null });
+		const stableId = stableAutomaticBackupId({
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			persistedRevision: saveFile.importedAt,
+			bytes
+		});
+		const existing = await storage.createBackup({
+			id: stableId,
+			saveFileId: saveFile.id,
+			bytes,
+			reason: 'trainer-editing'
+		});
+		const first = await storage.ensureAutomaticBackup({
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			expectedUpdatedAt: null,
+			reason: 'inventory-editing'
+		});
+		expect(await storage.listBackups(saveFile.id)).toEqual([existing]);
+
+		const restored = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes,
+			dirty: false,
+			automaticBackupCreated: false,
+			expectedUpdatedAt: first.workspace.updatedAt
+		});
+		await storage.ensureAutomaticBackup({
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			expectedUpdatedAt: restored.updatedAt,
+			reason: 'inventory-editing'
+		});
+
+		const backups = await storage.listBackups(saveFile.id);
+		expect(backups).toHaveLength(2);
+		expect(backups.map(({ id }) => id)).toContain(stableId);
+		expect(new Set(backups.map(({ id }) => id)).size).toBe(2);
 	});
 });

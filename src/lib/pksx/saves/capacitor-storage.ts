@@ -1,11 +1,14 @@
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
-import { copyBytes } from './bytes';
+import { stableAutomaticBackupId } from './automatic-backup';
+import { bytesEqual, copyBytes } from './bytes';
 import { clonePokemonStorage } from './pokemon-storage';
 import { nextWorkspaceRevision, WorkspaceRevisionConflictError } from './workspace-revision';
 import type {
 	BackupId,
 	BackupMetadata,
 	CreateBackupInput,
+	EnsureAutomaticBackupInput,
+	EnsureAutomaticBackupResult,
 	ImportSaveInput,
 	SavesStorage,
 	PutWorkspaceInput,
@@ -231,6 +234,86 @@ export class CapacitorSavesStorage implements SavesStorage {
 			];
 			await this.#writeCatalog(catalog);
 			return { ...backup };
+		});
+	}
+
+	ensureAutomaticBackup(input: EnsureAutomaticBackupInput): Promise<EnsureAutomaticBackupResult> {
+		return this.#run(async () => {
+			const catalog = await this.#readCatalog();
+			const saveFile = catalog.saves.find(({ id }) => id === input.saveFileId);
+			if (!saveFile || saveFile.importedAt !== input.importedAt) {
+				throw new Error('The selected Save File is no longer available.');
+			}
+
+			const previous = catalog.workspaces[input.saveFileId];
+			if ((previous?.updatedAt ?? null) !== input.expectedUpdatedAt) {
+				throw new WorkspaceRevisionConflictError();
+			}
+			const workspacePath = workspaceBytesPath(input.saveFileId);
+			if (previous?.automaticBackupCreated) {
+				const bytes = await this.#fileStore.readBytes(workspacePath);
+				if (!bytes) throw new Error('The persisted Workspace bytes are missing.');
+				return { workspace: { ...previous, bytes }, established: false };
+			}
+
+			const bytes = previous
+				? await this.#fileStore.readBytes(workspacePath)
+				: await this.#fileStore.readBytes(saveBytesPath(input.saveFileId));
+			if (!bytes) throw new Error('The Save File bytes are no longer available.');
+			const backupId = stableAutomaticBackupId({
+				saveFileId: input.saveFileId,
+				importedAt: input.importedAt,
+				persistedRevision: previous?.updatedAt ?? saveFile.importedAt,
+				bytes
+			});
+			const existingBackup = catalog.backups.find(({ id }) => id === backupId);
+			const backupPath = backupBytesPath(backupId);
+			const existingBytes = await this.#fileStore.readBytes(backupPath);
+			if (
+				existingBackup &&
+				(existingBackup.saveFileId !== input.saveFileId ||
+					existingBackup.byteLength !== bytes.byteLength)
+			) {
+				throw new Error('The automatic Backup identity belongs to different content.');
+			}
+			if (existingBytes && !bytesEqual(existingBytes, bytes)) {
+				throw new Error('The automatic Backup bytes do not match their identity.');
+			}
+			if (!existingBytes) await this.#fileStore.writeBytes(backupPath, bytes);
+			if (!existingBackup) {
+				catalog.backups.push({
+					id: backupId,
+					saveFileId: input.saveFileId,
+					reason: input.reason,
+					byteLength: bytes.byteLength,
+					createdAt: this.#now()
+				});
+			}
+
+			const metadata: WorkspaceMetadata = {
+				saveFileId: input.saveFileId,
+				dirty: previous?.dirty ?? false,
+				automaticBackupCreated: true,
+				updatedAt: nextWorkspaceRevision(previous?.updatedAt, this.#now())
+			};
+			const previousWorkspaceBytes = previous
+				? null
+				: await this.#fileStore.readBytes(workspacePath);
+			if (!previous) await this.#fileStore.writeBytes(workspacePath, bytes);
+			catalog.workspaces[input.saveFileId] = metadata;
+			try {
+				await this.#writeCatalog(catalog);
+			} catch (error) {
+				if (!previous) {
+					if (previousWorkspaceBytes) {
+						await this.#fileStore.writeBytes(workspacePath, previousWorkspaceBytes);
+					} else {
+						await this.#fileStore.delete(workspacePath);
+					}
+				}
+				throw error;
+			}
+			return { workspace: { ...metadata, bytes: copyBytes(bytes) }, established: true };
 		});
 	}
 

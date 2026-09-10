@@ -7,8 +7,7 @@ import {
 import {
 	createCleanWorkspaceState,
 	createPersistedWorkspaceState,
-	markAutomaticBackupCreated,
-	shouldCreateAutomaticBackup,
+	prepareAutomaticBackup,
 	type WorkspaceState
 } from '$lib/pksx/backup-workflow';
 import {
@@ -304,20 +303,6 @@ export class SaveFileEditCoordinator {
 			return { ok: true, status: 'noop', origin: record.origin, workspace: latest };
 		}
 
-		try {
-			latest = await this.ensureAutomaticBackup(record, latest);
-		} catch (error) {
-			if (error instanceof StaleWorkspaceRecoveryError) {
-				return this.recoveryFailure(record.origin, error);
-			}
-			if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
-			if (error instanceof StaleWorkspaceError) {
-				return this.staleResult(record.origin, latest);
-			}
-			return this.failedResult(record, generation, 'backup-write-failed', error, latest);
-		}
-		if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
-
 		return this.applyAgainstLatest(record, request, generation, latest);
 	}
 
@@ -329,6 +314,28 @@ export class SaveFileEditCoordinator {
 	): Promise<SaveFileEditResult> {
 		let latest = initial;
 		for (;;) {
+			try {
+				latest = await this.ensureAutomaticBackup(record, latest);
+			} catch (error) {
+				if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
+				if (error instanceof StaleWorkspaceError) {
+					return this.staleResult(record.origin, latest);
+				}
+				if (error instanceof WorkspaceRevisionConflictError) {
+					const reloaded = await this.reloadAfterConcurrentWrite(
+						record,
+						generation,
+						request,
+						latest
+					);
+					if ('result' in reloaded) return reloaded.result;
+					latest = reloaded.workspace;
+					continue;
+				}
+				return this.failedResult(record, generation, 'backup-write-failed', error, latest);
+			}
+			if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
+
 			let mutation;
 			try {
 				mutation = await this.engine.applySaveFileEditOperation(
@@ -492,46 +499,18 @@ export class SaveFileEditCoordinator {
 	}
 
 	private async ensureAutomaticBackup(record: OriginRecord, workspace: WorkspaceState) {
-		if (!shouldCreateAutomaticBackup(workspace)) return workspace;
-		const id = stableAutomaticBackupId(
-			workspace,
-			record.persistedRevision ?? workspace.file.importedAt
-		);
-		const existing = (await this.options.storage.listBackups(workspace.file.id)).find(
-			(backup) => backup.id === id
-		);
-		if (!this.currentRecord(record.origin)) throw new StaleWorkspaceError();
-		const existingBytes = existing ? await this.options.storage.getBackupBytes(id) : null;
-		if (!this.currentRecord(record.origin)) throw new StaleWorkspaceError();
-		if (!existing || !existingBytes || !bytesEqual(existingBytes, workspace.bytes)) {
-			await this.options.storage.createBackup({
-				id,
-				saveFileId: workspace.file.id,
-				bytes: workspace.bytes,
-				reason: 'save-file-editing'
-			});
-		}
-		if (!this.currentRecord(record.origin)) throw new StaleWorkspaceError();
-
-		const next = markAutomaticBackupCreated(workspace);
-		const stored = await this.options.storage.putWorkspace({
-			saveFileId: next.file.id,
-			bytes: next.bytes,
-			dirty: next.dirty,
-			automaticBackupCreated: true,
-			expectedUpdatedAt: record.storedRevision
+		const prepared = await prepareAutomaticBackup({
+			storage: this.options.storage,
+			state: workspace,
+			reason: 'save-file-editing'
 		});
 		if (!this.currentRecord(record.origin)) {
-			await this.restoreCurrentWorkspace(record.file.id, stored.updatedAt);
 			throw new StaleWorkspaceError();
 		}
-		record.latest = copyWorkspace(next);
-		record.persistedRevision = stored.updatedAt;
-		record.storedRevision = stored.updatedAt;
-		if (this.resultIsCurrent(record)) {
-			this.options.publish?.(copyWorkspace(next), record.activeBox);
-		}
-		return next;
+		record.latest = copyWorkspace(prepared.state);
+		record.persistedRevision = prepared.revision;
+		record.storedRevision = prepared.revision;
+		return prepared.state;
 	}
 
 	private async loadLatest(record: OriginRecord) {
@@ -686,14 +665,6 @@ class StaleWorkspaceRecoveryError extends Error {
 	}
 }
 
-export function stableAutomaticBackupId(workspace: WorkspaceState, persistedRevision: string) {
-	const owner = hashString(
-		`${workspace.file.id}\u0000${workspace.file.importedAt}\u0000${persistedRevision}`
-	);
-	const content = hashBytes(workspace.bytes);
-	return `save-file-edit-${owner}-${workspace.bytes.byteLength}-${content}`;
-}
-
 function operationIsNoop(workspace: WorkspaceState, operation: SaveFileEditOperation) {
 	const projection = workspace.workspace.saveFile;
 	if (!projection) return false;
@@ -725,20 +696,6 @@ function operationIsNoop(workspace: WorkspaceState, operation: SaveFileEditOpera
 
 function copyWorkspace(workspace: WorkspaceState): WorkspaceState {
 	return { ...workspace, file: { ...workspace.file }, bytes: copyBytes(workspace.bytes) };
-}
-
-function hashString(value: string) {
-	return hashBytes(new TextEncoder().encode(value));
-}
-
-function hashBytes(bytes: Uint8Array) {
-	let left = 0x811c9dc5;
-	let right = 0x9e3779b9;
-	for (const byte of bytes) {
-		left = Math.imul(left ^ byte, 0x01000193);
-		right = Math.imul(right ^ byte, 0x85ebca6b);
-	}
-	return `${(left >>> 0).toString(36)}${(right >>> 0).toString(36)}`;
 }
 
 function errorMessage(error: unknown) {

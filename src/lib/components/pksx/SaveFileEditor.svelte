@@ -10,11 +10,7 @@
 	} from '$lib/engine';
 	import { onMount } from 'svelte';
 	import { updateAppChrome } from '$lib/pksx/app-chrome.svelte';
-	import {
-		markAutomaticBackupCreated,
-		shouldCreateAutomaticBackup,
-		type WorkspaceState
-	} from '$lib/pksx/backup-workflow';
+	import { prepareAutomaticBackup, type WorkspaceState } from '$lib/pksx/backup-workflow';
 	import {
 		getCachedActiveWorkspaceBox,
 		getSavesStorage,
@@ -308,6 +304,7 @@
 		if (!activeEngine) return;
 		busy = true;
 		syncAppChrome();
+		let preparedRevision: string | null = null;
 		try {
 			const result = await applySaveFileEditorEdits(editor, {
 				verifySource: async (state) => ({
@@ -325,24 +322,13 @@
 							message: 'Load a Save File before applying edits.'
 						};
 					}
-					if (shouldCreateAutomaticBackup(workspace)) {
-						const reason = state.stagedEdits.some((edit) => edit.field === 'inventory')
-							? 'inventory-editing'
-							: 'trainer-editing';
-						await storage.createBackup({
-							saveFileId: workspace.file.id,
-							bytes: workspace.bytes,
-							reason
-						});
-						workspace = markAutomaticBackupCreated(workspace);
-						await storage.putWorkspace({
-							saveFileId: workspace.file.id,
-							bytes: workspace.bytes,
-							dirty: workspace.dirty,
-							automaticBackupCreated: true
-						});
-						setCachedActiveWorkspace(workspace, getCachedActiveWorkspaceBox());
-					}
+					const reason = state.stagedEdits.some((edit) => edit.field === 'inventory')
+						? 'inventory-editing'
+						: 'trainer-editing';
+					const prepared = await prepareAutomaticBackup({ storage, state: workspace, reason });
+					workspace = prepared.state;
+					preparedRevision = prepared.revision;
+					setCachedActiveWorkspace(workspace, getCachedActiveWorkspaceBox());
 					return {
 						ok: true,
 						committedWorkspace: {
@@ -361,6 +347,13 @@
 					}
 					const built = createSaveFileEditOperation(state);
 					if (!built.ok) return built;
+					if (!preparedRevision) {
+						return {
+							ok: false,
+							status: 'failed',
+							message: 'The Save File automatic Backup was not prepared.'
+						};
+					}
 					const mutation = await activeEngine.applySaveFileEditOperation(
 						workspace.bytes,
 						workspace.file.originalFileName ?? undefined,
@@ -391,7 +384,8 @@
 						saveFileId: next.file.id,
 						bytes: next.bytes,
 						dirty: next.dirty,
-						automaticBackupCreated: next.automaticBackupCreated
+						automaticBackupCreated: next.automaticBackupCreated,
+						expectedUpdatedAt: preparedRevision
 					});
 					workspace = next;
 					setCachedActiveWorkspace(next, getCachedActiveWorkspaceBox());
