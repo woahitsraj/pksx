@@ -104,6 +104,9 @@ function createCoordinator() {
 		openWorkspace: vi.fn(() => origin),
 		replaceWorkspace,
 		listPending: vi.fn(() => [...pending]),
+		isPending: vi.fn((_origin, key) =>
+			key === undefined ? pending.length > 0 : pending.some((edit) => edit.key === key)
+		),
 		subscribePending: vi.fn((_origin, listener) => {
 			listeners.add(listener);
 			listener([...pending]);
@@ -210,6 +213,54 @@ describe('Save File Trainer and Money controller', () => {
 		});
 	});
 
+	test('blocks duplicate commits and treats Trainer gender as one pending control', async () => {
+		let finishName!: (result: SaveFileEditResult) => void;
+		const name = controller();
+		name.results.push(new Promise((resolve) => (finishName = resolve)));
+		name.value.ledgerProps.onTrainerNameInput?.('BLUE');
+		name.value.ledgerProps.onTrainerNameCommit?.('enter');
+		name.value.ledgerProps.onTrainerNameCommit?.('blur');
+		expect(name.enqueueEdit).toHaveBeenCalledOnce();
+		finishName({
+			ok: true,
+			status: 'committed',
+			origin: name.value.origin,
+			workspace: workspace({ name: 'BLUE' })
+		});
+		await settled();
+
+		let finishMoney!: (result: SaveFileEditResult) => void;
+		const money = controller();
+		money.results.push(new Promise((resolve) => (finishMoney = resolve)));
+		money.value.ledgerProps.onMoneyInput?.('200');
+		money.value.ledgerProps.onMoneyCommit?.('enter');
+		money.value.ledgerProps.onMoneyCommit?.('blur');
+		expect(money.value.ledgerProps.onMoneyStep?.(1, '200')).toBe(false);
+		expect(money.enqueueEdit).toHaveBeenCalledOnce();
+		finishMoney({
+			ok: true,
+			status: 'committed',
+			origin: money.value.origin,
+			workspace: workspace({ money: 200 })
+		});
+		await settled();
+
+		let finishGender!: (result: SaveFileEditResult) => void;
+		const gender = controller();
+		gender.results.push(new Promise((resolve) => (finishGender = resolve)));
+		gender.value.ledgerProps.onTrainerGenderSelect?.('female');
+		gender.value.ledgerProps.onTrainerGenderSelect?.('male');
+		expect(gender.enqueueEdit).toHaveBeenCalledOnce();
+		finishGender({
+			ok: true,
+			status: 'committed',
+			origin: gender.value.origin,
+			workspace: workspace({ gender: 'female' })
+		});
+		await settled();
+		expect(gender.value.workspace.workspace.saveFile?.trainerProfile.gender).toBe('female');
+	});
+
 	test('consumes a valid Money draft into one bounded operator commit', () => {
 		const { value, enqueueEdit } = controller();
 		value.ledgerProps.onMoneyInput?.('200');
@@ -304,6 +355,24 @@ describe('Save File Trainer and Money controller', () => {
 			error: 'The engine rejected this name.'
 		});
 
+		const invalidGender = controller();
+		invalidGender.results.push({
+			ok: false,
+			status: 'rejected',
+			origin: invalidGender.value.origin,
+			code: 'invalid-save-file-edit',
+			message: 'The engine rejected this gender.',
+			workspace: workspace()
+		});
+		invalidGender.value.ledgerProps.onTrainerGenderSelect?.('female');
+		await settled();
+		expect(invalidGender.value.ledgerProps.errors).toEqual({
+			'trainer-gender': 'The engine rejected this gender.'
+		});
+		expect(invalidGender.toast.error).not.toHaveBeenCalled();
+		invalidGender.value.ledgerProps.onTrainerGenderSelect?.('male');
+		expect(invalidGender.value.ledgerProps.errors).toEqual({});
+
 		const isolated = controller();
 		isolated.results.push({
 			ok: false,
@@ -388,6 +457,8 @@ describe('Save File Trainer and Money controller', () => {
 				...createCoordinator().coordinator,
 				openWorkspace: () => value.origin,
 				listPending: () => [...pending],
+				isPending: (_origin, key) =>
+					key === undefined ? pending.length > 0 : pending.some((edit) => edit.key === key),
 				subscribePending: (_origin, listener) => {
 					listener([...pending]);
 					return () => undefined;
@@ -402,8 +473,6 @@ describe('Save File Trainer and Money controller', () => {
 			'inventory:Items:1'
 		]);
 
-		const coordinator = remounted.ledgerProps;
-		// A rejected current edit exposes Retry without discarding the loaded projection.
 		const retryHarness = controller({ reload: async () => reloaded });
 		retryHarness.results.push({
 			ok: false,
@@ -446,10 +515,6 @@ describe('Save File Trainer and Money controller', () => {
 			projection: { money: { value: 500 } },
 			editingUnavailable: null
 		});
-		expect(coordinator.pendingTargets).toEqual([
-			trainerMoneyPendingKeys.money,
-			'inventory:Items:1'
-		]);
 		unsubscribe();
 
 		remounted.rejectEditing('Bag editing stopped.');

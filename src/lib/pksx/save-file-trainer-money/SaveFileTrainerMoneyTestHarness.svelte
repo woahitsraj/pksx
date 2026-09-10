@@ -39,10 +39,6 @@
 		return controller.ledgerProps;
 	}
 
-	export function rejectEditing(message: string) {
-		controller.rejectEditing(message);
-	}
-
 	onDestroy(controller.dispose);
 </script>
 

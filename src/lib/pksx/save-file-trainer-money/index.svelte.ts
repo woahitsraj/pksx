@@ -18,7 +18,12 @@ export const trainerMoneyPendingKeys = {
 
 export type SaveFileTrainerMoneyCoordinator = Pick<
 	SaveFileEditCoordinator,
-	'openWorkspace' | 'replaceWorkspace' | 'listPending' | 'subscribePending' | 'enqueueEdit'
+	| 'openWorkspace'
+	| 'replaceWorkspace'
+	| 'listPending'
+	| 'isPending'
+	| 'subscribePending'
+	| 'enqueueEdit'
 >;
 
 export type SaveFileTrainerMoneyControllerOptions = {
@@ -33,6 +38,7 @@ export type SaveFileTrainerMoneyLedgerProps = Pick<
 	SaveFileLedgerProps,
 	| 'view'
 	| 'drafts'
+	| 'errors'
 	| 'pendingTargets'
 	| 'onRetryEditing'
 	| 'onTrainerNameInput'
@@ -62,6 +68,7 @@ export function createSaveFileTrainerMoneyController(
 	let trainerNameDraft = $state(acceptedTrainerName(initialWorkspace));
 	let trainerNameDirty = false;
 	let trainerNameError = $state<string | null>(null);
+	let trainerGenderError = $state<string | null>(null);
 	let moneyDraft = $state(acceptedMoney(initialWorkspace));
 	let moneyDirty = false;
 	let moneyError = $state<string | null>(null);
@@ -98,6 +105,7 @@ export function createSaveFileTrainerMoneyController(
 	}
 
 	function onTrainerNameCommit(reason: 'enter' | 'blur') {
+		if (options.coordinator.isPending(origin, trainerMoneyPendingKeys.trainerName)) return;
 		const profile = projection(workspace).trainerProfile;
 		const candidate = trainerNameDraft.trim();
 		const error = validateTrainerName(candidate, profile.trainerNameMaxLength);
@@ -123,6 +131,8 @@ export function createSaveFileTrainerMoneyController(
 	}
 
 	function onTrainerGenderSelect(gender: TrainerGender) {
+		if (trainerGenderPending()) return;
+		trainerGenderError = null;
 		const profile = projection(workspace).trainerProfile;
 		if (gender === profile.gender) return;
 		enqueue(
@@ -141,6 +151,7 @@ export function createSaveFileTrainerMoneyController(
 	}
 
 	function onMoneyCommit(reason: 'enter' | 'blur') {
+		if (options.coordinator.isPending(origin, trainerMoneyPendingKeys.money)) return;
 		const parsed = parseMoney(moneyDraft, workspace);
 		if (!parsed.ok) {
 			moneyError = parsed.message;
@@ -155,6 +166,12 @@ export function createSaveFileTrainerMoneyController(
 	}
 
 	function onMoneyStep(step: -1 | 1 | 'max', draft: string) {
+		if (
+			editingUnavailable ||
+			options.coordinator.isPending(origin, trainerMoneyPendingKeys.money)
+		) {
+			return false;
+		}
 		const parsed = parseMoney(draft, workspace);
 		if (!parsed.ok) {
 			moneyDraft = draft;
@@ -165,8 +182,7 @@ export function createSaveFileTrainerMoneyController(
 		const limits = projection(workspace).money;
 		const value =
 			step === 'max' ? limits.max : Math.max(limits.min, Math.min(limits.max, parsed.value + step));
-		commitMoney(value, 'operator');
-		return true;
+		return commitMoney(value, 'operator');
 	}
 
 	function commitMoney(value: number, mode: CommitMode) {
@@ -174,9 +190,9 @@ export function createSaveFileTrainerMoneyController(
 		if (value === accepted) {
 			restoreMoney();
 			moneyError = null;
-			return;
+			return true;
 		}
-		enqueue({ field: 'money', label: 'Money', mode }, trainerMoneyPendingKeys.money, {
+		return enqueue({ field: 'money', label: 'Money', mode }, trainerMoneyPendingKeys.money, {
 			money: value
 		});
 	}
@@ -186,7 +202,7 @@ export function createSaveFileTrainerMoneyController(
 		key: string,
 		operation: SaveFileEditOperation
 	) {
-		if (editingUnavailable) return;
+		if (editingUnavailable || options.coordinator.isPending(origin, key)) return false;
 		const requestOrigin = origin;
 		void options.coordinator
 			.enqueueEdit(requestOrigin, { key, operation })
@@ -196,6 +212,14 @@ export function createSaveFileTrainerMoneyController(
 					rejectEditing(errorMessage(error));
 				}
 			});
+		return true;
+	}
+
+	function trainerGenderPending() {
+		return (
+			options.coordinator.isPending(origin, trainerMoneyPendingKeys.trainerGenderMale) ||
+			options.coordinator.isPending(origin, trainerMoneyPendingKeys.trainerGenderFemale)
+		);
 	}
 
 	function settle(
@@ -249,6 +273,7 @@ export function createSaveFileTrainerMoneyController(
 			restoreTrainerName();
 			restoreMoney();
 			trainerNameError = null;
+			trainerGenderError = null;
 			moneyError = null;
 			editingUnavailable = null;
 			subscribePending();
@@ -276,11 +301,13 @@ export function createSaveFileTrainerMoneyController(
 
 	function clearFieldError(field: EditableField) {
 		if (field === 'trainer-name') trainerNameError = null;
+		if (field === 'trainer-gender') trainerGenderError = null;
 		if (field === 'money') moneyError = null;
 	}
 
 	function setFieldError(field: EditableField, message: string) {
 		if (field === 'trainer-name') trainerNameError = message;
+		if (field === 'trainer-gender') trainerGenderError = message;
 		if (field === 'money') moneyError = message;
 	}
 
@@ -302,6 +329,7 @@ export function createSaveFileTrainerMoneyController(
 		restoreTrainerName();
 		restoreMoney();
 		trainerNameError = null;
+		trainerGenderError = null;
 		moneyError = null;
 		editingUnavailable = { message };
 	}
@@ -345,6 +373,7 @@ export function createSaveFileTrainerMoneyController(
 						: {}),
 					...(current.money.supported ? { money: { value: moneyDraft, error: moneyError } } : {})
 				},
+				errors: trainerGenderError ? { 'trainer-gender': trainerGenderError } : {},
 				pendingTargets,
 				onRetryEditing,
 				onTrainerNameInput,

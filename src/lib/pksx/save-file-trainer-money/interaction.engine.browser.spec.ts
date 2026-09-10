@@ -13,7 +13,6 @@ type MountedHarness = {
 	handleBack(): boolean;
 	currentWorkspace(): WorkspaceState;
 	currentLedgerProps(): { drafts?: { trainerName?: { value: string; error?: string | null } } };
-	rejectEditing(message: string): void;
 };
 
 let engine: EngineApi;
@@ -79,6 +78,7 @@ async function setup(url: string, fileName: string, engineForCoordinator: Engine
 		fixtureBytes,
 		unchangedFixture,
 		storage,
+		coordinator,
 		toast,
 		workspace,
 		harness: mounted as unknown as MountedHarness
@@ -288,11 +288,51 @@ describe('Save File Trainer and Money real public fixtures', () => {
 		60_000
 	);
 
-	test('keeps loaded values visible and retries one shared unavailable state', async () => {
-		const { harness } = await setup(emeraldUrl, '011020251345.sav');
-		harness.rejectEditing('Editing stopped temporarily.');
+	test('blocks pending Enter-blur duplication and restores one failed field with one Toast', async () => {
+		let releaseEdit!: () => void;
+		const editGate = new Promise<void>((resolve) => (releaseEdit = resolve));
+		const applySaveFileEditOperation = vi.fn<EngineApi['applySaveFileEditOperation']>(async () => {
+			await editGate;
+			throw new Error('Engine stopped temporarily.');
+		});
+		const instrumentedEngine: EngineApi = { ...engine, applySaveFileEditOperation };
+		const { toast, workspace } = await setup(emeraldUrl, '011020251345.sav', instrumentedEngine);
+		const accepted = workspace.workspace.saveFile!.money.value!;
+		const candidate = accepted === 0 ? 1 : 0;
+		const money = input('money-value');
+		money.focus();
+		enterValue(money, String(candidate));
+		press(money, 'Enter');
+		await vi.waitFor(() => expect(applySaveFileEditOperation).toHaveBeenCalledOnce());
+		money.blur();
 		await tick();
-		expect(host.textContent).toContain('Editing unavailable. Editing stopped temporarily.');
+		expect(applySaveFileEditOperation).toHaveBeenCalledOnce();
+
+		releaseEdit();
+		await vi.waitFor(() => expect(toast.error).toHaveBeenCalledOnce());
+		expect(toast.error).toHaveBeenCalledWith(
+			'Money could not be saved. Engine stopped temporarily.'
+		);
+		expect(input('money-value').value).toBe(String(accepted));
+		expect(input('money-value').getAttribute('aria-busy')).toBe('false');
+	}, 60_000);
+
+	test('enters unavailable from a real stale coordinator result and retries the session', async () => {
+		const { coordinator, harness, toast, workspace } = await setup(emeraldUrl, '011020251345.sav');
+		coordinator.replaceWorkspace(workspace, 0);
+		const accepted = workspace.workspace.saveFile!.money.value!;
+		const candidate = accepted === 0 ? 1 : 0;
+		const money = input('money-value');
+		money.focus();
+		enterValue(money, String(candidate));
+		press(money, 'Enter');
+		await vi.waitFor(() => expect(host.textContent).toContain('Editing unavailable.'));
+		await tick();
+		expect(host.textContent).toContain(
+			'The Save File Workspace changed before this edit completed.'
+		);
+		expect(toast.error).not.toHaveBeenCalled();
+		expect(input('money-value').value).toBe(String(accepted));
 		expect(input('trainer-name').disabled).toBe(true);
 		expect(input('money-value').disabled).toBe(true);
 
@@ -300,5 +340,10 @@ describe('Save File Trainer and Money real public fixtures', () => {
 		await vi.waitFor(() => expect(host.textContent).not.toContain('Editing unavailable.'));
 		expect(input('trainer-name').disabled).toBe(false);
 		expect(input('money-value').disabled).toBe(false);
+
+		enterValue(input('money-value'), String(candidate));
+		press(input('money-value'), 'Enter');
+		await waitForAccepted(harness, (state) => state.workspace.saveFile?.money.value, candidate);
+		expect(toast.error).not.toHaveBeenCalled();
 	});
 });
