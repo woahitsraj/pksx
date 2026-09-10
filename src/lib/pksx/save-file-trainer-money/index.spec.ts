@@ -105,8 +105,17 @@ function createCoordinator() {
 	const recoverWorkspace = vi.fn(
 		async (
 			requestOrigin: SaveFileEditOrigin,
-			_options: { isCurrent: () => boolean }
+			options: { isCurrent: () => boolean }
 		): Promise<RecoveryResult> => {
+			if (!options.isCurrent()) {
+				return {
+					ok: false,
+					status: 'rejected',
+					origin: requestOrigin,
+					code: 'stale-workspace',
+					message: 'The Save File Workspace changed before recovery completed.'
+				};
+			}
 			return (
 				recoveries.shift() ?? {
 					ok: true,
