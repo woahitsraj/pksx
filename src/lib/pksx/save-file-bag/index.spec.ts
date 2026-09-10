@@ -149,7 +149,8 @@ function harness(
 		(requestOrigin: SaveFileEditOrigin, key?: string) =>
 			sameOrigin(requestOrigin, origin) && (key ? pendingKeys.has(key) : pendingKeys.size > 0)
 	);
-	const coordinator: SaveFileBagCoordinator = { enqueueEdit, isPending };
+	const isCurrent = vi.fn((requestOrigin: SaveFileEditOrigin) => sameOrigin(requestOrigin, origin));
+	const coordinator: SaveFileBagCoordinator = { enqueueEdit, isPending, isCurrent };
 	const getSaveFileInventoryCatalogue = vi.fn<EngineApi['getSaveFileInventoryCatalogue']>(
 		options.getCatalogue ??
 			(async () => ({
@@ -390,6 +391,81 @@ describe('Save File Bag controller', () => {
 		expect(enqueueEdit).toHaveBeenCalledTimes(2);
 	});
 
+	test('retains a failed Remove with one named Toast and retries it', async () => {
+		const { controller, enqueueEdit, results, toast, accepted } = harness();
+		await settled();
+		const command = { kind: 'remove-item' as const, pocketKey: 'Items', itemId: 1 };
+		results.push({
+			ok: false,
+			status: 'failed',
+			origin: firstOrigin,
+			code: 'workspace-persistence-failed',
+			message: 'Storage stopped.',
+			workspace: accepted
+		});
+		controller.ledgerProps.onCommandChange?.(command);
+		controller.ledgerProps.onRemoveItem?.(command);
+		await settled();
+
+		expect(controller.ledgerProps.command).toEqual(command);
+		expect(toast.error).toHaveBeenCalledOnce();
+		expect(toast.error).toHaveBeenCalledWith('Potion could not be saved. Storage stopped.');
+
+		controller.ledgerProps.onRemoveItem?.(command);
+		await settled();
+		expect(enqueueEdit).toHaveBeenCalledTimes(2);
+		expect(controller.ledgerProps.command).toBeNull();
+		expect(toast.error).toHaveBeenCalledOnce();
+	});
+
+	test('sends one application Toast when an owned pending edit fails after disposal', async () => {
+		const pending = deferred<SaveFileEditResult>();
+		const { controller, results, toast, acceptWorkspace, rejectEditing } = harness();
+		await settled();
+		results.push(pending.promise);
+		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '7');
+		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'enter');
+		controller.dispose();
+
+		pending.resolve({
+			ok: false,
+			status: 'failed',
+			origin: firstOrigin,
+			code: 'engine-unavailable',
+			message: 'Engine stopped.',
+			workspace: workspace()
+		});
+		await settled();
+
+		expect(toast.error).toHaveBeenCalledOnce();
+		expect(toast.error).toHaveBeenCalledWith('Potion could not be saved. Engine stopped.');
+		expect(acceptWorkspace).not.toHaveBeenCalled();
+		expect(rejectEditing).not.toHaveBeenCalled();
+	});
+
+	test('suppresses a disposed edit failure after the coordinator replaces its origin', async () => {
+		const pending = deferred<SaveFileEditResult>();
+		const { controller, results, toast, setOrigin } = harness();
+		await settled();
+		results.push(pending.promise);
+		controller.ledgerProps.onItemQuantityInput?.('Items', 1, '7');
+		controller.ledgerProps.onItemQuantityCommit?.('Items', 1, 'enter');
+		controller.dispose();
+		setOrigin({ saveFileId: 'save-1', workspaceId: 'workspace-2' });
+
+		pending.resolve({
+			ok: false,
+			status: 'failed',
+			origin: firstOrigin,
+			code: 'engine-unavailable',
+			message: 'Old failure.',
+			workspace: workspace()
+		});
+		await settled();
+
+		expect(toast.error).not.toHaveBeenCalled();
+	});
+
 	test('maps Engine quantity rejection to the local field error without a Toast', async () => {
 		const { controller, enqueueEdit, results, toast, accepted } = harness();
 		await settled();
@@ -566,6 +642,48 @@ describe('Save File Bag controller', () => {
 		expect(controller.ledgerProps.catalogues?.Items).toEqual({
 			status: 'ready',
 			availableItems: catalogue.pockets[0].availableItems
+		});
+	});
+
+	test('coalesces failed pocket catalogue retries into one visible request', async () => {
+		const twoPockets = workspace();
+		twoPockets.workspace.saveFile!.inventory.pockets.push({
+			key: 'Balls',
+			label: 'Balls',
+			capacity: 16,
+			full: false,
+			unsupportedReason: null,
+			items: []
+		});
+		const retry = deferred<Awaited<ReturnType<EngineApi['getSaveFileInventoryCatalogue']>>>();
+		const getCatalogue = vi
+			.fn<EngineApi['getSaveFileInventoryCatalogue']>()
+			.mockResolvedValueOnce({
+				ok: false,
+				value: null,
+				error: { code: 'engine-unavailable', message: 'Catalogue unavailable.' }
+			})
+			.mockImplementationOnce(() => retry.promise);
+		const { controller } = harness({ workspace: twoPockets, getCatalogue });
+		await settled();
+
+		controller.ledgerProps.onRetryCatalogue?.('Items');
+		expect(controller.ledgerProps.catalogues).toEqual({
+			Items: { status: 'loading', retrying: true },
+			Balls: { status: 'loading', retrying: true }
+		});
+		controller.ledgerProps.onRetryCatalogue?.('Balls');
+		expect(getCatalogue).toHaveBeenCalledTimes(2);
+
+		retry.resolve({
+			ok: false,
+			value: null,
+			error: { code: 'engine-unavailable', message: 'Retry stopped.' }
+		});
+		await settled();
+		expect(controller.ledgerProps.catalogues).toEqual({
+			Items: { status: 'failed', message: 'Retry stopped.' },
+			Balls: { status: 'failed', message: 'Retry stopped.' }
 		});
 	});
 

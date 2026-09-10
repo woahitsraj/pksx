@@ -18,7 +18,10 @@ export const bagPendingKeys = {
 	remove: (pocketKey: string, itemId: number) => `item-${pocketKey}-${itemId}-confirm-remove`
 } as const;
 
-export type SaveFileBagCoordinator = Pick<SaveFileEditCoordinator, 'enqueueEdit' | 'isPending'>;
+export type SaveFileBagCoordinator = Pick<
+	SaveFileEditCoordinator,
+	'enqueueEdit' | 'isPending' | 'isCurrent'
+>;
 
 export type SaveFileBagControllerOptions = {
 	getWorkspace: () => WorkspaceState;
@@ -286,7 +289,19 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 		context: CommitContext,
 		result: SaveFileEditResult
 	) {
-		if (disposed || !sameOrigin(requestOrigin, options.getOrigin())) return;
+		if (disposed) {
+			if (
+				!result.ok &&
+				result.status === 'failed' &&
+				result.workspace &&
+				sameOrigin(requestOrigin, result.origin) &&
+				options.coordinator.isCurrent(requestOrigin)
+			) {
+				options.toast.error(`${operationLabel(context)} could not be saved. ${result.message}`);
+			}
+			return;
+		}
+		if (!sameOrigin(requestOrigin, options.getOrigin())) return;
 		if (result.ok) {
 			options.acceptWorkspace(result.workspace);
 			clearSettledState(context);
@@ -378,15 +393,20 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 	}
 
 	function onRetryCatalogue(pocketKey: string) {
-		if (catalogueRequest || options.getEditingUnavailable()) return;
-		catalogues = {
-			...catalogues,
-			[pocketKey]: { status: 'loading', retrying: true }
-		};
-		void loadCatalogues(pocketKey);
+		if (catalogueRequest || options.getEditingUnavailable() || !catalogues[pocketKey]) return;
+		const retryPockets = Object.entries(catalogues)
+			.filter(([, catalogue]) => catalogue.status === 'failed')
+			.map(([key]) => key);
+		catalogues = Object.fromEntries(
+			Object.entries(catalogues).map(([key, catalogue]) => [
+				key,
+				retryPockets.includes(key) ? { status: 'loading' as const, retrying: true } : catalogue
+			])
+		);
+		void loadCatalogues(retryPockets);
 	}
 
-	async function loadCatalogues(retryPocket?: string) {
+	async function loadCatalogues(retryPockets?: readonly string[]) {
 		if (catalogueRequest || disposed) return catalogueRequest;
 		const generation = catalogueGeneration;
 		const origin = options.getOrigin();
@@ -405,7 +425,7 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 					return;
 				if (!result.ok || !result.value.supported) {
 					setCatalogueFailures(
-						retryPocket,
+						retryPockets,
 						result.ok ? result.value.unsupportedReason : result.error.message
 					);
 					return;
@@ -430,7 +450,7 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 					generation === catalogueGeneration &&
 					sameOrigin(origin, options.getOrigin())
 				) {
-					setCatalogueFailures(retryPocket, errorMessage(error));
+					setCatalogueFailures(retryPockets, errorMessage(error));
 				}
 			} finally {
 				if (generation === catalogueGeneration) catalogueRequest = null;
@@ -440,13 +460,18 @@ export function createSaveFileBagController(options: SaveFileBagControllerOption
 		return request;
 	}
 
-	function setCatalogueFailures(retryPocket: string | undefined, message: string | null) {
+	function setCatalogueFailures(
+		retryPockets: readonly string[] | undefined,
+		message: string | null
+	) {
 		const failure = message || 'The item catalogue is unavailable.';
-		if (retryPocket) {
-			catalogues = {
-				...catalogues,
-				[retryPocket]: { status: 'failed', message: failure }
-			};
+		if (retryPockets) {
+			catalogues = Object.fromEntries(
+				Object.entries(catalogues).map(([key, catalogue]) => [
+					key,
+					retryPockets.includes(key) ? { status: 'failed' as const, message: failure } : catalogue
+				])
+			);
 			return;
 		}
 		catalogues = Object.fromEntries(

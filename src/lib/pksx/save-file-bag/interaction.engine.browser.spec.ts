@@ -1,6 +1,7 @@
 import { createPkhexEngine, type EngineApi } from '$lib/engine';
 import type { SaveFileLedgerProps } from '$lib/components/pksx/save-file-ledger/types';
 import { createCleanWorkspaceState, type WorkspaceState } from '$lib/pksx/backup-workflow';
+import { dispatchControllerKey } from '$lib/pksx/controller-input';
 import {
 	SaveFileEditCoordinator,
 	type SaveFileEditOrigin
@@ -340,18 +341,123 @@ describe('Save File Bag with a real public fixture', () => {
 
 		const scrollport = host.querySelector<HTMLElement>('[data-testid="bag-ledger-scrollport"]')!;
 		scrollport.scrollTop = 0;
-		const lastPocket = harness.currentWorkspace().workspace.saveFile!.inventory.pockets.at(-1)!;
-		const lastTarget = Array.from(
-			host.querySelectorAll<HTMLElement>(
-				`[data-ledger-pocket="${lastPocket.key}"] [data-destination-focus]`
-			)
-		).at(-1)!;
-		lastTarget.focus();
+		const pockets = harness.currentWorkspace().workspace.saveFile!.inventory.pockets;
+		const lastPocket = pockets.at(-1)!;
+		target(`pocket-${pockets[0].key}-jump`).focus();
+		for (let index = 1; index < pockets.length; index += 1) {
+			dispatchControllerKey('ArrowRight');
+		}
+		const lastJump = target(`pocket-${lastPocket.key}-jump`);
+		expect(document.activeElement).toBe(lastJump);
+		dispatchControllerKey('Enter');
+		expect(document.activeElement).toBe(lastJump);
+		dispatchControllerKey('ArrowDown');
 		await new Promise(requestAnimationFrame);
 		expect(scrollport.scrollTop).toBeGreaterThan(0);
+		const focusedTarget = document.activeElement as HTMLElement;
+		expect(focusedTarget.closest<HTMLElement>('[data-ledger-pocket]')?.dataset.ledgerPocket).toBe(
+			lastPocket.key
+		);
+		const targetRect = focusedTarget.getBoundingClientRect();
+		for (const container of [scrollport, host]) {
+			const containerRect = container.getBoundingClientRect();
+			expect(targetRect.top).toBeGreaterThanOrEqual(containerRect.top - 1);
+			expect(targetRect.right).toBeLessThanOrEqual(containerRect.right + 1);
+			expect(targetRect.bottom).toBeLessThanOrEqual(containerRect.bottom + 1);
+			expect(targetRect.left).toBeGreaterThanOrEqual(containerRect.left - 1);
+		}
 		expect(await storage.listBackups(workspace.file.id)).toHaveLength(1);
 		expect(fixtureBytes).toEqual(unchangedFixture);
 	}, 60_000);
+
+	test.each(['add', 'remove', 'quantity'] as const)(
+		'discards the %s draft on unmount and reconstructs its confirmed pending operation',
+		async (operation) => {
+			const editGate = deferred<void>();
+			const applySaveFileEditOperation = vi.fn<EngineApi['applySaveFileEditOperation']>(
+				async (...args) => {
+					await editGate.promise;
+					return engine.applySaveFileEditOperation(...args);
+				}
+			);
+			const instrumentedEngine: EngineApi = { ...engine, applySaveFileEditOperation };
+			const {
+				fixtureBytes,
+				unchangedFixture,
+				workspace,
+				pocket,
+				item,
+				option,
+				toast,
+				coordinator,
+				harness
+			} = await setup(instrumentedEngine);
+			await vi.waitFor(() =>
+				expect((target(`pocket-${pocket.key}-add`) as HTMLButtonElement).disabled).toBe(false)
+			);
+
+			let pendingIdentity: string;
+			if (operation === 'add') {
+				target(`pocket-${pocket.key}-add`).click();
+				await tick();
+				const select = target(`pocket-${pocket.key}-add-item`) as HTMLSelectElement;
+				select.value = String(option.id);
+				select.dispatchEvent(new Event('change', { bubbles: true }));
+				enterValue(input(`pocket-${pocket.key}-add-quantity`), '2');
+				await tick();
+				pendingIdentity = `pocket-${pocket.key}-add-confirm`;
+				target(pendingIdentity).click();
+			} else if (operation === 'remove') {
+				target(`item-${pocket.key}-${item.id}-remove`).click();
+				await tick();
+				pendingIdentity = `item-${pocket.key}-${item.id}-confirm-remove`;
+				target(pendingIdentity).click();
+			} else {
+				pendingIdentity = `item-${pocket.key}-${item.id}-quantity`;
+				const quantity = input(pendingIdentity);
+				quantity.focus();
+				enterValue(
+					quantity,
+					String(item.quantity === item.maxQuantity ? item.quantity - 1 : item.quantity + 1)
+				);
+				press(quantity, 'Enter');
+			}
+			await vi.waitFor(() => expect(harness.currentPendingTargets()).toContain(pendingIdentity));
+
+			const firstMount = mounted;
+			if (!firstMount) throw new Error('Bag harness was not mounted.');
+			await unmount(firstMount);
+			mounted = null;
+			mounted = mount(SaveFileBagTestHarness, {
+				target: host,
+				props: { workspace, activeBox: 0, coordinator, engine, toast }
+			});
+			await tick();
+			const remounted = mounted as unknown as MountedHarness;
+			await vi.waitFor(() => expect(remounted.currentPendingTargets()).toContain(pendingIdentity));
+			expect(remounted.currentLedgerProps().command).toBeNull();
+			expect(remounted.currentLedgerProps().drafts?.itemQuantities).toEqual({});
+
+			if (operation === 'add') {
+				expect(target(`pocket-${pocket.key}-add`).getAttribute('aria-busy')).toBe('true');
+			} else {
+				const itemRow = host.querySelector<HTMLElement>(
+					`[data-ledger-row="item-${pocket.key}-${item.id}"]`
+				)!;
+				expect(itemRow.getAttribute('aria-busy')).toBe('true');
+				if (operation === 'quantity') expect(input(pendingIdentity).readOnly).toBe(true);
+				else expect(target(`item-${pocket.key}-${item.id}-remove`).ariaDisabled).toBe('true');
+			}
+
+			editGate.resolve();
+			await vi.waitFor(() =>
+				expect(remounted.currentPendingTargets()).not.toContain(pendingIdentity)
+			);
+			expect(toast.error).not.toHaveBeenCalled();
+			expect(fixtureBytes).toEqual(unchangedFixture);
+		},
+		60_000
+	);
 
 	test('keeps catalogue and edit failures local, then retries against Emerald', async () => {
 		let failEdit = true;
