@@ -211,8 +211,6 @@
 	const summonedWorkflow = getSummonedWorkflowHost();
 
 	const slotPalette = [16, 28, 48, 100, 140, 180, 195, 210, 220, 260, 280, 295, 330, 52];
-	const topControlCount = 7;
-	const mobileTabCount = 3;
 
 	function fallbackSlotHue(box: number, slot: number, speciesId: number | null): number {
 		const seed = speciesId && speciesId > 0 ? speciesId : slot * 31 + box * 7;
@@ -462,7 +460,6 @@
 	let pokemonActionRequest = 0;
 	let pokemonActionContext = $state<PokemonActionContext | null>(null);
 	let partyCollapsed = $state(false);
-	let viewportWidth = $state(1024);
 	let pendingSlotOperation = $state<PendingStorageSlotOperation | null>(null);
 	let carryState = $state<CarryState | null>(null);
 	let clearSlotConfirmation = $state<ClearSlotConfirmation | null>(null);
@@ -492,7 +489,6 @@
 	const boxMenuOpen = $derived(activeSummonedWorkflow?.kind === 'box-menu');
 	const destinationInputSuspended = $derived(isDestinationInputSuspended(summonedWorkflow));
 	const summonedSlotLauncher = $derived(getLaunchingSlot(summonedWorkflow));
-	const mobileTabsAvailable = $derived(viewportWidth <= 1024);
 	const activePane = $derived(
 		workbenchPanes.find((pane) => pane.id === activePaneId) ?? workbenchPanes[0]
 	);
@@ -657,20 +653,13 @@
 
 	function syncAppChrome() {
 		updateAppChrome({
-			route: 'boxes',
-			saveSummary,
-			boxCount: activePaneBoxCount,
-			activeBox: activePaneBox,
-			fileName: loadedSave?.file.originalFileName ?? null,
-			busy,
 			hasLoadedSave: loadedSave !== null,
-			controllerInputActive: true,
-			importSave: (file) => void importSaveFile(file),
-			exportSave: exportLoadedSave
+			carryActive: carryState !== null,
+			controllerInputActive: true
 		});
 
 		return () => {
-			updateAppChrome({ controllerInputActive: false });
+			updateAppChrome({ controllerInputActive: false, carryActive: false });
 		};
 	}
 
@@ -744,10 +733,7 @@
 		const pane = activePane;
 		const previousBox = activePaneBox;
 		navigation = applyNavigationAction(navigation, action, {
-			topControlCount,
 			paneControlCount: activePaneControlCount,
-			mobileTabCount,
-			mobileTabsAvailable,
 			partyAvailable,
 			partyCollapsed
 		});
@@ -1269,15 +1255,6 @@
 			return;
 		}
 
-		const topControlMatch = activeElement.id.match(/^top-control-(\d+)$/);
-		if (topControlMatch) {
-			navigation = {
-				...navigation,
-				focus: { zone: 'topbar', index: Number(topControlMatch[1]) }
-			};
-			return;
-		}
-
 		if (activeElement.id === 'party-toggle') {
 			navigation = { ...navigation, focus: focusPartyToggle() };
 			return;
@@ -1288,15 +1265,6 @@
 			navigation = {
 				...navigation,
 				focus: focusPaneControl(Number(paneControlIndex), activePaneControlCount)
-			};
-			return;
-		}
-
-		const mobileTabMatch = activeElement.id.match(/^mobile-tab-(\d+)$/);
-		if (mobileTabMatch) {
-			navigation = {
-				...navigation,
-				focus: { zone: 'mobileTabs', index: Number(mobileTabMatch[1]) }
 			};
 			return;
 		}
@@ -2304,20 +2272,12 @@
 	}
 
 	function activateFocusedControl(focus = navigation.focus) {
-		if (focus.zone === 'topbar') {
-			document.getElementById(`top-control-${focus.index}`)?.click();
-		}
-
 		if (focus.zone === 'partyToggle') {
 			document.getElementById('party-toggle')?.click();
 		}
 
 		if (focus.zone === 'paneControls') {
 			document.getElementById(focusIdForNavigation(focus))?.click();
-		}
-
-		if (focus.zone === 'mobileTabs') {
-			document.getElementById(`mobile-tab-${focus.index}`)?.click();
 		}
 
 		if (focus.zone === 'actions') {
@@ -2370,18 +2330,6 @@
 			createInitialNavigationState(save.workspace.summary.boxCount),
 			clampedBox
 		);
-	}
-
-	function openSourcePicker(targetPaneId: string | null = null) {
-		if (pendingSlotOperation || targetPaneId === activeSavePaneId || activeSummonedWorkflow) {
-			return;
-		}
-
-		const launcherFocus = navigation.focus;
-		sourcePickerTargetPaneId = targetPaneId;
-		sourcePickerFocusIndex = 0;
-		summonedWorkflow.open('source-picker', launcherForFocus(launcherFocus));
-		queueMicrotask(() => focusSourcePickerControl(0));
 	}
 
 	function openRelatedSourcePicker(targetPaneId: string | null) {
@@ -3519,13 +3467,6 @@
 		};
 	}
 
-	function handleWindowResize() {
-		if (viewportWidth > 1024 && navigation.focus.zone === 'mobileTabs') {
-			navigation = { ...navigation, focus: focusBoxSlot(BOX_SLOT_COUNT - BOX_COLUMNS + 1) };
-			queueMicrotask(focusActiveControl);
-		}
-	}
-
 	function isFocused(zone: 'party' | 'box', slot: number) {
 		return (
 			activeSlotFocus !== null && activeSlotFocus.zone === zone && activeSlotFocus.slot === slot
@@ -3832,32 +3773,6 @@
 		}
 	}
 
-	async function exportLoadedSave() {
-		if (!loadedSave) {
-			return;
-		}
-
-		busy = true;
-		importError = null;
-		statusMessage = 'Serializing Save File...';
-
-		try {
-			const activeEngine = engine;
-			if (!activeEngine) {
-				throw new Error('The PKHeX Engine is not ready.');
-			}
-
-			const bytes = await workspaceService.exportBytes(loadedSave);
-			downloadBytes(bytes, createExportFileName(loadedSave.file.originalFileName));
-			statusMessage = 'Export ready.';
-		} catch (error) {
-			importError = getErrorMessage(error);
-			statusMessage = 'Export failed.';
-		} finally {
-			busy = false;
-		}
-	}
-
 	function downloadBytes(bytes: Uint8Array, fileName: string) {
 		const downloadBytes = new Uint8Array(bytes.byteLength);
 		downloadBytes.set(bytes);
@@ -3940,17 +3855,27 @@
 	<title>PKSX</title>
 </svelte:head>
 
-<svelte:window
-	bind:innerWidth={viewportWidth}
-	onkeydown={handleAppKeydown}
-	onresize={handleWindowResize}
-/>
+<svelte:window onkeydown={handleAppKeydown} />
 
 <div class="status-announcer" role="status" aria-live="polite">{toolbarStatus}</div>
+<input
+	id="quick-save-import"
+	class="source-picker-import"
+	type="file"
+	aria-label="Quick save import"
+	disabled={busy}
+	onchange={(event) => {
+		const input = event.currentTarget;
+		const file = input.files?.[0];
+		input.value = '';
+		if (file) void importSaveFile(file);
+	}}
+/>
 
 <section
 	class="boxes-route"
 	aria-label="Boxes workspace"
+	data-destination-root="boxes"
 	data-initial-state={initialStateReady ? 'ready' : 'loading'}
 	data-active-save-file-id={loadedSave?.file.id ?? ''}
 	inert={destinationInputSuspended}
@@ -3980,15 +3905,6 @@
 				<div class={['toolbar-status-strip', carryState && 'carry-status']}>
 					{toolbarStatus}
 				</div>
-				<button
-					id="top-control-5"
-					class="add-source-button"
-					class:controller-focused={navigation.focus.zone === 'topbar' &&
-						navigation.focus.index === 5}
-					type="button"
-					onfocus={() => (navigation = { ...navigation, focus: { zone: 'topbar', index: 5 } })}
-					onclick={() => openSourcePicker()}>Add collection</button
-				>
 			</div>
 
 			{#if partyAvailable}
@@ -4370,6 +4286,14 @@
 <ToastRegion {toasts} onDismiss={dismissToast} />
 
 <style>
+	.source-picker-import {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+	}
+
 	:global(html),
 	:global(body) {
 		margin: 0;
@@ -4451,36 +4375,6 @@
 		border-radius: var(--pksx-radius-lg);
 		background: transparent;
 		box-shadow: none;
-	}
-
-	.add-source-button {
-		margin-left: auto;
-		flex: 0 0 auto;
-		min-height: 30px;
-		padding: 6px 9px;
-		border-radius: var(--pksx-radius-sm);
-		background: var(--paper);
-		color: var(--ink);
-		box-shadow: inset 0 0 0 1px var(--rule);
-		font-size: 0.72rem;
-		font-weight: 750;
-	}
-
-	.add-source-button {
-		background: var(--rust);
-		color: white;
-		box-shadow: var(--shadow-sm);
-	}
-
-	.add-source-button.controller-focused,
-	.add-source-button:focus-visible,
-	.add-source-button:focus {
-		outline: 3px solid var(--gold);
-		outline-offset: 3px;
-		box-shadow:
-			0 0 0 2px var(--paper-hi),
-			0 0 0 6px color-mix(in srgb, var(--rust), transparent 8%),
-			var(--shadow);
 	}
 
 	.single-source-label {
@@ -4950,10 +4844,6 @@
 
 		.workbench-toolbar {
 			flex-wrap: wrap;
-		}
-
-		.add-source-button {
-			margin-left: auto;
 		}
 
 		.storage-workspace {

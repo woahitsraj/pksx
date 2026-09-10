@@ -103,6 +103,13 @@
 		if (open && event.target instanceof Node && !root?.contains(event.target)) closePicker();
 	}
 
+	function handleWindowKeydown(event: KeyboardEvent) {
+		if (!open || event.key !== 'Escape') return;
+		event.preventDefault();
+		event.stopPropagation();
+		closePicker(true);
+	}
+
 	function attachRoot(node: HTMLDivElement) {
 		root = node;
 		return () => (root = undefined);
@@ -179,7 +186,7 @@
 	}
 </script>
 
-<svelte:window onclick={handleWindowClick} />
+<svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
 
 <div class="pksx-combobox" data-combobox-open={open} {@attach attachRoot}>
 	<button

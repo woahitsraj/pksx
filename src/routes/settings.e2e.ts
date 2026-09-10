@@ -49,7 +49,12 @@ async function pressController(page: Page, key: string) {
 		const dispatch = (pressed: boolean) =>
 			window.dispatchEvent(
 				new CustomEvent('pksxcontroller', {
-					detail: { key: controllerKey, pressed, id: 'Test controller' }
+					detail: {
+						key: controllerKey,
+						pressed,
+						discrete: !controllerKey.startsWith('Arrow'),
+						id: 'Test controller'
+					}
 				})
 			);
 		const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -60,6 +65,14 @@ async function pressController(page: Page, key: string) {
 		dispatch(false);
 		await nextFrame();
 	}, key);
+}
+
+async function chooseMainMenu(page: Page, label: 'Saves') {
+	await page.getByRole('button', { name: 'Open Main Menu' }).click();
+	await page
+		.getByRole('dialog', { name: 'Main Menu' })
+		.getByRole('button', { name: new RegExp(`^${label}`) })
+		.click();
 }
 
 async function densityValues(page: Page, width: number, height: number) {
@@ -122,6 +135,33 @@ test('Settings is available without a Save File and reports live build metadata'
 	});
 });
 
+test('fresh Settings reload reports the active Save File in the Main Menu', async ({ page }) => {
+	await page.goto('/saves');
+	await expect(page.locator('[data-destination-root="saves"]')).toHaveAttribute(
+		'data-initial-state',
+		'ready'
+	);
+	await page.getByLabel('Import Save File').setInputFiles(emeraldFixturePath);
+	await expect(page.locator('.save-card.active')).toContainText('011020251345.sav', {
+		timeout: 30_000
+	});
+	await expect(page.locator('.save-card.active').getByText('Active')).toBeVisible();
+	await page.goto('/settings');
+	await page.reload();
+
+	await page.getByRole('button', { name: 'Open Main Menu' }).click();
+	const menu = page.getByRole('dialog', { name: 'Main Menu' });
+	await expect(menu.getByRole('button', { name: /^Trainer/ })).toContainText(
+		'Edit Trainer details and money.'
+	);
+	await expect(menu.getByRole('button', { name: /^Bag/ })).toContainText(
+		'Edit the active Save File Bag.'
+	);
+	await expect(menu.getByRole('button', { name: /^Backup Browser/ })).toContainText(
+		'Create, restore, and delete Backups.'
+	);
+});
+
 test('Settings uses one clamped vertical Focus Zone and reveals its focused stop', async ({
 	page
 }) => {
@@ -160,6 +200,27 @@ test('Settings uses one clamped vertical Focus Zone and reveals its focused stop
 	await page.keyboard.press('ArrowUp');
 	await expect(stops.nth((await stops.count()) - 2)).toBeFocused();
 
+	const everywhere = page.getByRole('heading', { name: 'Everywhere', exact: true });
+	await everywhere.focus();
+	await page.keyboard.press('Control+k');
+	await page
+		.getByRole('dialog', { name: 'Main Menu' })
+		.getByRole('button', { name: /^Settings/ })
+		.click();
+	await expect(everywhere).toBeFocused();
+	await expect(everywhere).toHaveAttribute('id', 'pksx-settings-reference-everywhere');
+
+	const about = page.getByRole('heading', { name: 'About', exact: true });
+	await expect(page.getByRole('region', { name: 'About' })).toBeVisible();
+	await about.focus();
+	await page.keyboard.press('Control+k');
+	await page
+		.getByRole('dialog', { name: 'Main Menu' })
+		.getByRole('button', { name: /^Settings/ })
+		.click();
+	await expect(about).toBeFocused();
+	await expect(about).toHaveAttribute('id', 'pksx-settings-about');
+
 	for (const size of [
 		{ width: 640, height: 360 },
 		{ width: 360, height: 640 }
@@ -175,8 +236,12 @@ test('Settings uses one clamped vertical Focus Zone and reveals its focused stop
 	}
 
 	await openSettings(page, 1280, 800);
-	const saves = page.getByRole('button', { name: 'Saves', exact: true });
-	await saves.focus();
+	await pressController(page, 'Menu');
+	await expect(page.getByRole('dialog', { name: 'Main Menu' })).toBeVisible();
+	await pressController(page, 'ArrowUp');
+	await expect(
+		page.getByRole('dialog', { name: 'Main Menu' }).getByRole('button', { name: /^Saves/ })
+	).toBeFocused();
 	await pressController(page, 'Enter');
 	await expect(page).toHaveURL(/\/saves$/);
 });
@@ -234,7 +299,7 @@ test('Settings owns floor overflow and uses shared theme state', async ({ page }
 	await expect
 		.poll(() => shell.evaluate((element) => getComputedStyle(element).backgroundColor))
 		.not.toBe(lightBackground);
-	await page.getByRole('button', { name: 'Saves' }).click();
+	await chooseMainMenu(page, 'Saves');
 	await expect(page).toHaveURL(/\/saves$/);
 	await expect(shell).toHaveClass(/dark/);
 	await page.goBack();
@@ -262,7 +327,7 @@ test('editable focus locks Height Band across pointer transfer and releases afte
 	await expect(page.getByText('011020251345.sav imported and made active.')).toBeVisible({
 		timeout: 30_000
 	});
-	await page.goto('/save-file');
+	await page.goto('/trainer');
 	const trainerName = page.locator('#save-file-trainer-name');
 	await expect(trainerName).toBeVisible({ timeout: 30_000 });
 	expect(
@@ -274,7 +339,7 @@ test('editable focus locks Height Band across pointer transfer and releases afte
 	expect(
 		await money.evaluate((element) => parseFloat(getComputedStyle(element).fontSize))
 	).toBeGreaterThan(16);
-	await page.getByRole('button', { name: 'Bag' }).first().click();
+	await page.goto('/bag');
 	const quantities = page.locator('[aria-label="Bag inventory"] input[type="number"]');
 	await expect(quantities.first()).toBeVisible({ timeout: 30_000 });
 	expect(await quantities.count()).toBeGreaterThan(1);

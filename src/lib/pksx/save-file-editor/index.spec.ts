@@ -16,6 +16,7 @@ import {
 	stageTrainerNameEdit,
 	type SaveFileEditorApplyServices
 } from '.';
+import { restoreSaveFileEditorSession, updateSaveFileEditorSession } from './session';
 
 const summary: SaveSummary = {
 	fileName: 'emerald.sav',
@@ -98,8 +99,8 @@ const stagedEdit = {
 	payload: { trainerName: 'RAJ' }
 };
 
-function openEditor() {
-	const opened = createSaveFileEditorState(source, summary, committedWorkspace, projection);
+function openEditor(editableProjection = projection) {
+	const opened = createSaveFileEditorState(source, summary, committedWorkspace, editableProjection);
 	if (!opened.ok) throw new Error('Expected Save File Editor to open.');
 	return opened.state;
 }
@@ -125,6 +126,22 @@ function applyServices(
 }
 
 describe('Save File editor state', () => {
+	it('keeps staged edits only for the same committed Workspace bytes', () => {
+		const revision = new Uint8Array([1, 2, 3]);
+		const staged = stageMoneyEdit(restoreSaveFileEditorSession(openEditor(), revision), 12345);
+		updateSaveFileEditorSession(staged);
+
+		expect(restoreSaveFileEditorSession(openEditor(), new Uint8Array(revision))).toBe(staged);
+
+		const replacement = openEditor({
+			...projection,
+			money: { ...projection.money, value: 9000 }
+		});
+		expect(restoreSaveFileEditorSession(replacement, new Uint8Array([1, 2, 4]))).toBe(replacement);
+		expect(replacement.projection.money.value).toBe(9000);
+		expect(replacement.stagedEdits).toEqual([]);
+	});
+
 	it('opens with source, editable projections, staged edits, and committed workspace state', () => {
 		const result = createSaveFileEditorState(source, summary, committedWorkspace);
 

@@ -3,7 +3,7 @@
 	import { asset, resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import ConfirmDialog from '$lib/components/pksx/ConfirmDialog.svelte';
-	import { base64ToBytes, type EngineError, type PartySlotSummary } from '$lib/engine';
+	import { type EngineError, type PartySlotSummary } from '$lib/engine';
 	import {
 		type BackupMetadata,
 		type SaveFileId,
@@ -86,6 +86,7 @@
 	let pendingDelete = $state<PendingDelete | null>(null);
 	let savesRefreshRequest = 0;
 	let backupBrowserWasActive = false;
+	let initialStateReady = $state(false);
 
 	const selectedSaveFile = $derived(
 		storageSelected
@@ -98,22 +99,14 @@
 	const activeSaveFile = $derived(
 		saveFiles.find((saveFile) => saveFile.id === activeSaveFileId) ?? null
 	);
+	const initialSaveFileId = $derived(activeSaveFile?.id ?? saveFiles[0]?.id ?? null);
 	const activeDetails = $derived(
 		activeSaveFile ? (detailsBySaveFileId[activeSaveFile.id] ?? null) : null
 	);
-	const importSave = (file: File) => void importSaveFile(file);
-
 	$effect(() => {
-		appChrome.route = 'saves';
-		appChrome.saveSummary = activeDetails?.summary ?? null;
-		appChrome.boxCount = activeDetails?.summary.boxCount ?? 0;
-		appChrome.activeBox = 0;
-		appChrome.fileName = activeSaveFile?.originalFileName ?? null;
-		appChrome.busy = busy;
 		appChrome.hasLoadedSave = activeSaveFile !== null;
+		appChrome.carryActive = false;
 		appChrome.controllerInputActive = true;
-		appChrome.importSave = importSave;
-		appChrome.exportSave = exportActiveSave;
 	});
 
 	onMount(() => {
@@ -121,6 +114,7 @@
 		const cachedSnapshotSeeded = isCachedSavesSnapshotSeeded();
 		if (cachedSnapshot) {
 			applySavesSnapshot(cachedSnapshot, selectedSaveFileId);
+			initialStateReady = true;
 			statusMessage = cachedSnapshot.saveFiles.length > 0 ? 'Saves ready.' : statusMessage;
 		}
 
@@ -196,17 +190,7 @@
 			).filter((control) => isFocusableControl(control));
 		}
 
-		const selectors = [
-			'#top-control-0',
-			'#top-control-1',
-			'#top-control-2',
-			'#top-control-3',
-			'#top-control-4',
-			'[data-saves-control]',
-			'#mobile-tab-0',
-			'#mobile-tab-1',
-			'#mobile-tab-2'
-		];
+		const selectors = ['[data-saves-control]'];
 
 		return selectors
 			.flatMap((selector) => Array.from(document.querySelectorAll<HTMLElement>(selector)))
@@ -239,6 +223,7 @@
 
 		pokemonStorageSummary = summarizePokemonStorage(appStorage);
 		applySavesSnapshot(snapshot, options.preferredSelection ?? selectedSaveFileId);
+		initialStateReady = true;
 		statusMessage =
 			snapshot.saveFiles.length > 0 || pokemonStorageSummary
 				? 'Saves ready.'
@@ -500,40 +485,6 @@
 		}
 	}
 
-	async function exportActiveSave() {
-		if (!activeSaveFile) {
-			return;
-		}
-
-		busy = true;
-		errorMessage = null;
-		statusMessage = 'Serializing Save File...';
-
-		try {
-			const bytes = await storage.getSaveBytes(activeSaveFile.id);
-			if (!bytes) {
-				throw new Error('The active Save File is missing its stored bytes.');
-			}
-
-			const result = await getPkhexEngine().serializeSave(
-				bytes,
-				activeSaveFile.originalFileName ?? undefined
-			);
-			if (!result.ok) {
-				throw result.error;
-			}
-
-			const serialized = base64ToBytes(result.value.bytesBase64, result.value.byteLength);
-			downloadBytes(serialized, createExportFileName(activeSaveFile.originalFileName));
-			statusMessage = 'Export ready.';
-		} catch (error) {
-			errorMessage = getErrorMessage(error);
-			statusMessage = 'Export failed.';
-		} finally {
-			busy = false;
-		}
-	}
-
 	async function loadWorkspace(bytes: Uint8Array, fileName: string | undefined) {
 		const result = await getPkhexEngine().loadSaveWorkspace(bytes, fileName, 0);
 		if (!result.ok) {
@@ -645,19 +596,6 @@
 		return entry ? asset(entry.path) : null;
 	}
 
-	function createExportFileName(fileName: string | null) {
-		if (!fileName) {
-			return 'pksx-export.sav';
-		}
-
-		const lastDot = fileName.lastIndexOf('.');
-		if (lastDot <= 0) {
-			return `${fileName}.pksx`;
-		}
-
-		return `${fileName.slice(0, lastDot)}.pksx${fileName.slice(lastDot)}`;
-	}
-
 	function deleteDialogTitle(deletion: PendingDelete) {
 		if (deletion.kind === 'save') {
 			return `Delete ${displayName(deletion.saveFile)}?`;
@@ -672,21 +610,6 @@
 		}
 
 		return `This removes the Backup for ${displayName(deletion.saveFile)} from this device. This cannot be undone.`;
-	}
-
-	function downloadBytes(bytes: Uint8Array, fileName: string) {
-		const downloadBytes = new Uint8Array(bytes.byteLength);
-		downloadBytes.set(bytes);
-		const url = URL.createObjectURL(
-			new Blob([downloadBytes.buffer], { type: 'application/octet-stream' })
-		);
-		const link = document.createElement('a');
-		link.href = url;
-		link.download = fileName;
-		document.body.append(link);
-		link.click();
-		link.remove();
-		URL.revokeObjectURL(url);
 	}
 
 	function getErrorMessage(error: unknown) {
@@ -721,6 +644,8 @@
 <section
 	class="saves-page"
 	aria-labelledby="saves-title"
+	data-destination-root="saves"
+	data-initial-state={initialStateReady ? 'ready' : 'loading'}
 	data-controller-status={appChrome.controllerStatus ?? 'No controller detected'}
 	inert={summonedWorkflow.active !== null}
 >
@@ -758,6 +683,7 @@
 			<article class={['save-card', 'storage-card', storageSelected && 'selected']}>
 				<button
 					data-saves-control
+					data-destination-focus="pokemon-storage-select"
 					type="button"
 					class="save-card-main"
 					onclick={selectPokemonStorage}
@@ -794,6 +720,7 @@
 					<div class="card-actions">
 						<button
 							data-saves-control
+							data-destination-focus="pokemon-storage-open"
 							type="button"
 							aria-disabled={busy}
 							onclick={() => {
@@ -819,6 +746,8 @@
 				>
 					<button
 						data-saves-control
+						data-destination-initial={saveFile.id === initialSaveFileId ? '' : undefined}
+						data-destination-focus={`save-${saveFile.id}-select`}
 						type="button"
 						class="save-card-main"
 						onclick={() => selectSaveFile(saveFile.id)}
@@ -862,6 +791,7 @@
 						<div class="card-actions">
 							<button
 								data-saves-control
+								data-destination-focus={`save-${saveFile.id}-delete`}
 								type="button"
 								class="danger-action"
 								aria-disabled={busy}
@@ -873,6 +803,7 @@
 							</button>
 							<button
 								data-saves-control
+								data-destination-focus={`save-${saveFile.id}-open`}
 								type="button"
 								aria-disabled={busy}
 								onclick={() => {
@@ -888,6 +819,8 @@
 
 			<button
 				data-saves-control
+				data-destination-initial={saveFiles.length === 0 ? '' : undefined}
+				data-destination-focus="import"
 				type="button"
 				class="import-card"
 				aria-disabled={busy}
@@ -915,6 +848,7 @@
 				</div>
 				<button
 					data-saves-control
+					data-destination-focus="backup-create"
 					type="button"
 					aria-disabled={busy || !selectedSaveFile}
 					onclick={() => {
@@ -946,6 +880,7 @@
 							</div>
 							<button
 								data-saves-control
+								data-destination-focus={`backup-${backup.id}-open`}
 								type="button"
 								aria-disabled={busy}
 								onclick={() => {
@@ -956,6 +891,7 @@
 							</button>
 							<button
 								data-saves-control
+								data-destination-focus={`backup-${backup.id}-delete`}
 								type="button"
 								class="danger-action"
 								aria-disabled={busy}
@@ -982,17 +918,19 @@
 </section>
 
 {#if pendingDelete}
-	<ConfirmDialog
-		open={true}
-		title={deleteDialogTitle(pendingDelete)}
-		description={deleteDialogDescription(pendingDelete)}
-		confirmLabel="Delete"
-		cancelLabel="Keep"
-		tone="danger"
-		{busy}
-		onCancel={closeDeleteDialog}
-		onConfirm={() => void confirmPendingDelete()}
-	/>
+	<div data-saves-confirmation>
+		<ConfirmDialog
+			open={true}
+			title={deleteDialogTitle(pendingDelete)}
+			description={deleteDialogDescription(pendingDelete)}
+			confirmLabel="Delete"
+			cancelLabel="Keep"
+			tone="danger"
+			{busy}
+			onCancel={closeDeleteDialog}
+			onConfirm={() => void confirmPendingDelete()}
+		/>
+	</div>
 {/if}
 
 <style>

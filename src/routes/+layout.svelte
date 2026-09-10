@@ -1,16 +1,21 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import { App as CapacitorApp } from '@capacitor/app';
 	import { Capacitor } from '@capacitor/core';
+	import { onMount, tick } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import './layout.css';
 	import AppUpdatePrompt from '$lib/components/pksx/AppUpdatePrompt.svelte';
 	import BackupBrowser from '$lib/components/pksx/BackupBrowser.svelte';
-	import MobileTabbar from '$lib/components/pksx/MobileTabbar.svelte';
-	import TopBar from '$lib/components/pksx/TopBar.svelte';
+	import MainMenu, {
+		MAIN_MENU_SEARCH_INSERTION_INDEX,
+		type MainMenuEntry
+	} from '$lib/components/pksx/MainMenu.svelte';
 	import { appChrome } from '$lib/pksx/app-chrome.svelte';
 	import { heightBandLock } from '$lib/pksx/height-band-lock';
+	import { getSavesStorage } from '$lib/pksx/saves-cache';
 	import { theme } from '$lib/pksx/theme.svelte';
 	import {
 		createSummonedWorkflowHost,
@@ -24,121 +29,482 @@
 		type ControllerKey
 	} from '$lib/pksx/controller-input';
 
+	type Destination = 'boxes' | 'trainer' | 'bag' | 'saves' | 'settings';
+	type DestinationFocus = { id: string; identity: string | null };
+
 	let { children } = $props();
 	const summonedWorkflow = setSummonedWorkflowHost(createSummonedWorkflowHost());
-
-	const sectionPills = ['Boxes', 'Save File', 'Saves'];
-	const topBarControlIndices = [0, 1, 2, 3, 4, 6];
-	const mobileTabs = [
-		{ key: 'boxes', label: 'Boxes', glyph: '▦' },
-		{ key: 'save-file', label: 'Save', glyph: '▣' },
-		{ key: 'saves', label: 'Saves', glyph: '☁' }
-	];
-
-	let chromeFocus = $state<{ zone: 'topbar' | 'mobileTabs'; index: number } | null>(null);
-	const activeRoute = $derived(
+	const storage = getSavesStorage();
+	const destinationFocus = new SvelteMap<Destination, DestinationFocus>();
+	let mainMenuIndex = $state(0);
+	let firstRunChecked = false;
+	let skipNextFocusCapture = false;
+	let focusRestoreRequest = 0;
+	let cancelPendingFocusWait: (() => void) | null = null;
+	let platformHistoryDepth = 0;
+	let replaceNextRouteHistory = false;
+	let hasActiveSaveFile = $state(false);
+	let activeSaveAvailabilityRequest = 0;
+	const activeRoute = $derived<Destination>(
 		page.url.pathname.startsWith('/saves')
 			? 'saves'
-			: page.url.pathname.startsWith('/save-file')
-				? 'save-file'
-				: page.url.pathname.startsWith('/settings')
-					? 'settings'
-					: 'boxes'
+			: page.url.pathname.startsWith('/trainer') || page.url.pathname.startsWith('/save-file')
+				? 'trainer'
+				: page.url.pathname.startsWith('/bag')
+					? 'bag'
+					: page.url.pathname.startsWith('/settings')
+						? 'settings'
+						: 'boxes'
 	);
-	const activeSection = $derived(
-		activeRoute === 'saves'
-			? 'Saves'
-			: activeRoute === 'save-file'
-				? 'Save File'
-				: activeRoute === 'settings'
-					? 'Settings'
-					: 'Boxes'
-	);
+	const mainMenuOpen = $derived(summonedWorkflow.active?.kind === 'main-menu');
+	const mainMenuEntries = $derived.by<MainMenuEntry[]>(() => {
+		const entriesAfterReservedSearch: MainMenuEntry[] = [
+			{
+				key: 'trainer',
+				label: 'Trainer',
+				description: hasActiveSaveFile
+					? 'Edit Trainer details and money.'
+					: 'No active Save File. Open Trainer to see how to continue.'
+			},
+			{
+				key: 'bag',
+				label: 'Bag',
+				description: hasActiveSaveFile
+					? 'Edit the active Save File Bag.'
+					: 'No active Save File. Open Bag to see how to continue.'
+			},
+			{ key: 'saves', label: 'Saves', description: 'Import and choose Save Files.' },
+			{ key: 'settings', label: 'Settings', description: 'Theme, controls, and build details.' },
+			{
+				key: 'backup-browser',
+				label: 'Backup Browser',
+				description: hasActiveSaveFile
+					? 'Create, restore, and delete Backups.'
+					: 'No active Save File. Open the empty Backup Browser for next steps.'
+			}
+		];
 
-	function openBoxes() {
-		void goto(resolve('/'), { keepFocus: true });
+		const entries: MainMenuEntry[] = [
+			{ key: 'boxes', label: 'Boxes', description: 'Browse the active collections.' }
+		];
+		entries.splice(MAIN_MENU_SEARCH_INSERTION_INDEX, 0, ...entriesAfterReservedSearch);
+		return entries;
+	});
+
+	beforeNavigate((navigation) => {
+		if (navigation.willUnload) return;
+		if (hasRouteOwnedConfirmation()) {
+			navigation.cancel();
+			dispatchControllerKey('Escape');
+			return;
+		}
+		if (summonedWorkflow.active) {
+			navigation.cancel();
+			dispatchControllerKey('Escape');
+			return;
+		}
+		if (skipNextFocusCapture) skipNextFocusCapture = false;
+		else rememberDestinationFocus();
+	});
+	afterNavigate((navigation) => {
+		if (navigation.type === 'enter') {
+			platformHistoryDepth = 0;
+		} else if (navigation.type === 'popstate') {
+			platformHistoryDepth = Math.max(0, platformHistoryDepth + navigation.delta);
+		} else if (replaceNextRouteHistory) {
+			replaceNextRouteHistory = false;
+		} else {
+			platformHistoryDepth += 1;
+		}
+		queueMicrotask(() => void restoreDestinationFocus(activeRoute));
+	});
+
+	onMount(() => {
+		window.addEventListener('keydown', handleRootKeydown, true);
+		const backListener = Capacitor.isNativePlatform()
+			? CapacitorApp.addListener('backButton', ({ canGoBack }) => handlePlatformBack(canGoBack))
+			: null;
+		void applyFirstRunLanding();
+		return () => {
+			window.removeEventListener('keydown', handleRootKeydown, true);
+			void backListener?.then((listener) => listener.remove());
+		};
+	});
+
+	async function applyFirstRunLanding() {
+		if (firstRunChecked) return;
+		firstRunChecked = true;
+		try {
+			const [saveFiles, activeSaveFileId, pokemonStorage] = await Promise.all([
+				storage.listSaves(),
+				storage.getActiveSaveFileId(),
+				storage.getPokemonStorage()
+			]);
+			hasActiveSaveFile = saveFiles.some(({ id }) => id === activeSaveFileId);
+			appChrome.hasLoadedSave = hasActiveSaveFile;
+			const hasStoredPokemon =
+				pokemonStorage?.boxes.some((box) => box.slots.some((slot) => slot.pokemon !== null)) ??
+				false;
+			if (activeRoute === 'boxes' && saveFiles.length === 0 && !hasStoredPokemon) {
+				replaceNextRouteHistory = true;
+				try {
+					await goto(resolve('/saves'), { replaceState: true, keepFocus: true });
+				} finally {
+					replaceNextRouteHistory = false;
+				}
+			}
+		} catch {
+			// The destination owns its normal storage failure state.
+		}
 	}
 
-	function openSaves() {
-		void goto(resolve('/saves'), { keepFocus: true });
+	function openMainMenu() {
+		if (summonedWorkflow.active || appChrome.carryActive || hasRouteOwnedConfirmation()) return;
+		const launcherId =
+			rememberDestinationFocus() ?? ensureDestinationFocus(activeRoute) ?? 'main-menu-opener';
+		if (!summonedWorkflow.open('main-menu', { type: 'control', id: launcherId })) return;
+		mainMenuIndex = Math.max(
+			0,
+			mainMenuEntries.findIndex((entry) => entry.key === activeRoute)
+		);
+		void focusMainMenuEntry(mainMenuIndex);
+		void refreshActiveSaveFileAvailability(++activeSaveAvailabilityRequest);
 	}
 
-	function openSaveFile() {
-		void goto(resolve('/save-file'), { keepFocus: true });
+	async function refreshActiveSaveFileAvailability(request: number) {
+		try {
+			const activeSaveFileId = await storage.getActiveSaveFileId();
+			const available = Boolean(activeSaveFileId && (await storage.getSave(activeSaveFileId)));
+			if (request === activeSaveAvailabilityRequest) hasActiveSaveFile = available;
+		} catch {
+			if (request === activeSaveAvailabilityRequest) {
+				hasActiveSaveFile = appChrome.hasLoadedSave;
+			}
+		}
 	}
 
-	function handleImport(file: File) {
-		appChrome.importSave?.(file);
+	function closeMainMenu() {
+		if (!mainMenuOpen) return;
+		const launcher = summonedWorkflow.dismiss();
+		queueMicrotask(() => {
+			const target = launcher ? document.getElementById(launcher.id) : null;
+			const route = destinationRoute(activeRoute);
+			if (isFocusableTarget(target) && route?.contains(target)) target.focus();
+			else void restoreDestinationFocus(activeRoute);
+		});
 	}
 
-	function handleExport() {
-		appChrome.exportSave?.();
-	}
-
-	function focusTopControl(index: number) {
-		chromeFocus = { zone: 'topbar', index };
-	}
-
-	function focusMobileTab(index: number) {
-		chromeFocus = { zone: 'mobileTabs', index };
-	}
-
-	function handleShellFocusIn(event: FocusEvent) {
-		const target = event.target;
-		if (!(target instanceof HTMLElement)) {
-			chromeFocus = null;
+	async function selectMainMenuEntry(entry: MainMenuEntry) {
+		if (!mainMenuOpen) return;
+		if (entry.key === activeRoute) {
+			closeMainMenu();
 			return;
 		}
 
-		const topControlMatch = target.id.match(/^top-control-(\d+)$/);
-		if (topControlMatch) {
-			chromeFocus = { zone: 'topbar', index: Number(topControlMatch[1]) };
+		const launcher = summonedWorkflow.active?.launcher;
+		summonedWorkflow.closeAll();
+		if (entry.key === 'backup-browser') {
+			if (launcher) summonedWorkflow.open('backup-browser', launcher);
 			return;
 		}
 
-		const mobileTabMatch = target.id.match(/^mobile-tab-(\d+)$/);
-		if (mobileTabMatch) {
-			chromeFocus = { zone: 'mobileTabs', index: Number(mobileTabMatch[1]) };
+		skipNextFocusCapture = true;
+		await goto(destinationPath(entry.key), { keepFocus: true });
+		await restoreDestinationFocus(entry.key);
+	}
+
+	function destinationPath(destination: Destination) {
+		switch (destination) {
+			case 'boxes':
+				return resolve('/');
+			case 'trainer':
+				return resolve('/trainer');
+			case 'bag':
+				return resolve('/bag');
+			case 'saves':
+				return resolve('/saves');
+			case 'settings':
+				return resolve('/settings');
+		}
+	}
+
+	function handleRootKeydown(event: KeyboardEvent) {
+		const fromController = isControllerKeyboardEvent(event);
+		const shortcut =
+			!fromController &&
+			(event.metaKey || event.ctrlKey) &&
+			!event.altKey &&
+			event.key.toLowerCase() === 'k';
+
+		if (shortcut) {
+			consumeRootEvent(event);
+			if (!summonedWorkflow.active && !appChrome.carryActive) void openMainMenu();
 			return;
 		}
 
-		chromeFocus = null;
-	}
+		if (fromController && event.key === 'Menu') {
+			consumeRootEvent(event);
+			if (mainMenuOpen) closeMainMenu();
+			else if (!summonedWorkflow.active && !appChrome.carryActive) void openMainMenu();
+			return;
+		}
 
-	function selectMobileTab(index: number) {
-		chromeFocus = { zone: 'mobileTabs', index };
-		const tab = mobileTabs[index];
-		if (tab?.key === 'boxes') {
-			openBoxes();
+		if (mainMenuOpen) {
+			if (
+				![
+					'ArrowUp',
+					'ArrowDown',
+					'ArrowLeft',
+					'ArrowRight',
+					'Enter',
+					' ',
+					'Escape',
+					'Backspace'
+				].includes(event.key)
+			)
+				return;
+			consumeRootEvent(event);
+			if (event.key === 'Escape' || event.key === 'Backspace') {
+				closeMainMenu();
+				return;
+			}
+			if (event.key === 'Enter' || event.key === ' ') {
+				const entry = mainMenuEntries[mainMenuIndex];
+				if (entry) void selectMainMenuEntry(entry);
+				return;
+			}
+			const offset = event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 1;
+			mainMenuIndex = (mainMenuIndex + offset + mainMenuEntries.length) % mainMenuEntries.length;
+			void focusMainMenuEntry(mainMenuIndex);
+			return;
 		}
-		if (tab?.key === 'save-file') {
-			openSaveFile();
-		}
-		if (tab?.key === 'saves') {
-			openSaves();
-		}
-	}
 
-	function handleChromeKeydown(event: KeyboardEvent) {
+		if (fromController && event.key === 'Escape' && hasRouteOwnedConfirmation()) {
+			return;
+		}
 		if (
-			summonedWorkflow.active ||
-			appChrome.controllerInputActive ||
-			isControllerKeyboardEvent(event)
+			fromController &&
+			event.key === 'Escape' &&
+			document.querySelector('[data-combobox-open="true"]')
 		) {
 			return;
 		}
 
-		const action = keyboardAction(event);
-		if (!action) {
+		if (
+			fromController &&
+			event.key === 'Escape' &&
+			!summonedWorkflow.active &&
+			!appChrome.carryActive &&
+			activeRoute !== 'boxes'
+		) {
+			consumeRootEvent(event);
+			void goto(resolve('/'), { keepFocus: true });
+		}
+	}
+
+	function consumeRootEvent(event: KeyboardEvent) {
+		event.preventDefault();
+		event.stopImmediatePropagation();
+	}
+
+	function handlePlatformBack(canGoBack: boolean) {
+		if (hasRouteOwnedConfirmation()) {
+			dispatchControllerKey('Escape');
 			return;
 		}
-
-		if (!chromeFocus) {
-			chromeFocus = { zone: 'topbar', index: 0 };
+		if (summonedWorkflow.active) {
+			dispatchControllerKey('Escape');
+			return;
 		}
+		if (canGoBack || platformHistoryDepth > 0) history.back();
+		else void CapacitorApp.exitApp();
+	}
 
-		event.preventDefault();
-		dispatchChromeAction(action);
+	async function focusMainMenuEntry(index: number) {
+		await tick();
+		document.getElementById(`main-menu-entry-${index}`)?.focus();
+	}
+
+	function handleShellFocusIn(event: FocusEvent) {
+		if (summonedWorkflow.active || !(event.target instanceof HTMLElement)) return;
+		const route = event.target.closest<HTMLElement>('[data-destination-root]');
+		if (!route) return;
+		const id = ensureControlId(event.target, activeRoute);
+		if (id) rememberControl(activeRoute, event.target, id);
+	}
+
+	function rememberDestinationFocus() {
+		const route = destinationRoute(activeRoute);
+		if (!route) return null;
+		prepareControlIds(route, activeRoute);
+		const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		const controllerTarget = route.querySelector<HTMLElement>('.controller-focused');
+		const target =
+			active && route.contains(active) && isFocusableTarget(active)
+				? active
+				: isFocusableTarget(controllerTarget)
+					? controllerTarget
+					: (resolveRememberedControl(route, activeRoute) ??
+						(isDestinationReady(route) ? fallbackControl(route, activeRoute) : null));
+		if (!target) return null;
+		const id = ensureControlId(target, activeRoute);
+		if (id) rememberControl(activeRoute, target, id);
+		return id;
+	}
+
+	function ensureDestinationFocus(destination: Destination) {
+		const route = destinationRoute(destination);
+		if (!route || !isDestinationReady(route)) return null;
+		prepareControlIds(route, destination);
+		const target = fallbackControl(route, destination);
+		if (!target) return null;
+		const id = ensureControlId(target, destination);
+		if (id) rememberControl(destination, target, id);
+		return id;
+	}
+
+	async function restoreDestinationFocus(destination: Destination) {
+		const request = ++focusRestoreRequest;
+		cancelPendingFocusWait?.();
+		cancelPendingFocusWait = null;
+		await tick();
+		await new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame()));
+		const route = await waitForDestinationReady(destination, request);
+		if (!route || request !== focusRestoreRequest || summonedWorkflow.active) return;
+		prepareControlIds(route, destination);
+		const rememberedTarget = resolveRememberedControl(route, destination);
+		const target =
+			rememberedTarget && route.contains(rememberedTarget) && isFocusableTarget(rememberedTarget)
+				? rememberedTarget
+				: fallbackControl(route, destination);
+		if (!target) return;
+		const id = ensureControlId(target, destination);
+		if (id) rememberControl(destination, target, id);
+		target.focus();
+		target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	}
+
+	function waitForDestinationReady(destination: Destination, request: number) {
+		const current = destinationRoute(destination);
+		if (current && isDestinationReady(current)) return Promise.resolve(current);
+
+		const shell = document.querySelector<HTMLElement>('.app-shell');
+		if (!shell) return Promise.resolve(null);
+		return new Promise<HTMLElement | null>((resolveReady) => {
+			let observer: MutationObserver;
+			const finish = (route: HTMLElement | null) => {
+				observer.disconnect();
+				if (cancelPendingFocusWait === cancel) cancelPendingFocusWait = null;
+				resolveReady(route);
+			};
+			const cancel = () => finish(null);
+			const settle = () => {
+				if (request !== focusRestoreRequest || activeRoute !== destination) {
+					finish(null);
+					return;
+				}
+				const route = destinationRoute(destination);
+				if (!route || !isDestinationReady(route)) return;
+				finish(route);
+			};
+			observer = new MutationObserver(settle);
+			cancelPendingFocusWait = cancel;
+			observer.observe(shell, {
+				subtree: true,
+				childList: true,
+				attributes: true,
+				attributeFilter: ['data-initial-state']
+			});
+			settle();
+		});
+	}
+
+	function destinationRoute(destination: Destination) {
+		return document.querySelector<HTMLElement>(`[data-destination-root="${destination}"]`);
+	}
+
+	function isDestinationReady(route: HTMLElement) {
+		return route.dataset.initialState === 'ready';
+	}
+
+	function prepareControlIds(route: HTMLElement, destination: Destination) {
+		focusableControls(route).forEach((control) => ensureControlId(control, destination));
+	}
+
+	function ensureControlId(control: HTMLElement, destination: Destination) {
+		const identity = control.dataset.destinationFocus;
+		if (identity) {
+			const variant = control.dataset.destinationVariant;
+			control.id = `pksx-${destination}-${identity}${variant ? `-${variant}` : ''}`;
+			return control.id;
+		}
+		if (control.id) return control.id;
+		return null;
+	}
+
+	function rememberControl(destination: Destination, control: HTMLElement, id: string) {
+		destinationFocus.set(destination, {
+			id,
+			identity: control.dataset.destinationFocus ?? null
+		});
+	}
+
+	function resolveRememberedControl(route: HTMLElement, destination: Destination) {
+		const remembered = destinationFocus.get(destination);
+		if (!remembered) return null;
+		if (!remembered.identity) {
+			const target = document.getElementById(remembered.id);
+			return target && route.contains(target) && isFocusableTarget(target) ? target : null;
+		}
+		return (
+			Array.from(
+				route.querySelectorAll<HTMLElement>(
+					`[data-destination-focus="${CSS.escape(remembered.identity)}"]`
+				)
+			).find(isFocusableTarget) ?? null
+		);
+	}
+
+	function fallbackControl(route: HTMLElement, destination: Destination) {
+		const requested =
+			Array.from(route.querySelectorAll<HTMLElement>('[data-destination-initial]')).find(
+				isFocusableTarget
+			) ?? null;
+		if (isFocusableTarget(requested)) return requested;
+		if (destination === 'boxes') {
+			const firstSlot =
+				route
+					.querySelector<HTMLElement>('#box-grid')
+					?.querySelector<HTMLElement>('[id$="-slot-0"]') ?? null;
+			if (isFocusableTarget(firstSlot)) return firstSlot;
+		}
+		return focusableControls(route).find(isFocusableTarget) ?? null;
+	}
+
+	function focusableControls(route: HTMLElement) {
+		return Array.from(
+			route.querySelectorAll<HTMLElement>(
+				'button:not([disabled]), a[href], input:not([disabled]):not([type="hidden"]):not([type="file"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [data-destination-focus]'
+			)
+		);
+	}
+
+	function isFocusableTarget(target: HTMLElement | null): target is HTMLElement {
+		return Boolean(
+			target &&
+			!target.hidden &&
+			!target.closest('[inert]') &&
+			target.getClientRects().length > 0 &&
+			getComputedStyle(target).display !== 'none' &&
+			getComputedStyle(target).visibility !== 'hidden'
+		);
+	}
+
+	function hasRouteOwnedConfirmation() {
+		return (
+			activeRoute === 'saves' &&
+			document.querySelector('[data-saves-confirmation] [role="alertdialog"]') !== null
+		);
 	}
 
 	function controllerNavigation() {
@@ -147,6 +513,7 @@
 		}
 
 		const nativeHeld = new SvelteSet<ControllerKey>();
+		const nativeDiscretePressed = new SvelteSet<ControllerKey>();
 		let nativeControllerId: string | null = null;
 		let previousPressed = new SvelteSet<ControllerKey>();
 		const repeatAt = new SvelteMap<ControllerKey, number>();
@@ -164,7 +531,12 @@
 			nativeControllerId = detail.id || 'Controller';
 			appChrome.controllerStatus = nativeControllerId;
 			if (detail.discrete) {
-				if (detail.pressed) dispatchKey(detail.key);
+				if (!detail.pressed) {
+					nativeDiscretePressed.delete(detail.key);
+				} else if (!nativeDiscretePressed.has(detail.key)) {
+					nativeDiscretePressed.add(detail.key);
+					dispatchKey(detail.key);
+				}
 				return;
 			}
 
@@ -184,6 +556,10 @@
 
 		const handleNativeConnection = (event: Event) => {
 			const detail = (event as CustomEvent<NativeControllerConnection>).detail;
+			nativeHeld.clear();
+			nativeDiscretePressed.clear();
+			previousPressed.clear();
+			repeatAt.clear();
 			nativeControllerId = detail?.id || 'Controller';
 			appChrome.controllerStatus = nativeControllerId;
 		};
@@ -248,6 +624,7 @@
 			'Escape',
 			'PageUp',
 			'PageDown',
+			'Menu',
 			'x',
 			'y'
 		].includes(key);
@@ -263,73 +640,6 @@
 	type NativeControllerConnection = {
 		id?: string;
 	};
-
-	function dispatchChromeAction(action: 'previous' | 'next' | 'confirm') {
-		if (!chromeFocus) {
-			chromeFocus = {
-				zone: 'mobileTabs',
-				index: activeRoute === 'saves' ? 2 : activeRoute === 'save-file' ? 1 : 0
-			};
-		}
-
-		if (chromeFocus.zone === 'topbar') {
-			const currentPosition = Math.max(0, topBarControlIndices.indexOf(chromeFocus.index));
-			const nextPosition = nextChromeIndex(currentPosition, action, topBarControlIndices.length);
-			const nextIndex = topBarControlIndices[nextPosition] ?? 0;
-			chromeFocus = { zone: 'topbar', index: nextIndex };
-			focusChromeElement(`top-control-${nextIndex}`);
-			if (action === 'confirm') {
-				activateTopControl(nextIndex);
-			}
-			return;
-		}
-
-		const nextIndex = nextChromeIndex(chromeFocus.index, action, mobileTabs.length);
-		chromeFocus = { zone: 'mobileTabs', index: nextIndex };
-		focusChromeElement(`mobile-tab-${nextIndex}`);
-		if (action === 'confirm') {
-			selectMobileTab(nextIndex);
-		}
-	}
-
-	function keyboardAction(event: KeyboardEvent) {
-		switch (event.key) {
-			case 'ArrowLeft':
-			case 'ArrowUp':
-				return 'previous';
-			case 'ArrowRight':
-			case 'ArrowDown':
-				return 'next';
-			case 'Enter':
-			case ' ':
-				return 'confirm';
-			default:
-				return null;
-		}
-	}
-
-	function nextChromeIndex(index: number, action: 'previous' | 'next' | 'confirm', count: number) {
-		if (action === 'previous') {
-			return (index + count - 1) % count;
-		}
-		if (action === 'next') {
-			return (index + 1) % count;
-		}
-		return index;
-	}
-
-	function activateTopControl(index: number) {
-		if (index === 0) openBoxes();
-		if (index === 1) openSaveFile();
-		if (index === 2) openSaves();
-		if (index === 3 && !appChrome.busy) document.getElementById('quick-save-import')?.click();
-		if (index === 4 && appChrome.hasLoadedSave && !appChrome.busy) handleExport();
-		if (index === 6) theme.toggle();
-	}
-
-	function focusChromeElement(id: string) {
-		queueMicrotask(() => document.getElementById(id)?.focus());
-	}
 </script>
 
 <svelte:head>
@@ -340,7 +650,6 @@
 	<meta name="apple-mobile-web-app-capable" content="yes" />
 	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </svelte:head>
-<svelte:window onkeydown={handleChromeKeydown} />
 
 <main
 	class={[
@@ -355,48 +664,73 @@
 	{@attach controllerFocusSystem}
 	{@attach heightBandLock}
 >
-	{#if summonedWorkflow.active?.kind === 'backup-browser'}
-		<BackupBrowser />
-	{/if}
-
-	<div class="chrome-inert-owner" inert={summonedWorkflow.active !== null}>
-		<TopBar
-			{sectionPills}
-			{activeSection}
-			saveSummary={appChrome.saveSummary}
-			boxCount={appChrome.boxCount}
-			activeBox={appChrome.activeBox}
-			fileName={appChrome.fileName}
-			busy={appChrome.busy}
-			hasLoadedSave={appChrome.hasLoadedSave}
-			darkMode={theme.dark}
-			focusIndex={chromeFocus?.zone === 'topbar' ? chromeFocus.index : null}
-			onFocusControl={focusTopControl}
-			onOpenBoxes={openBoxes}
-			onOpenSaveFile={openSaveFile}
-			onOpenSaves={openSaves}
-			onImport={handleImport}
-			onExport={handleExport}
-			onToggleTheme={() => theme.toggle()}
-		/>
-	</div>
-
 	{@render children()}
 
-	<div class="chrome-inert-owner" inert={summonedWorkflow.active !== null}>
-		<MobileTabbar
-			tabs={mobileTabs}
-			activeKey={activeRoute}
-			focusIndex={chromeFocus?.zone === 'mobileTabs' ? chromeFocus.index : null}
-			onFocusTab={focusMobileTab}
-			onSelectTab={selectMobileTab}
+	{#if !summonedWorkflow.active && !appChrome.carryActive}
+		<button
+			id="main-menu-opener"
+			class="main-menu-opener"
+			type="button"
+			tabindex="-1"
+			aria-label="Open Main Menu"
+			onpointerdown={(event) => event.preventDefault()}
+			onclick={() => void openMainMenu()}
+		>
+			<svg class="main-menu-icon" aria-hidden="true" viewBox="3 3 18 18">
+				<path d="M4 6h16M4 12h16M4 18h16" />
+			</svg>
+		</button>
+	{/if}
+
+	{#if mainMenuOpen}
+		<MainMenu
+			entries={mainMenuEntries}
+			activeDestination={activeRoute}
+			activeIndex={mainMenuIndex}
+			onFocusEntry={(index) => (mainMenuIndex = index)}
+			onSelectEntry={(entry) => void selectMainMenuEntry(entry)}
+			onClose={closeMainMenu}
 		/>
-	</div>
+	{:else if summonedWorkflow.active?.kind === 'backup-browser'}
+		<BackupBrowser />
+	{/if}
 </main>
 <AppUpdatePrompt />
 
 <style>
-	.chrome-inert-owner {
-		display: contents;
+	.main-menu-opener {
+		position: fixed;
+		z-index: 400;
+		top: calc(var(--pksx-safe-area-top) + var(--pksx-space-2, 8px));
+		right: calc(var(--pksx-safe-area-right) + var(--pksx-space-2, 8px));
+		width: var(--pksx-control-height, 40px);
+		height: var(--pksx-control-height, 40px);
+		display: grid;
+		place-items: center;
+		padding: 0;
+		border: var(--pksx-border-width, 1px) solid var(--pksx-color-border-strong);
+		border-radius: 50%;
+		background: var(--pksx-color-surface-panel);
+		box-shadow: var(--pksx-shadow-raised);
+		color: var(--pksx-color-accent-primary);
+		cursor: pointer;
+	}
+
+	:global(.app-shell:has([data-saves-confirmation] [role='alertdialog'])) .main-menu-opener {
+		display: none;
+	}
+
+	.main-menu-opener:hover,
+	.main-menu-opener:active {
+		background: var(--pksx-color-accent-wash);
+	}
+
+	.main-menu-icon {
+		width: var(--pksx-icon-size, 16px);
+		height: var(--pksx-icon-size, 16px);
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2;
+		stroke-linecap: round;
 	}
 </style>

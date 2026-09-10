@@ -23,6 +23,12 @@ async function openEmptySaves(page: Page) {
 	);
 	await page.reload();
 	await page.waitForLoadState('networkidle');
+	await expect(page).toHaveURL(/\/saves$/);
+	await page.getByRole('button', { name: 'Open Main Menu' }).click();
+	await page
+		.getByRole('dialog', { name: 'Main Menu' })
+		.getByRole('button', { name: /^Boxes/ })
+		.click();
 	await expect(page.locator('#box-grid')).toBeVisible({ timeout: 15000 });
 	await expect(page.getByRole('heading', { name: 'Box 01' })).toBeVisible();
 }
@@ -32,7 +38,12 @@ async function pressController(page: Page, key: string) {
 		const dispatch = (pressed: boolean) =>
 			window.dispatchEvent(
 				new CustomEvent('pksxcontroller', {
-					detail: { key: controllerKey, pressed, id: 'Test controller' }
+					detail: {
+						key: controllerKey,
+						pressed,
+						discrete: !controllerKey.startsWith('Arrow'),
+						id: 'Test controller'
+					}
 				})
 			);
 		const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -43,6 +54,26 @@ async function pressController(page: Page, key: string) {
 		dispatch(false);
 		await nextFrame();
 	}, key);
+}
+
+async function chooseMainMenu(
+	page: Page,
+	label: 'Boxes' | 'Trainer' | 'Bag' | 'Saves' | 'Settings' | 'Backup Browser'
+) {
+	await page.getByRole('button', { name: 'Open Main Menu' }).click();
+	await page
+		.getByRole('dialog', { name: 'Main Menu' })
+		.getByRole('button', { name: new RegExp(`^${label}`) })
+		.click();
+}
+
+async function expectActiveSaveOwner(page: Page, fileName: string, timeout = 15000) {
+	await expect(page.locator('.boxes-route')).toHaveAttribute('data-active-save-file-id', /.+/, {
+		timeout
+	});
+	await expect(page.getByRole('button', { name: `Open Box Menu for ${fileName}` })).toBeVisible({
+		timeout
+	});
 }
 
 async function expectControllerHighlights(page: Page, scope: Locator) {
@@ -73,7 +104,9 @@ async function importEmeraldThroughSaves(page: Page) {
 		timeout: 15000
 	});
 	await page.goto('/');
-	await expect(page.locator('.save-chip')).toContainText('011020251345.sav', { timeout: 15000 });
+	await expect(
+		page.getByRole('button', { name: 'Open Box Menu for emerald-011020251345.sav' })
+	).toBeVisible({ timeout: 15000 });
 	await expect(page.locator('#box-0-slot-0')).toContainText('ARON', { timeout: 15000 });
 }
 
@@ -86,9 +119,11 @@ async function importScarletThroughSaves(page: Page) {
 		timeout: 60000
 	});
 	await page.goto('/');
-	await expect(page.locator('.save-chip')).toContainText('pokemon-scarlet-2025-03-24-main.sav', {
-		timeout: 60000
-	});
+	await expect(
+		page.getByRole('button', {
+			name: 'Open Box Menu for pokemon-scarlet-2025-03-24-main.sav'
+		})
+	).toBeVisible({ timeout: 60000 });
 }
 
 // Seeds a Pokemon Storage shape the app never creates itself, so a later read proves persistence.
@@ -419,7 +454,7 @@ test('keyboard navigation moves deterministically across the box grid', async ({
 	await page.keyboard.press('ArrowUp');
 	await expect(page.locator('#collection-control-pane-pokemon-storage')).toBeFocused();
 	await page.keyboard.press('ArrowUp');
-	await expect(page.locator('#top-control-5')).toBeFocused();
+	await expect(page.locator('#collection-control-pane-pokemon-storage')).toBeFocused();
 });
 
 test('compact box controls and keyboard shortcuts update the active box label', async ({
@@ -453,7 +488,13 @@ test('switches to durable Pokemon Storage with focusable empty Slot actions', as
 	await openEmptySaves(page);
 	await importEmeraldThroughSaves(page);
 
-	await page.getByRole('button', { name: 'Add collection' }).click();
+	await page.locator('#box-grid').focus();
+	await pressController(page, 'x');
+	await expect(page.getByRole('dialog', { name: 'Box Menu' })).toBeVisible();
+	await page
+		.getByRole('dialog', { name: 'Box Menu' })
+		.getByRole('button', { name: 'Open another' })
+		.click();
 	await page.getByRole('button', { name: /Pokemon Storage/ }).click();
 	await expect(page.locator('.pane-state-tag')).toContainText('AUTO-SAVED');
 	await expect(page.locator('#box-0-slot-0')).toContainText('Empty');
@@ -579,7 +620,7 @@ test('Box Menu import dismisses its workflow chain and installs the imported Sav
 	fileChooser = await fileChooserPromise;
 	await fileChooser.setFiles(emeraldFixturePath);
 
-	await expect(page.locator('.save-chip')).toContainText('011020251345.sav', { timeout: 15000 });
+	await expectActiveSaveOwner(page, 'emerald-011020251345.sav');
 	await expect(page.locator('#box-0-slot-0')).toContainText('ARON', { timeout: 15000 });
 	await expect(page.locator('#box-0-slot-0')).toBeFocused();
 	await expect(menu).toBeHidden();
@@ -617,9 +658,9 @@ test('a completed import does not move focus in a newer Boxes instance', async (
 			typeof (window as typeof window & { releaseImport?: () => void }).releaseImport === 'function'
 	);
 
-	await page.locator('#top-control-1').click();
-	await expect(page).toHaveURL(/\/save-file$/);
-	await page.locator('#top-control-0').click();
+	await chooseMainMenu(page, 'Trainer');
+	await expect(page).toHaveURL(/\/trainer$/);
+	await chooseMainMenu(page, 'Boxes');
 	await expect(page.locator('.boxes-route')).toHaveAttribute('data-initial-state', 'ready', {
 		timeout: 15000
 	});
@@ -629,7 +670,9 @@ test('a completed import does not move focus in a newer Boxes instance', async (
 		(window as typeof window & { releaseImport?: () => void }).releaseImport?.()
 	);
 
-	await expect(page.locator('.save-chip')).toContainText('011020251345.sav', { timeout: 15000 });
+	await expect(page.locator('.boxes-route')).toHaveAttribute('data-active-save-file-id', /.+/, {
+		timeout: 15000
+	});
 	await expect(page.locator('#box-0-slot-17')).toBeFocused();
 });
 
@@ -846,7 +889,11 @@ test('Box Menu and related picker Cancel restore focus at both viewport floors',
 test('Carry suppresses the Box Menu and Y only toggles Move and Copy', async ({ page }) => {
 	await openEmptySaves(page);
 	await importEmeraldThroughSaves(page);
-	await page.getByRole('button', { name: 'Add collection' }).click();
+	await page.getByRole('button', { name: 'Open Box Menu for emerald-011020251345.sav' }).click();
+	await page
+		.getByRole('dialog', { name: 'Box Menu' })
+		.getByRole('button', { name: 'Open another' })
+		.click();
 	await page
 		.getByRole('dialog', { name: 'Open another collection' })
 		.getByRole('button', { name: /Pokemon Storage/ })
@@ -869,11 +916,14 @@ test('Carry suppresses the Box Menu and Y only toggles Move and Copy', async ({ 
 	await expect(page.locator('#box-grid #collection-control-pane-active-save')).toHaveCount(1);
 	await expect(page.locator('#box-0-slot-0')).toBeFocused();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
-	await page.getByRole('button', { name: 'Add collection' }).click();
 	await expect(page.getByRole('dialog', { name: 'Open another collection' })).toBeHidden();
 
 	await page.keyboard.press('x');
 	await expect(page.getByRole('dialog', { name: 'Box Menu' })).toBeHidden();
+	await page.keyboard.press('Control+k');
+	await pressController(page, 'Menu');
+	await expect(page.getByRole('dialog', { name: 'Main Menu' })).toBeHidden();
+	await expect(page.getByRole('button', { name: 'Open Main Menu' })).toHaveCount(0);
 	await page.keyboard.press('y');
 	await expect(page.locator('.toolbar-status-strip')).toHaveText('Copy ARON');
 	await page.keyboard.press('y');
@@ -918,17 +968,7 @@ test('confirm opens slot actions and back restores the grid focus', async ({ pag
 	await expect(page.getByRole('alert')).toHaveCount(0);
 
 	await expect(page.locator('#slot-action-0')).toBeFocused();
-	await expect(page.locator('.chrome-inert-owner')).toHaveCount(2);
-	expect(
-		await page
-			.locator('.chrome-inert-owner')
-			.evaluateAll((owners) => owners.every((owner) => owner.hasAttribute('inert')))
-	).toBe(true);
-	const focusedAfterChromeAttempt = await page.locator('#top-control-0').evaluate((control) => {
-		(control as HTMLElement).focus();
-		return document.activeElement?.id;
-	});
-	expect(focusedAfterChromeAttempt).toBe('slot-action-0');
+	await expect(page.getByRole('button', { name: 'Open Main Menu' })).toHaveCount(0);
 	await page.keyboard.press('ArrowDown');
 	await expect(page.locator('#slot-action-1')).toBeFocused();
 	for (const key of ['ArrowDown', 'ArrowDown', 'ArrowDown']) {
@@ -1438,33 +1478,10 @@ test('Legality Check opens an engine report from an occupied Slot and dismisses 
 	await expect(page.locator('#slot-action-5')).toBeFocused();
 });
 
-test('keyboard navigation reaches top controls and mobile tabs', async ({ page }) => {
+test('Boxes navigation clamps at workspace edges while Main Menu owns destinations', async ({
+	page
+}) => {
 	await openEmptySaves(page);
-	await page.locator('#top-control-0').focus();
-	await expect(page.locator('#top-control-0')).toBeFocused();
-
-	await page.keyboard.press('ArrowRight');
-	await expect(page.locator('#top-control-1')).toBeFocused();
-
-	await page.keyboard.press('ArrowRight');
-	await expect(page.locator('#top-control-2')).toBeFocused();
-
-	await page.keyboard.press('ArrowRight');
-	await expect(page.locator('#top-control-3')).toBeFocused();
-
-	await page.keyboard.press('ArrowRight');
-	await expect(page.locator('#top-control-4')).toBeFocused();
-	await page.keyboard.press('ArrowRight');
-	await expect(page.locator('#top-control-6')).toBeFocused();
-	await page.keyboard.press('ArrowRight');
-	await expect(page.locator('#top-control-5')).toBeFocused();
-	await page.keyboard.press('ArrowLeft');
-	await expect(page.locator('#top-control-6')).toBeFocused();
-	await page.keyboard.press('ArrowDown');
-	await expect(page.locator('#top-control-5')).toBeFocused();
-	await page.locator('#box-0-slot-24').focus();
-	await expect(page.locator('#top-control-6')).not.toHaveClass(/controller-focused/);
-
 	await page.locator('#box-0-slot-24').focus();
 	await page.keyboard.press('ArrowDown');
 	await expect(page.locator('#box-0-slot-24')).toBeFocused();
@@ -1474,31 +1491,11 @@ test('keyboard navigation reaches top controls and mobile tabs', async ({ page }
 	await page.keyboard.press('ArrowUp');
 	await expect(page.locator('#collection-control-pane-pokemon-storage')).toBeFocused();
 	await page.keyboard.press('ArrowUp');
-	await expect(page.locator('#top-control-5')).toBeFocused();
-	await page.keyboard.press('ArrowUp');
-	await expect(page.locator('#top-control-4')).toBeFocused();
-	await page.keyboard.press('ArrowRight');
-	await expect(page.locator('#top-control-6')).toBeFocused();
-	await page.keyboard.press('ArrowRight');
-	await expect(page.locator('#top-control-5')).toBeFocused();
+	await expect(page.locator('#collection-control-pane-pokemon-storage')).toBeFocused();
 	await expect(page.locator('.section-pills')).toBeHidden();
-
-	await page.locator('#box-0-slot-0').focus();
-	for (const key of ['ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowDown']) {
-		await page.keyboard.press(key);
-	}
-
-	await expect(page.locator('#mobile-tab-1')).toBeFocused();
-	await page.keyboard.press('ArrowLeft');
-	await expect(page.locator('#mobile-tab-0')).toBeFocused();
-	await page.keyboard.press('ArrowRight');
-	await expect(page.locator('#mobile-tab-1')).toBeFocused();
-	await page.keyboard.press('ArrowRight');
-	await expect(page.locator('#mobile-tab-2')).toBeFocused();
-	await page.keyboard.press('ArrowLeft');
-	await expect(page.locator('#mobile-tab-1')).toBeFocused();
-	await page.keyboard.press('ArrowUp');
-	await expect(page.locator('#box-0-slot-25')).toBeFocused();
+	await expect(page.locator('.top-bar, .mobile-tabbar')).toHaveCount(0);
+	await page.keyboard.press('Control+k');
+	await expect(page.getByRole('dialog', { name: 'Main Menu' })).toBeVisible();
 });
 
 test('controller input follows the keyboard navigation path', async ({ page }) => {
@@ -1543,6 +1540,7 @@ test('controller input follows the keyboard navigation path', async ({ page }) =
 });
 
 test('controller focus framework covers every interactive surface', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 800 });
 	await openEmptySaves(page);
 	await page.locator('#box-grid').focus();
 	await pressController(page, 'ArrowRight');
@@ -1575,8 +1573,8 @@ test('controller focus framework covers every interactive surface', async ({ pag
 	await pressController(page, 'Escape');
 	await pressController(page, 'Escape');
 
-	await page.getByRole('button', { name: 'Save File' }).click();
-	await expect(page).toHaveURL(/\/save-file$/);
+	await chooseMainMenu(page, 'Trainer');
+	await expect(page).toHaveURL(/\/trainer$/);
 	await expect(page.locator('.field-sidebar nav button').first()).toBeVisible();
 	await pressController(page, 'ArrowDown');
 	await expect(page.locator('.save-file-route').locator(':focus')).toHaveCount(1);
@@ -1584,11 +1582,12 @@ test('controller focus framework covers every interactive surface', async ({ pag
 	await page.getByRole('button', { name: /Money/ }).first().click();
 	await pressController(page, 'ArrowDown');
 	await expectControllerHighlights(page, page.locator('.save-file-route'));
-	await page.getByRole('button', { name: /Bag Inventory pockets/ }).click();
+	await chooseMainMenu(page, 'Bag');
+	await expect(page).toHaveURL(/\/bag$/);
 	await pressController(page, 'ArrowDown');
 	await expectControllerHighlights(page, page.locator('.save-file-route'));
 
-	await page.getByRole('button', { name: 'Saves' }).click();
+	await chooseMainMenu(page, 'Saves');
 	await expect(page).toHaveURL(/\/saves$/);
 	await pressController(page, 'ArrowDown');
 	await expectControllerHighlights(page, page.locator('.saves-page'));
@@ -1684,11 +1683,13 @@ test('landscape-floor Slot Menu uses the trailing Safe Canvas edge without shell
 	expect(await shellExtents(page)).toEqual(beforeOpen);
 });
 
-test('small widescreen viewports use the mobile shell', async ({ page }) => {
+test('small widescreen viewports use destination-owned layout without persistent chrome', async ({
+	page
+}) => {
 	await openEmptySaves(page);
 	await page.setViewportSize({ width: 960, height: 540 });
 
-	await expect(page.locator('.mobile-tabbar')).toBeVisible();
+	await expect(page.locator('.top-bar, .mobile-tabbar')).toHaveCount(0);
 	await expect(page.locator('.section-pills')).toBeHidden();
 	await expect(page.locator('.box-sidebar')).toBeHidden();
 });
@@ -1916,8 +1917,14 @@ test('imports the Emerald Save File, renders engine data, and exports serialized
 	await expect(detailRail).toContainText('Move Set');
 	await expect(detailRail).not.toContainText('Not available');
 
+	await chooseMainMenu(page, 'Boxes');
+	await page.locator('#box-grid').focus();
+	await pressController(page, 'x');
 	const downloadPromise = page.waitForEvent('download');
-	await page.getByRole('button', { name: 'Export' }).click();
+	await page
+		.getByRole('dialog', { name: 'Box Menu' })
+		.getByRole('button', { name: 'Export' })
+		.click();
 	const download = await downloadPromise;
 	const exported = await readFile(await download.path());
 	const fixture = await readFile(emeraldFixturePath);
@@ -1926,25 +1933,30 @@ test('imports the Emerald Save File, renders engine data, and exports serialized
 	expect(exported.byteLength).toBe(fixture.byteLength);
 });
 
-test('Save File route stages and applies trainer, money, and inventory edits', async ({ page }) => {
+test('Trainer and Bag destinations apply their Save File edits', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 800 });
 	await openEmptySaves(page);
 	await importEmeraldThroughSaves(page);
-	await page.getByRole('button', { name: 'Save File' }).click();
-	await expect(page).toHaveURL(/\/save-file$/);
+	await chooseMainMenu(page, 'Trainer');
+	await expect(page).toHaveURL(/\/trainer$/);
 
 	await expect(page.getByRole('heading', { name: 'Trainer profile' })).toBeVisible();
 	const applyButton = page.getByRole('button', { name: /Apply edits/ });
 	await expect(applyButton.locator('kbd')).toHaveCount(0);
-	await page.getByRole('button', { name: 'Use dark mode' }).click();
-	await expect(page.locator('.save-file-route')).toHaveCSS('color', 'rgb(244, 245, 247)');
-	await page.getByRole('button', { name: 'Use light mode' }).click();
-
 	const trainerName = page.locator('#save-file-trainer-name');
 	await expect(trainerName).toHaveValue('DIXIE');
+	await trainerName.fill('');
+	await trainerName.pressSequentially('kyx');
+	await expect(trainerName).toHaveValue('kyx');
+	await expect(page.getByRole('dialog', { name: 'Main Menu' })).toBeHidden();
+	await pressController(page, 'Menu');
+	await expect(page.getByRole('dialog', { name: 'Main Menu' })).toBeVisible();
+	await pressController(page, 'Menu');
+	await expect(trainerName).toBeFocused();
 	await trainerName.fill('RAJ');
 	await expect(page.getByText('1 staged edit')).toBeVisible();
 
-	const fields = page.getByLabel('Save File fields');
+	const fields = page.getByLabel('Trainer fields');
 	const trainerSection = fields.getByRole('button', { name: /Trainer profile/ });
 	const moneySection = fields.getByRole('button', { name: /Money/ });
 	await trainerSection.focus();
@@ -1954,10 +1966,11 @@ test('Save File route stages and applies trainer, money, and inventory edits', a
 	await expect(page.getByRole('heading', { name: 'Money', exact: true })).toBeVisible();
 	await page.locator('#save-file-money').fill('12345');
 
-	await fields.getByRole('button', { name: /Bag/ }).click();
+	await chooseMainMenu(page, 'Bag');
 	await expect(page.getByRole('heading', { name: 'Inventory' })).toBeVisible();
 	const quantity = page.locator('.item-list article:not(.new-item) input[type="number"]').first();
 	const originalQuantity = Number(await quantity.inputValue());
+	const quantityLabel = await quantity.getAttribute('aria-label');
 	await quantity.fill(String(originalQuantity + 1));
 	await quantity.press('Tab');
 
@@ -1971,19 +1984,36 @@ test('Save File route stages and applies trainer, money, and inventory edits', a
 	await page.locator('.item-list article:not(.new-item) button.remove').nth(1).click();
 	await expect(page.getByText('Save File bytes remain untouched until Apply.')).toBeVisible();
 
+	await chooseMainMenu(page, 'Trainer');
+	await expect(trainerName).toHaveValue('RAJ');
+	await page.getByLabel('Trainer fields').getByRole('button', { name: /Money/ }).click();
+	await expect(page.locator('#save-file-money')).toHaveValue('12345');
+	await expect(page.getByText('5 staged edits')).toBeVisible();
 	await page.getByRole('button', { name: /Apply edits/ }).click();
 	await expect(page.getByText('Save File edits applied.')).toBeVisible({ timeout: 15000 });
 	await expect(page.getByText('Backup created')).toBeVisible();
 	await expect(page.getByText('Workspace has unapplied export changes.')).toBeVisible();
 
-	await fields.getByRole('button', { name: /Trainer profile/ }).click();
+	await chooseMainMenu(page, 'Bag');
+	await expect(page.getByLabel(quantityLabel!)).toHaveValue(String(originalQuantity + 1));
+	await chooseMainMenu(page, 'Trainer');
 	await expect(trainerName).toHaveValue('RAJ');
 	await trainerName.fill('TEMP');
 	await page.getByRole('button', { name: 'Cancel all' }).click();
 	await expect(trainerName).toHaveValue('RAJ');
 
+	await chooseMainMenu(page, 'Boxes');
+	const activeSaveMenu = page.getByRole('button', {
+		name: 'Open Box Menu for emerald-011020251345.sav'
+	});
+	await expect(activeSaveMenu).toBeVisible({ timeout: 15000 });
+	await activeSaveMenu.click();
+	const exportButton = page
+		.getByRole('dialog', { name: 'Box Menu' })
+		.getByRole('button', { name: 'Export' });
+	await expect(exportButton).not.toHaveAttribute('aria-disabled', 'true');
 	const downloadPromise = page.waitForEvent('download');
-	await page.getByRole('button', { name: 'Export' }).click();
+	await exportButton.click();
 	const download = await downloadPromise;
 	const exported = await readFile(await download.path());
 	const fixture = await readFile(emeraldFixturePath);
@@ -2155,7 +2185,7 @@ test('creates and restores a manual backup for the loaded Save File', async ({ p
 	await openEmptySaves(page);
 	await importEmeraldThroughSaves(page);
 
-	await page.getByRole('button', { name: 'Saves' }).click();
+	await chooseMainMenu(page, 'Saves');
 	await expect(page).toHaveURL(/\/saves$/);
 	await selectActiveSaveCard(page);
 	const backups = page.getByLabel('Save File Backups');
@@ -2166,9 +2196,7 @@ test('creates and restores a manual backup for the loaded Save File', async ({ p
 	await expect(backups).toContainText('Manual');
 
 	await backups.getByRole('button', { name: 'Open' }).click();
-	await expect(page.locator('.save-chip')).toContainText('011020251345.restored.sav', {
-		timeout: 15000
-	});
+	await expectActiveSaveOwner(page, 'emerald-011020251345.restored.sav');
 	await expect(page.locator('#box-0-slot-0')).toContainText('ARON');
 });
 
@@ -2276,48 +2304,43 @@ test('Backup Browser owns active Save File recovery, fresh focus, guarded Back, 
 		htmlWidth: extentsBeforeLongList.htmlWidth
 	});
 	await expect(browser.getByRole('button', { name: 'Create Backup' })).toBeVisible();
-	await page.locator('#top-control-0').dispatchEvent('click');
+	await page.keyboard.press('Escape');
+	await expect(page.getByRole('button', { name: 'Browse active Backups' })).toBeFocused();
+
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await setSafeArea(page, { top: 0, right: 0, bottom: 0, left: 0 });
+	await chooseMainMenu(page, 'Boxes');
 	await expect(page).toHaveURL(/\/$/);
-	await expect(browser).toBeVisible();
 	const boxesRoute = page.locator('.boxes-route');
 	await expect(boxesRoute).toHaveAttribute('data-initial-state', 'ready');
 	await expect(boxesRoute).toHaveAttribute('data-active-save-file-id', /.+/);
 	const previousOwnerId = await boxesRoute.getAttribute('data-active-save-file-id');
 	expect(previousOwnerId).toBeTruthy();
-	await page.locator('#top-control-2').dispatchEvent('click');
-	await expect(page).toHaveURL(/\/saves$/);
-	await expect(browser).toBeVisible();
-	await page
-		.locator('.storage-card')
-		.getByRole('button', { name: 'Open →' })
-		.dispatchEvent('click');
+
+	await chooseMainMenu(page, 'Saves');
+	await page.locator('.storage-card').getByRole('button', { name: 'Open →' }).click();
 	await expect(page).toHaveURL(/\/\?source=pokemon-storage$/);
+	await expect(boxesRoute).toHaveAttribute('data-initial-state', 'ready');
+	const storageGrid = page.getByRole('grid', { name: 'Pokemon Storage Box 01' });
+	await expect(storageGrid).toBeVisible();
+	const preMenuSlot = storageGrid.getByRole('gridcell').first();
+	await preMenuSlot.focus();
+	await chooseMainMenu(page, 'Backup Browser');
+	browser = page.getByRole('dialog', { name: 'Backup Browser' });
 	await expect(browser).toBeVisible();
-	await expect(page.locator('.boxes-route')).toHaveAttribute('data-initial-state', 'ready');
-	await expect(page.getByRole('grid', { name: 'Pokemon Storage Box 01' })).toBeVisible();
+	await expect(storageGrid).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(preMenuSlot).toBeFocused();
+	await chooseMainMenu(page, 'Backup Browser');
+	await expect(browser).toBeVisible();
 	await browser.locator('article').first().getByRole('button', { name: 'Restore' }).click();
 	await browser.getByRole('button', { name: 'Restore' }).last().click();
 	await expect(browser).toBeHidden();
 	await expect(page).toHaveURL(/\/\?source=pokemon-storage$/);
-	await expect(page.getByRole('grid', { name: 'Pokemon Storage Box 01' })).toBeVisible();
-
-	await page.locator('#top-control-2').dispatchEvent('click');
-	await expect(page).toHaveURL(/\/saves$/);
-	await page.getByRole('button', { name: 'Browse active Backups' }).click();
-	await page.locator('#top-control-0').dispatchEvent('click');
-	await expect(page).toHaveURL(/\/$/);
+	await expect(storageGrid).toBeVisible();
+	await expect(preMenuSlot).toBeFocused();
+	await chooseMainMenu(page, 'Backup Browser');
 	await expect(browser).toBeVisible();
-	await expect(boxesRoute).toHaveAttribute('data-initial-state', 'ready');
-	await expect(boxesRoute).toHaveAttribute('data-active-save-file-id', previousOwnerId!);
-	await page.locator('#top-control-2').dispatchEvent('click');
-	await expect(page).toHaveURL(/\/saves$/);
-	await page
-		.locator('.storage-card')
-		.getByRole('button', { name: 'Open →' })
-		.dispatchEvent('click');
-	await expect(page).toHaveURL(/\/\?source=pokemon-storage$/);
-	await expect(browser).toBeVisible();
-	await expect(page.getByRole('grid', { name: 'Pokemon Storage Box 01' })).toBeVisible();
 
 	await browser
 		.locator('article')
@@ -2328,19 +2351,20 @@ test('Backup Browser owns active Save File recovery, fresh focus, guarded Back, 
 	await expect(page).toHaveURL(/\/$/);
 	await expect(boxesRoute).toHaveAttribute('data-active-save-file-id', /.+/);
 	await expect(boxesRoute).not.toHaveAttribute('data-active-save-file-id', previousOwnerId!);
-	await expect(page.locator('.save-chip')).toContainText('011020251345.restored.sav', {
+	await expect(page.getByRole('button', { name: /011020251345\.restored\.sav/ })).toBeVisible({
 		timeout: 15_000
 	});
 	await expect(page.locator('#box-0-slot-0')).toBeFocused();
 
 	await page.setViewportSize({ width: 1280, height: 800 });
 	await setSafeArea(page, { top: 0, right: 0, bottom: 0, left: 0 });
-	await page.goto('/save-file');
+	await chooseMainMenu(page, 'Settings');
+	await page.getByRole('button', { name: 'Use dark theme' }).click();
+	await chooseMainMenu(page, 'Trainer');
 	const saveFileLauncher = page.getByRole('button', { name: 'Browse Backups' });
 	await expect(saveFileLauncher).toBeVisible({ timeout: 15000 });
-	await page.getByRole('button', { name: 'Use dark mode' }).click();
 	await saveFileLauncher.click();
-	await expect(page).toHaveURL(/\/save-file$/);
+	await expect(page).toHaveURL(/\/trainer$/);
 	await expect(
 		page.locator('.app-shell.dark').getByRole('dialog', { name: 'Backup Browser' })
 	).toBeVisible();
@@ -2406,7 +2430,7 @@ test('reload preserves unexported slot changes from the active workspace', async
 	await expect(page.locator('.toolbar-status-strip')).toHaveText('Unsaved edits');
 
 	await page.reload();
-	await expect(page.locator('.save-chip')).toContainText('011020251345.sav', { timeout: 15000 });
+	await expectActiveSaveOwner(page, 'emerald-011020251345.sav');
 	await expect(page.locator('.toolbar-status-strip')).toHaveText('Unsaved edits');
 	await expect(page.locator('#box-0-slot-0')).toContainText('Empty');
 	await expect(page.locator('#box-0-slot-2')).toContainText('ARON');
@@ -2533,7 +2557,11 @@ test('Clear uses its Pokemon Storage owner without mutating the loaded Save File
 	await expect(page.locator('#box-0-slot-0')).toBeFocused();
 	expect(await backupCount(page)).toBe(backupsBefore);
 
-	await page.getByRole('button', { name: 'Add collection' }).click();
+	await page.getByRole('button', { name: 'Open Box Menu for Pokemon Storage' }).click();
+	await page
+		.getByRole('dialog', { name: 'Box Menu' })
+		.getByRole('button', { name: 'Open another' })
+		.click();
 	await page.getByRole('button', { name: /011020251345.sav/ }).click();
 	await expect(page.locator('#box-0-slot-0')).toContainText('ARON', { timeout: 15000 });
 });
@@ -2545,19 +2573,7 @@ test('keyboard navigation covers the Saves route controls and desktop overflow s
 	await page.setViewportSize({ width: 1100, height: 520 });
 	await page.goto('/saves');
 
-	await page.locator('#top-control-0').focus();
-	await page.keyboard.press('ArrowRight');
-	await expect(page.locator('#top-control-1')).toBeFocused();
-	for (let index = 0; index < 6; index += 1) {
-		if (
-			await page
-				.getByRole('button', { name: /Import a Save File/ })
-				.evaluate((button) => button === document.activeElement)
-		) {
-			break;
-		}
-		await page.keyboard.press('ArrowRight');
-	}
+	await page.getByRole('button', { name: /Import a Save File/ }).focus();
 	await expect(page.getByRole('button', { name: /Import a Save File/ })).toBeFocused();
 
 	const fixture = await readFile(emeraldFixturePath);
@@ -2615,6 +2631,8 @@ test('mobile Saves route scrolls with the document', async ({ page }) => {
 	}
 
 	await expect(page.locator('.save-card')).toHaveCount(4);
+	await page.evaluate(() => window.scrollTo(0, 0));
+	await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
 	const mobileGutters = await page.evaluate(() => {
 		const shell = document.querySelector('.app-shell')?.getBoundingClientRect();
 		const panel = document.querySelector('.save-picker-panel')?.getBoundingClientRect();
@@ -2659,7 +2677,7 @@ test('mobile Saves route scrolls with the document', async ({ page }) => {
 test('browses the Saves route, imports, and switches the active Save File', async ({ page }) => {
 	await openEmptySaves(page);
 
-	await page.getByRole('button', { name: 'Saves' }).click();
+	await chooseMainMenu(page, 'Saves');
 	await expect(page).toHaveURL(/\/saves$/);
 	await expect(page.getByRole('heading', { name: 'Save Files' })).toBeVisible();
 	await expect(page.getByRole('heading', { name: 'Import a Save File' })).toBeVisible();
@@ -2695,9 +2713,9 @@ test('browses the Saves route, imports, and switches the active Save File', asyn
 		.getByRole('button', { name: /^Switch/ })
 		.click();
 
-	await expect(page.locator('.save-chip')).toContainText('alpha.sav', { timeout: 15000 });
+	await expectActiveSaveOwner(page, 'alpha.sav');
 	await page.goto('/');
-	await expect(page.locator('.save-chip')).toContainText('alpha.sav');
+	await expectActiveSaveOwner(page, 'alpha.sav');
 
 	await page.goto('/saves');
 	await page.getByLabel('Import Save File').setInputFiles({
@@ -2729,7 +2747,7 @@ test('reloads the most recent imported Save File while offline', async ({ page, 
 	await context.setOffline(true);
 	await page.reload();
 
-	await expect(page.locator('.save-chip')).toContainText('011020251345.sav', { timeout: 15000 });
+	await expectActiveSaveOwner(page, 'emerald-011020251345.sav');
 	await expect(page.locator('#box-0-slot-0')).toContainText('ARON', { timeout: 15000 });
 
 	await context.setOffline(false);

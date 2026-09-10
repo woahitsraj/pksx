@@ -65,6 +65,7 @@ final class PKSXBridgeViewController: CAPBridgeViewController {
         bind(gamepad.buttonY, to: "y", controller: controller)
         bind(gamepad.leftShoulder, to: "PageUp", controller: controller)
         bind(gamepad.rightShoulder, to: "PageDown", controller: controller)
+        bind(gamepad.buttonMenu, to: "Menu", controller: controller)
     }
 
     private func bind(
@@ -105,14 +106,19 @@ final class PKSXBridgeViewController: CAPBridgeViewController {
         guard let gamepad = controller.extendedGamepad else { return }
         gamepad.dpad.valueChangedHandler = nil
         gamepad.leftThumbstick.valueChangedHandler = nil
-        [
-            gamepad.buttonA,
-            gamepad.buttonB,
-            gamepad.buttonX,
-            gamepad.buttonY,
-            gamepad.leftShoulder,
-            gamepad.rightShoulder,
-        ].forEach { $0.pressedChangedHandler = nil }
+        let buttons = [
+            (gamepad.buttonA, "Enter"),
+            (gamepad.buttonB, "Escape"),
+            (gamepad.buttonX, "x"),
+            (gamepad.buttonY, "y"),
+            (gamepad.leftShoulder, "PageUp"),
+            (gamepad.rightShoulder, "PageDown"),
+            (gamepad.buttonMenu, "Menu"),
+        ]
+        for (button, key) in buttons {
+            button.pressedChangedHandler = nil
+            send(key: key, pressed: false, discrete: true, controller: controller)
+        }
 
         let controllerID = ObjectIdentifier(controller).hashValue
         for source in ["\(controllerID)-dpad", "\(controllerID)-stick"] {

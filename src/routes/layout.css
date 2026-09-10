@@ -308,7 +308,7 @@ html[data-input-modality='controller'] body :focus {
 		height: auto;
 		min-height: 100dvh;
 		padding: max(10px, var(--pksx-safe-area-top)) max(10px, var(--pksx-safe-area-right))
-			calc(78px + var(--pksx-safe-area-bottom)) max(10px, var(--pksx-safe-area-left));
+			max(10px, var(--pksx-safe-area-bottom)) max(10px, var(--pksx-safe-area-left));
 		gap: 10px;
 		overflow: visible;
 	}

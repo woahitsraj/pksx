@@ -25,7 +25,9 @@ public class MainActivity extends BridgeActivity {
         if (key == null) return super.dispatchKeyEvent(event);
 
         boolean pressed = event.getAction() == KeyEvent.ACTION_DOWN;
-        dispatchControllerInput(key, pressed, true);
+        boolean discrete = !key.startsWith("Arrow");
+        if (discrete && pressed && event.getRepeatCount() > 0) return true;
+        dispatchControllerInput(key, pressed, discrete);
         return true;
     }
 
@@ -98,6 +100,8 @@ public class MainActivity extends BridgeActivity {
                 return "x";
             case KeyEvent.KEYCODE_BUTTON_Y:
                 return "y";
+            case KeyEvent.KEYCODE_BUTTON_START:
+                return "Menu";
             case KeyEvent.KEYCODE_BUTTON_L1:
                 return "PageUp";
             case KeyEvent.KEYCODE_BUTTON_R1:

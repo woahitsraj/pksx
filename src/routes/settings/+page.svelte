@@ -85,6 +85,7 @@
 
 	$effect(() => {
 		appChrome.controllerInputActive = true;
+		appChrome.carryActive = false;
 		return () => {
 			appChrome.controllerInputActive = false;
 		};
@@ -181,6 +182,8 @@
 <section
 	class="settings-route pksx-density-container"
 	aria-labelledby="screen-title"
+	data-destination-root="settings"
+	data-initial-state="ready"
 	inert={summonedWorkflow.active !== null}
 	onfocusin={handleFocusIn}
 	{@attach settingsZone}
@@ -214,6 +217,8 @@
 							data-settings-control
 							data-settings-stop
 							data-controller-autofocus
+							data-destination-initial
+							data-destination-focus="theme-light"
 							onclick={() => theme.setDark(false)}>Light</button
 						>
 						<button
@@ -221,6 +226,7 @@
 							aria-label="Use dark theme"
 							aria-pressed={theme.dark}
 							data-settings-control
+							data-destination-focus="theme-dark"
 							onclick={() => theme.setDark(true)}>Dark</button
 						>
 					</div>
@@ -238,7 +244,14 @@
 
 				{#each referenceGroups as group (group.id)}
 					<div class="reference-group" id={`controls-${group.id}`} data-settings-row={group.id}>
-						<h3 tabindex="-1" data-settings-control data-settings-stop>{group.title}</h3>
+						<h3
+							tabindex="-1"
+							data-settings-control
+							data-settings-stop
+							data-destination-focus={`reference-${group.id}`}
+						>
+							{group.title}
+						</h3>
 						<div class="reference-table" role="table" aria-label={`${group.title} controls`}>
 							{#each group.rows as row (row.action)}
 								<div class="reference-row" role="row">
@@ -252,11 +265,23 @@
 				{/each}
 			</section>
 
-			<section class="settings-card about" aria-labelledby="about-title" data-settings-row="about">
+			<section
+				class="settings-card about"
+				aria-labelledby="pksx-settings-about"
+				data-settings-row="about"
+			>
 				<div class="section-heading">
 					<p class="section-number">03</p>
 					<div>
-						<h2 id="about-title" tabindex="-1" data-settings-control data-settings-stop>About</h2>
+						<h2
+							id="pksx-settings-about"
+							tabindex="-1"
+							data-settings-control
+							data-settings-stop
+							data-destination-focus="about"
+						>
+							About
+						</h2>
 						<p>Versions reported by this build and its PKHeX Engine.</p>
 					</div>
 				</div>
