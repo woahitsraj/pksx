@@ -166,6 +166,45 @@ async function waitForItem(
 }
 
 describe('Save File Bag with a real public fixture', () => {
+	test('commits boundary quantity drafts once through their operators', async () => {
+		const applySaveFileEditOperation = vi.fn<EngineApi['applySaveFileEditOperation']>((...args) =>
+			engine.applySaveFileEditOperation(...args)
+		);
+		const { harness } = await setup({ ...engine, applySaveFileEditOperation });
+		const projection = harness.currentWorkspace().workspace.saveFile!;
+		const pocket = projection.inventory.pockets.find((candidate) =>
+			candidate.items.some((item) => item.quantity === 2 && item.maxQuantity > 2)
+		);
+		const item = pocket?.items.find(
+			(candidate) => candidate.quantity === 2 && candidate.maxQuantity > 2
+		);
+		if (!pocket || !item) {
+			throw new Error('Public Emerald fixture has no quantity-two Bag item.');
+		}
+
+		const quantityIdentity = `item-${pocket.key}-${item.id}-quantity`;
+		await vi.waitFor(() => expect(input(quantityIdentity).disabled).toBe(false));
+		const quantity = input(quantityIdentity);
+		quantity.focus();
+		enterValue(quantity, '1');
+		await tick();
+		const decrease = target(`item-${pocket.key}-${item.id}-decrease`);
+		expect(decrease.getAttribute('aria-disabled')).toBe('false');
+		const callsBeforeDecrease = applySaveFileEditOperation.mock.calls.length;
+		decrease.click();
+		await waitForItem(harness, pocket.key, item.id, 1);
+		expect(applySaveFileEditOperation).toHaveBeenCalledTimes(callsBeforeDecrease + 1);
+
+		enterValue(input(quantityIdentity), String(item.maxQuantity));
+		await tick();
+		const increase = target(`item-${pocket.key}-${item.id}-increase`);
+		expect(increase.getAttribute('aria-disabled')).toBe('false');
+		const callsBeforeIncrease = applySaveFileEditOperation.mock.calls.length;
+		increase.click();
+		await waitForItem(harness, pocket.key, item.id, item.maxQuantity);
+		expect(applySaveFileEditOperation).toHaveBeenCalledTimes(callsBeforeIncrease + 1);
+	}, 60_000);
+
 	test('commits Add, quantity, and Remove through the mounted Ledger', async () => {
 		let releaseFirstEdit!: () => void;
 		const firstEditGate = new Promise<void>((resolve) => (releaseFirstEdit = resolve));
