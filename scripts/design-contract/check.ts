@@ -41,6 +41,8 @@ type ElementRecord = {
 	definiteClasses: Set<string>;
 	unknownClass: boolean;
 	unknownId: boolean;
+	attributes: Map<string, string | null>;
+	unknownAttributes: boolean;
 	ancestors: ElementIdentity[];
 	category: string | null;
 	editable: boolean;
@@ -49,7 +51,14 @@ type ElementRecord = {
 
 type ElementIdentity = Pick<
 	ElementRecord,
-	'tag' | 'id' | 'classes' | 'definiteClasses' | 'unknownClass' | 'unknownId'
+	| 'tag'
+	| 'id'
+	| 'classes'
+	| 'definiteClasses'
+	| 'unknownClass'
+	| 'unknownId'
+	| 'attributes'
+	| 'unknownAttributes'
 >;
 
 const layoutFeatures =
@@ -220,7 +229,13 @@ function collectElements(ast: AstNode): ElementRecord[] {
 			classes,
 			definiteClasses,
 			unknownClass: Boolean(classAttribute && staticClass === null && classes.size === 0),
-			unknownId: Boolean(idAttribute && staticAttribute(node, 'id') === null)
+			unknownId: Boolean(idAttribute && staticAttribute(node, 'id') === null),
+			attributes: new Map(
+				attributes
+					.filter((attribute) => attribute.type === 'Attribute' && attribute.name)
+					.map((attribute) => [attribute.name!, staticAttribute(node, attribute.name!)])
+			),
+			unknownAttributes: attributes.some((attribute) => attribute.type === 'SpreadAttribute')
 		};
 		if (['button', 'input', 'select', 'textarea'].includes(tag) || editable) {
 			elements.push({
@@ -339,6 +354,35 @@ function fontSizeFromShorthand(value: string) {
 	);
 }
 
+function attributeMatchesIdentity(selector: AstNode, identity: ElementIdentity, definite: boolean) {
+	const actual = identity.attributes.get(selector.name ?? '');
+	if (identity.unknownAttributes || actual === null) return !definite;
+	if (actual === undefined) return false;
+	if (!selector.matcher) return true;
+	let expected = String(selector.value ?? '').replace(/^(['"])(.*)\1$/, '$2');
+	let value = actual;
+	if (selector.flags === 'i') {
+		value = value.toLowerCase();
+		expected = expected.toLowerCase();
+	}
+	switch (selector.matcher) {
+		case '=':
+			return value === expected;
+		case '~=':
+			return expected !== '' && value.split(/\s+/).includes(expected);
+		case '|=':
+			return value === expected || value.startsWith(`${expected}-`);
+		case '^=':
+			return expected !== '' && value.startsWith(expected);
+		case '$=':
+			return expected !== '' && value.endsWith(expected);
+		case '*=':
+			return expected !== '' && value.includes(expected);
+		default:
+			return !definite;
+	}
+}
+
 function compoundMatchesIdentity(compound: AstNode, identity: ElementIdentity, definite = false) {
 	const selectors = Array.isArray(compound.selectors) ? (compound.selectors as AstNode[]) : [];
 	for (const selector of selectors) {
@@ -356,7 +400,11 @@ function compoundMatchesIdentity(compound: AstNode, identity: ElementIdentity, d
 			(definite || !identity.unknownId)
 		)
 			return false;
-		if (selector.type === 'AttributeSelector' && definite) return false;
+		if (
+			selector.type === 'AttributeSelector' &&
+			!attributeMatchesIdentity(selector, identity, definite)
+		)
+			return false;
 		if (
 			selector.type === 'PseudoClassSelector' &&
 			['global', 'is', 'where'].includes(selector.name ?? '')
@@ -854,9 +902,8 @@ export function checkDesignContract(filePath: string, source: string): DesignCon
 					);
 				return;
 			}
-			if (exactBlockProperties.has(property) || maximumBlockProperties.has(property)) {
-				for (const element of matched) conflictingControlSizes.add(element);
-			}
+			if (maximumBlockProperties.has(property) && value === 'none') return;
+			for (const element of matched) conflictingControlSizes.add(element);
 			if (matched.some((element) => !element.category || !customCategories.has(element.category))) {
 				report(
 					'DENSITY-1',

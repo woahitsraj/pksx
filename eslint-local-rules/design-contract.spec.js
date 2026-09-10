@@ -25,6 +25,10 @@ describe('local responsive rules', () => {
 		"const width = window['screen'].width;",
 		'const viewport = window.visualViewport; viewport.height;',
 		'const viewport = globalThis; viewport.innerHeight;',
+		'const viewport = globalThis.window; if (viewport.innerWidth > 640) useWideLayout();',
+		'const doc = globalThis.document; if (doc.documentElement.clientWidth > 640) useWideLayout();',
+		'const { document: doc } = window; const { body: root } = doc; root.clientHeight;',
+		'const viewport = window; { const viewport = element; } viewport.innerWidth;',
 		'const { height } = screen;',
 		'innerWidth > 640;',
 		'const { screen: display } = window; display.width;',
@@ -44,6 +48,27 @@ describe('local responsive rules', () => {
 			messages(
 				'const query = `(prefers-reduced-motion: reduce)`; matchMedia(query); element.getBoundingClientRect(); element.clientWidth > 0;'
 			)
+		).toEqual([]);
+	});
+
+	it('resolves strings and browser aliases in their lexical scope', () => {
+		expect(
+			messages(`const query = '(min-width: 640px)';
+			{ const query = '(prefers-reduced-motion: reduce)'; matchMedia(query); }
+			matchMedia(query);`).map(({ message }) => message)
+		).toEqual([expect.stringContaining('[RESP-1]')]);
+		expect(
+			messages(`const token = '--pksx-type-body';
+			{ const token = '--local'; element.style.setProperty(token, '12px'); }
+			element.style.setProperty(token, '12px');`).map(({ message }) => message)
+		).toEqual([expect.stringContaining('[DENSITY-1]')]);
+		expect(
+			messages(`const viewport = window;
+			{ const viewport = element; viewport.clientWidth; }
+			function measure(window, document, innerWidth) {
+				return window.innerWidth + document.body.clientWidth + innerWidth;
+			}
+			const innerHeight = 'local'; useValue(innerHeight);`)
 		).toEqual([]);
 	});
 
@@ -87,11 +112,33 @@ describe('local responsive rules', () => {
 			messages('delete document.documentElement.dataset.pksxHeightBandLock')[0]?.message
 		).toContain('[RESP-1]');
 
+		for (const source of [
+			"document.documentElement.setAttribute('data-pksx-height-band-lock', 'tall');",
+			"document.documentElement.style.cssText = '--pksx-height-band:tall';",
+			"const doc = document; doc.documentElement.dataset.pksxHeightBandLock = 'tall';",
+			"const doc = globalThis.document; const root = doc.documentElement; root.setAttribute('style', '--pksx-height-band: tall');",
+			"const { documentElement: root } = window.document; root.removeAttribute('data-pksx-height-band-lock');",
+			"const root = document.documentElement; { const root = element; } root.dataset.pksxHeightBandLock = 'tall';"
+		])
+			expect(messages(source)[0]?.message).toContain('[RESP-1]');
+		expect(
+			messages(`const doc = document; { const doc = element; doc.documentElement.dataset.pksxHeightBandLock = 'local'; }
+			element.style.cssText = 'color: red; left: 12px';
+			element.setAttribute('style', 'top: 24px');
+			element.style.setProperty('--local', '12px');`)
+		).toEqual([]);
+
 		const owner = `const root = document.documentElement;
 			const band = getComputedStyle(target).getPropertyValue('--pksx-height-band').trim();
 			root.dataset.pksxHeightBandLock = band;
 			delete root.dataset.pksxHeightBandLock;`;
 		expect(messages(owner, 'src/lib/pksx/height-band-lock.ts')).toEqual([]);
+		expect(
+			messages(
+				"const band = 'tall'; document.documentElement.dataset.pksxHeightBandLock = band;",
+				'src/lib/pksx/height-band-lock.ts'
+			)[0]?.message
+		).toContain('[RESP-1]');
 		expect(
 			messages(
 				"document.documentElement.dataset.pksxHeightBandLock = 'tall'",

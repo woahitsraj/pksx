@@ -39,35 +39,106 @@ function unwrapExpression(node) {
 	return node;
 }
 
-function staticString(node, aliases) {
+function staticString(node) {
 	node = unwrapExpression(node);
 	if (node?.type === 'Literal' && typeof node.value === 'string') return node.value;
 	if (node?.type === 'TemplateLiteral' && node.expressions.length === 0)
 		return node.quasis[0]?.value.cooked ?? node.quasis[0]?.value.raw ?? '';
-	if (node?.type === 'Identifier') return aliases?.get(node.name) ?? null;
 	return null;
 }
 
-function propertyName(node) {
-	if (!node.computed && node.property.type === 'Identifier') return node.property.name;
-	if (node.computed) return staticString(node.property);
-	return null;
+const globalKinds = new Map([
+	['globalThis', 'window'],
+	['window', 'window'],
+	['self', 'window'],
+	['screen', 'viewport'],
+	['visualViewport', 'viewport'],
+	['document', 'document'],
+	['matchMedia', 'matchMedia'],
+	['getComputedStyle', 'getComputedStyle']
+]);
+
+function isRoot(kind) {
+	return kind === 'root' || kind === 'documentElement';
 }
 
-function isIdentifier(node, name) {
-	return node?.type === 'Identifier' && node.name === name;
-}
-
-function isDocumentRoot(node, aliases, documentAliases = new Set(['document'])) {
-	node = unwrapExpression(node);
-	if (node?.type === 'Identifier' && aliases.has(node.name)) return true;
-	if (node?.type !== 'MemberExpression') return false;
-	const property = propertyName(node);
-	return (
-		node.object.type === 'Identifier' &&
-		documentAliases.has(node.object.name) &&
-		['documentElement', 'body', 'scrollingElement'].includes(property)
-	);
+function staticBindings(context) {
+	const values = new Map();
+	const variable = (node) => {
+		for (let scope = context.sourceCode.getScope(node); scope; scope = scope.upper) {
+			const binding = scope.set.get(node.name);
+			if (binding) return binding;
+		}
+		return null;
+	};
+	const propertyName = (node) =>
+		!node.computed && node.property.type === 'Identifier'
+			? node.property.name
+			: (resolve(node.property)?.text ?? null);
+	const member = (owner, key) => {
+		if (key === 'style') return { kind: 'style' };
+		if (owner?.kind === 'window') {
+			if (['window', 'self', 'globalThis'].includes(key)) return { kind: 'window' };
+			if (['screen', 'visualViewport'].includes(key)) return { kind: 'viewport' };
+			if (['document', 'matchMedia', 'getComputedStyle'].includes(key)) return { kind: key };
+		}
+		if (owner?.kind === 'document') {
+			if (key === 'documentElement') return { kind: 'documentElement' };
+			if (['body', 'scrollingElement'].includes(key)) return { kind: 'root' };
+		}
+		if (owner?.kind === 'documentElement' && key === 'dataset') return { kind: 'rootDataset' };
+		return null;
+	};
+	const resolve = (expression) => {
+		const node = unwrapExpression(expression);
+		const text = staticString(node);
+		if (text !== null) return { text };
+		if (node?.type === 'Identifier') {
+			const binding = variable(node);
+			const key = binding ?? node.name;
+			if (values.has(key)) return values.get(key);
+			if (binding?.defs.length) return null;
+			return { kind: globalKinds.get(node.name) };
+		}
+		if (node?.type === 'MemberExpression') return member(resolve(node.object), propertyName(node));
+		if (node?.type === 'CallExpression') {
+			if (resolve(node.callee)?.kind === 'getComputedStyle') return { kind: 'computedStyle' };
+			const callee = unwrapExpression(node.callee);
+			if (callee?.type === 'MemberExpression') {
+				const kind = resolve(callee.object)?.kind;
+				const method = propertyName(callee);
+				if (
+					(kind === 'computedStyle' &&
+						method === 'getPropertyValue' &&
+						resolve(node.arguments[0])?.text === '--pksx-height-band') ||
+					(kind === 'inheritedHeightBand' && method === 'trim')
+				)
+					return { kind: 'inheritedHeightBand' };
+			}
+		}
+		return null;
+	};
+	const bindValue = (pattern, value, onProperty) => {
+		pattern = pattern?.type === 'AssignmentPattern' ? pattern.left : unwrapExpression(pattern);
+		if (pattern?.type === 'Identifier') values.set(variable(pattern) ?? pattern.name, value);
+		if (pattern?.type !== 'ObjectPattern') return;
+		for (const property of pattern.properties) {
+			if (property.type !== 'Property') continue;
+			const key =
+				!property.computed && property.key.type === 'Identifier'
+					? property.key.name
+					: resolve(property.key)?.text;
+			onProperty?.(value?.kind, key, property);
+			bindValue(property.value, member(value, key), onProperty);
+		}
+	};
+	return {
+		resolve,
+		isGlobal: (node) => !variable(node)?.defs.length,
+		propertyName,
+		bindValue,
+		bind: (pattern, source, onProperty) => bindValue(pattern, resolve(source), onProperty)
+	};
 }
 
 const noResponsiveClassifier = {
@@ -83,84 +154,30 @@ const noResponsiveClassifier = {
 		schema: []
 	},
 	create(context) {
-		const viewportAliases = new Set(['globalThis', 'window', 'screen', 'visualViewport']);
-		const documentAliases = new Set(['document']);
-		const rootAliases = new Set();
-		const mediaQueryConstructors = new Set();
-		const stringAliases = new Map();
-		const sourceKind = (source) => {
-			source = unwrapExpression(source);
-			if (source?.type === 'Identifier') {
-				if (rootAliases.has(source.name)) return 'root';
-				if (documentAliases.has(source.name)) return 'document';
-				if (viewportAliases.has(source.name)) return 'viewport';
-			}
-			if (isDocumentRoot(source, rootAliases, documentAliases)) return 'root';
-			if (
-				source?.type === 'MemberExpression' &&
-				source.object.type === 'Identifier' &&
-				viewportAliases.has(source.object.name) &&
-				['screen', 'visualViewport'].includes(propertyName(source))
-			)
-				return 'viewport';
-			return null;
+		const bindings = staticBindings(context);
+		const { resolve, propertyName } = bindings;
+		const reportProperty = (kind, property, node) => {
+			if (['window', 'viewport'].includes(kind) && viewportProperties.has(property))
+				context.report({ node, messageId: 'viewport' });
+			if (isRoot(kind) && rootGeometryProperties.has(property))
+				context.report({ node, messageId: 'root' });
 		};
-		const bindKind = (pattern, kind) => {
-			pattern = pattern?.type === 'AssignmentPattern' ? pattern.left : unwrapExpression(pattern);
-			if (pattern?.type === 'Identifier') {
-				viewportAliases.delete(pattern.name);
-				documentAliases.delete(pattern.name);
-				rootAliases.delete(pattern.name);
-				if (kind === 'viewport') viewportAliases.add(pattern.name);
-				if (kind === 'document') documentAliases.add(pattern.name);
-				if (kind === 'root') rootAliases.add(pattern.name);
-				return;
-			}
-			if (pattern?.type !== 'ObjectPattern' || !kind) return;
-			for (const property of pattern.properties) {
-				if (property.type !== 'Property') continue;
-				const key =
-					property.key.type === 'Identifier' ? property.key.name : staticString(property.key);
-				if (!key) continue;
-				if (kind === 'viewport' && viewportProperties.has(key))
-					context.report({ node: property, messageId: 'viewport' });
-				if (kind === 'root' && rootGeometryProperties.has(key))
-					context.report({ node: property, messageId: 'root' });
-				if (kind === 'viewport' && ['screen', 'visualViewport'].includes(key))
-					bindKind(property.value, 'viewport');
-				if (kind === 'document' && ['documentElement', 'body', 'scrollingElement'].includes(key))
-					bindKind(property.value, 'root');
-			}
-		};
-		const bind = (pattern, source) => bindKind(pattern, sourceKind(source));
-		const bindString = (pattern, source) => {
-			if (pattern?.type !== 'Identifier') return;
-			const value = staticString(source, stringAliases);
-			if (value === null) stringAliases.delete(pattern.name);
-			else stringAliases.set(pattern.name, value);
-		};
-
 		return {
 			ImportDeclaration(node) {
 				if (node.source.value !== 'svelte/reactivity') return;
 				for (const specifier of node.specifiers) {
-					if (specifier.type === 'ImportSpecifier' && specifier.imported.name === 'MediaQuery') {
-						mediaQueryConstructors.add(specifier.local.name);
-					}
+					if (specifier.type === 'ImportSpecifier' && specifier.imported.name === 'MediaQuery')
+						bindings.bindValue(specifier.local, { kind: 'mediaQuery' });
 				}
 			},
 			VariableDeclarator(node) {
-				bind(node.id, node.init);
-				bindString(node.id, node.init);
+				bindings.bind(node.id, node.init, reportProperty);
 			},
 			AssignmentExpression(node) {
-				if (node.operator === '=') {
-					bind(node.left, node.right);
-					bindString(node.left, node.right);
-				}
+				if (node.operator === '=') bindings.bind(node.left, node.right, reportProperty);
 			},
 			Identifier(node) {
-				if (!globalViewportIdentifiers.has(node.name)) return;
+				if (!globalViewportIdentifiers.has(node.name) || !bindings.isGlobal(node)) return;
 				if (
 					node.parent?.type === 'MemberExpression' &&
 					node.parent.property === node &&
@@ -171,62 +188,24 @@ const noResponsiveClassifier = {
 				context.report({ node, messageId: 'viewport' });
 			},
 			MemberExpression(node) {
-				const property = propertyName(node);
-				if (!property) return;
-				if (
-					node.object.type === 'Identifier' &&
-					viewportAliases.has(node.object.name) &&
-					viewportProperties.has(property)
-				) {
-					context.report({ node, messageId: 'viewport' });
-				}
-				if (
-					node.object.type === 'MemberExpression' &&
-					isIdentifier(node.object.object, 'globalThis')
-				) {
-					const owner = propertyName(node.object);
-					if (owner && viewportAliases.has(owner) && viewportProperties.has(property))
-						context.report({ node, messageId: 'viewport' });
-				}
-				if (node.object.type === 'MemberExpression' && node.object.object.type === 'Identifier') {
-					const owner = propertyName(node.object);
-					if (
-						viewportAliases.has(node.object.object.name) &&
-						['screen', 'visualViewport'].includes(owner) &&
-						viewportProperties.has(property)
-					) {
-						context.report({ node, messageId: 'viewport' });
-					}
-				}
-				if (
-					rootGeometryProperties.has(property) &&
-					isDocumentRoot(node.object, rootAliases, documentAliases)
-				) {
-					context.report({ node, messageId: 'root' });
-				}
+				reportProperty(resolve(node.object)?.kind, propertyName(node), node);
 			},
 			CallExpression(node) {
+				const callee = unwrapExpression(node.callee);
 				if (
-					node.callee.type === 'MemberExpression' &&
-					propertyName(node.callee) === 'getBoundingClientRect' &&
-					isDocumentRoot(node.callee.object, rootAliases, documentAliases)
-				) {
+					callee?.type === 'MemberExpression' &&
+					propertyName(callee) === 'getBoundingClientRect' &&
+					isRoot(resolve(callee.object)?.kind)
+				)
 					context.report({ node, messageId: 'root' });
-					return;
-				}
-				const direct = isIdentifier(node.callee, 'matchMedia');
-				const member =
-					node.callee.type === 'MemberExpression' && propertyName(node.callee) === 'matchMedia';
-				if (!direct && !member) return;
-				const query = staticString(node.arguments[0], stringAliases);
-				if (query === null || layoutFeature.test(query)) {
+				if (resolve(callee)?.kind !== 'matchMedia') return;
+				const query = resolve(node.arguments[0])?.text;
+				if (query === undefined || layoutFeature.test(query))
 					context.report({ node, messageId: 'media' });
-				}
 			},
 			NewExpression(node) {
-				if (node.callee.type === 'Identifier' && mediaQueryConstructors.has(node.callee.name)) {
+				if (resolve(node.callee)?.kind === 'mediaQuery')
 					context.report({ node, messageId: 'media' });
-				}
 			},
 			BinaryExpression(node) {
 				const left = node.left.type === 'MemberExpression' ? propertyName(node.left) : null;
@@ -234,9 +213,8 @@ const noResponsiveClassifier = {
 				if (
 					(left === 'clientWidth' && right === 'clientHeight') ||
 					(left === 'clientHeight' && right === 'clientWidth')
-				) {
+				)
 					context.report({ node, messageId: 'viewport' });
-				}
 			}
 		};
 	}
@@ -254,84 +232,46 @@ const noOwnedTokenWrites = {
 		schema: []
 	},
 	create(context) {
-		const stringAliases = new Map();
-		const styleAliases = new Set();
-		const rootAliases = new Set();
-		const datasetAliases = new Set();
+		const bindings = staticBindings(context);
+		const { resolve, propertyName } = bindings;
 		const filename = context.filename.replaceAll('\\', '/');
 		const ownerFile =
 			filename === 'src/lib/pksx/height-band-lock.ts' ||
 			filename.endsWith('/src/lib/pksx/height-band-lock.ts');
-		const isDocumentElement = (node) =>
-			(node?.type === 'Identifier' && rootAliases.has(node.name)) ||
-			(node?.type === 'MemberExpression' &&
-				propertyName(node) === 'documentElement' &&
-				isIdentifier(node.object, 'document'));
-		const bind = (target, source) => {
-			source = unwrapExpression(source);
-			if (target?.type === 'ObjectPattern') {
-				for (const property of target.properties) {
-					if (property.type !== 'Property') continue;
-					const key =
-						property.key.type === 'Identifier'
-							? property.key.name
-							: staticString(property.key, stringAliases);
-					const value =
-						property.value.type === 'AssignmentPattern' ? property.value.left : property.value;
-					if (value.type !== 'Identifier') continue;
-					if (isIdentifier(source, 'document') && key === 'documentElement')
-						rootAliases.add(value.name);
-					if (isDocumentElement(source) && key === 'dataset') datasetAliases.add(value.name);
-				}
-				return;
-			}
-			if (target?.type !== 'Identifier') return;
-			const value = staticString(source, stringAliases);
-			if (value === null) stringAliases.delete(target.name);
-			else stringAliases.set(target.name, value);
-			const styleSource =
-				(source?.type === 'MemberExpression' && propertyName(source) === 'style') ||
-				(source?.type === 'Identifier' && styleAliases.has(source.name));
-			if (styleSource) styleAliases.add(target.name);
-			else styleAliases.delete(target.name);
-			const rootSource = isDocumentElement(source);
-			if (rootSource) rootAliases.add(target.name);
-			else rootAliases.delete(target.name);
-			const datasetSource =
-				(source?.type === 'MemberExpression' &&
-					propertyName(source) === 'dataset' &&
-					isDocumentElement(source.object)) ||
-				(source?.type === 'Identifier' && datasetAliases.has(source.name));
-			if (datasetSource) datasetAliases.add(target.name);
-			else datasetAliases.delete(target.name);
-		};
-		const isRootDataset = (node) => {
-			node = unwrapExpression(node);
-			return (
-				(node?.type === 'Identifier' && datasetAliases.has(node.name)) ||
-				(node?.type === 'MemberExpression' &&
-					propertyName(node) === 'dataset' &&
-					isDocumentElement(node.object))
-			);
-		};
 		const isHeightBandLockTarget = (node) =>
 			node?.type === 'MemberExpression' &&
-			(!node.computed
-				? node.property.type === 'Identifier' && node.property.name === heightBandLockProperty
-				: staticString(node.property, stringAliases) === heightBandLockProperty) &&
-			isRootDataset(node.object);
+			propertyName(node) === heightBandLockProperty &&
+			resolve(node.object)?.kind === 'rootDataset';
 		const canonicalOwnerWrite = (target, value, deleting = false) =>
 			ownerFile &&
 			isHeightBandLockTarget(target) &&
-			(deleting || (value?.type === 'Identifier' && value.name === 'band'));
+			(deleting || resolve(value)?.kind === 'inheritedHeightBand');
+		const reportCssText = (node, expression) => {
+			const text = resolve(expression)?.text;
+			if (text === undefined) return;
+			for (const declaration of text.split(';')) {
+				const property = declaration.match(/^\s*(--[\w-]+)\s*:/)?.[1];
+				if (property && ownedToken.test(property))
+					context.report({
+						node,
+						messageId: property === '--pksx-height-band' ? 'heightBand' : 'token'
+					});
+			}
+		};
 		return {
 			VariableDeclarator(node) {
-				bind(node.id, node.init);
+				bindings.bind(node.id, node.init);
 			},
 			AssignmentExpression(node) {
-				if (node.operator === '=') bind(node.left, node.right);
+				if (node.operator === '=') bindings.bind(node.left, node.right);
 				if (isHeightBandLockTarget(node.left) && !canonicalOwnerWrite(node.left, node.right))
 					context.report({ node, messageId: 'heightBand' });
+				if (
+					node.left.type === 'MemberExpression' &&
+					propertyName(node.left) === 'cssText' &&
+					resolve(node.left.object)?.kind === 'style'
+				)
+					reportCssText(node, node.right);
 			},
 			UnaryExpression(node) {
 				if (
@@ -342,19 +282,28 @@ const noOwnedTokenWrites = {
 					context.report({ node, messageId: 'heightBand' });
 			},
 			CallExpression(node) {
-				if (node.callee.type !== 'MemberExpression' || propertyName(node.callee) !== 'setProperty')
-					return;
-				const token = staticString(node.arguments[0], stringAliases);
-				const receiver = node.callee.object;
-				const protectedSink =
-					(receiver.type === 'MemberExpression' && propertyName(receiver) === 'style') ||
-					(receiver.type === 'Identifier' && styleAliases.has(receiver.name));
-				if ((token !== null && ownedToken.test(token)) || (token === null && protectedSink)) {
-					context.report({
-						node,
-						messageId: token === '--pksx-height-band' ? 'heightBand' : 'token'
-					});
+				const callee = unwrapExpression(node.callee);
+				if (callee?.type !== 'MemberExpression') return;
+				const method = propertyName(callee);
+				const key = resolve(node.arguments[0])?.text;
+				const receiverKind = resolve(callee.object)?.kind;
+				if (method === 'setProperty') {
+					if (
+						(key !== undefined && ownedToken.test(key)) ||
+						(key === undefined && receiverKind === 'style')
+					)
+						context.report({
+							node,
+							messageId: key === '--pksx-height-band' ? 'heightBand' : 'token'
+						});
 				}
+				if (
+					['setAttribute', 'removeAttribute', 'toggleAttribute'].includes(method) &&
+					receiverKind === 'documentElement' &&
+					key === 'data-pksx-height-band-lock'
+				)
+					context.report({ node, messageId: 'heightBand' });
+				if (method === 'setAttribute' && key === 'style') reportCssText(node, node.arguments[1]);
 			}
 		};
 	}

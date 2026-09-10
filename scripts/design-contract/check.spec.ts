@@ -217,6 +217,47 @@ describe('density design contract', () => {
 		expect(names('src/Example.svelte', source)).toEqual([]);
 	});
 
+	it('[DENSITY-1] distinguishes definite attributes from dynamic control selectors', () => {
+		expect(
+			names(
+				'src/Example.svelte',
+				`<button data-pksx-control-category="small">Less</button><style>
+			button[data-pksx-control-category='small'] { min-height: var(--pksx-small-control-height); max-height: none; }
+		</style>`
+			)
+		).toEqual([]);
+		expect(
+			names(
+				'src/Example.svelte',
+				`<button data-size={size} data-pksx-control-category="small">Less</button><style>
+			button[data-size='small'] { min-height: var(--pksx-small-control-height); }
+		</style>`
+			)
+		).toContain('DENSITY-1 control-owner');
+		expect(
+			names(
+				'src/Example.svelte',
+				`<button data-size="standard">Go</button><style>
+			button[data-size='standard'] { min-height: var(--pksx-control-height); max-block-size: none; }
+			button[data-size='small'] { min-height: 1px; }
+		</style>`
+			)
+		).toEqual([]);
+	});
+
+	it('[DENSITY-1] rejects overrides of a small-control minimum', () => {
+		for (const property of ['min-height', 'min-block-size']) {
+			expect(
+				names(
+					'src/Example.svelte',
+					`<button class="x" data-pksx-control-category="small">Less</button><style>
+				.x { ${property}: var(--pksx-small-control-height); ${property}: 1px; }
+			</style>`
+				)
+			).toContain('DENSITY-1 control-owner');
+		}
+	});
+
 	it('[DENSITY-1] connects descendant class and ID selectors to the exact control', () => {
 		const source = `<div class="form"><button id="compact">Go</button></div><style>
 			.form #compact { height: var(--pksx-small-control-height); }
