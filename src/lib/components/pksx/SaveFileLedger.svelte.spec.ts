@@ -213,7 +213,7 @@ describe('SaveFileLedger semantic focus graph', () => {
 		press(decrease, 'ArrowRight');
 		expect(document.activeElement).toBe(target('money-value'));
 
-		press(document.activeElement as HTMLElement, 'ArrowDown');
+		dispatchControllerKey('ArrowDown');
 		expect(document.activeElement).toBe(
 			host.querySelectorAll<HTMLElement>('[data-ledger-jump]')[1]
 		);
@@ -341,6 +341,64 @@ describe('SaveFileLedger semantic focus graph', () => {
 });
 
 describe('SaveFileLedger direct-edit boundary seam', () => {
+	test('preserves native text editing and commits only completed Enter input', async () => {
+		const onTrainerNameCommit = vi.fn();
+		const onTrainerNameAbandon = vi.fn();
+		render(publicFixtureView, {
+			harness: false,
+			props: { onTrainerNameCommit, onTrainerNameAbandon }
+		});
+		await tick();
+		const name = target('trainer-name');
+		name.focus();
+
+		for (const key of ['Backspace', 'ArrowLeft']) {
+			const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+			name.dispatchEvent(event);
+			expect(event.defaultPrevented).toBe(false);
+		}
+		expect(onTrainerNameAbandon).not.toHaveBeenCalled();
+
+		const composingEnter = new KeyboardEvent('keydown', {
+			key: 'Enter',
+			bubbles: true,
+			cancelable: true,
+			isComposing: true
+		});
+		name.dispatchEvent(composingEnter);
+		expect(composingEnter.defaultPrevented).toBe(false);
+		expect(onTrainerNameCommit).not.toHaveBeenCalled();
+
+		press(name, 'Enter');
+		expect(onTrainerNameCommit).toHaveBeenCalledOnce();
+		expect(onTrainerNameCommit).toHaveBeenCalledWith('enter');
+		press(name, 'Escape');
+		expect(onTrainerNameAbandon).toHaveBeenCalledOnce();
+
+		name.focus();
+		dispatchControllerKey('ArrowDown');
+		expect(document.activeElement).toBe(target('trainer-gender-male'));
+	});
+
+	test('preserves native Add Item selection while controller arrows cross controls', async () => {
+		render();
+		const pocketKey = publicFixtureView.projection.inventory.pockets[0].key;
+		(target(`pocket-${pocketKey}-add`) as HTMLButtonElement).click();
+		await tick();
+		const select = target(`pocket-${pocketKey}-add-item`);
+		const nativeArrow = new KeyboardEvent('keydown', {
+			key: 'ArrowRight',
+			bubbles: true,
+			cancelable: true
+		});
+		select.dispatchEvent(nativeArrow);
+		expect(nativeArrow.defaultPrevented).toBe(false);
+		expect(document.activeElement).toBe(select);
+
+		dispatchControllerKey('ArrowRight');
+		expect(document.activeElement).toBe(target(`pocket-${pocketKey}-add-quantity`));
+	});
+
 	test('uses one local Back handler only for a focused draft or open command', async () => {
 		const onTrainerNameAbandon = vi.fn();
 		const ledger = render(publicFixtureView, {
@@ -355,6 +413,21 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 
 		target('money-decrease').focus();
 		expect(ledger.handleBack()).toBe(false);
+	});
+
+	test('does not steal focus when async command reconciliation runs after a shell takeover', async () => {
+		render();
+		await tick();
+		const takeover = document.createElement('button');
+		document.body.append(takeover);
+		(
+			target(
+				`pocket-${publicFixtureView.projection.inventory.pockets[0].key}-add`
+			) as HTMLButtonElement
+		).click();
+		takeover.focus();
+		await tick();
+		expect(document.activeElement).toBe(takeover);
 	});
 
 	test('lets a pointer operator consume the raw draft without a second blur commit', async () => {

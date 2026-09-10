@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { isControllerKeyboardEvent } from '$lib/pksx/controller-input';
 	import DelayedSpinner from './DelayedSpinner.svelte';
 	import type {
 		SaveFileLedgerCatalogue,
@@ -68,6 +69,7 @@
 			])
 		].join('|');
 	});
+	const initialTargetIdentity = $derived.by(firstTargetIdentity);
 
 	function ledgerRoot(node: HTMLElement) {
 		root = node;
@@ -83,12 +85,24 @@
 		void signature;
 		return (node: HTMLElement) => {
 			root = node;
-			void tick().then(() => reconcileFocus(nextCommand, unavailable));
+			let disposed = false;
+			void tick().then(() => {
+				if (!disposed) reconcileFocus(nextCommand, unavailable);
+			});
+			return () => {
+				disposed = true;
+			};
 		};
 	}
 
 	function reconcileFocus(nextCommand: SaveFileLedgerCommand | null, unavailable: boolean) {
 		if (!root) return;
+		const active = document.activeElement;
+		if (active instanceof HTMLElement && active !== document.body && !root.contains(active)) {
+			editingWasUnavailable = unavailable;
+			previousCommand = nextCommand;
+			return;
+		}
 
 		if (unavailable && !editingWasUnavailable) {
 			targetBeforeEditingUnavailable = rememberedTarget;
@@ -136,20 +150,26 @@
 		const inside = active && root?.contains(active);
 		if (!inside) return;
 
-		if (event.key === 'Escape' || event.key === 'Backspace') {
+		if (event.key === 'Escape') {
 			if (handleBack()) {
 				consume(event);
 			}
 			return;
 		}
 
-		if (event.key === 'Enter' && active.matches('[data-ledger-draft]')) {
+		if (event.key === 'Enter' && !event.isComposing && active.matches('[data-ledger-draft]')) {
 			consume(event);
 			commitDraft(active, 'enter');
 			return;
 		}
 
 		if (!event.key.startsWith('Arrow')) return;
+		if (
+			active.matches('input, select, textarea, [contenteditable]:not([contenteditable="false"])') &&
+			!isControllerKeyboardEvent(event)
+		) {
+			return;
+		}
 		const row = active.closest<HTMLElement>('[data-ledger-row]');
 		if (!row) return;
 		consume(event);
@@ -536,9 +556,13 @@
 													value={nameField.value}
 													maxlength={view.projection.trainerProfile.trainerNameMaxLength}
 													size={Math.max(1, view.projection.trainerProfile.trainerNameMaxLength)}
+													style:--trainer-name-ch={Math.max(
+														1,
+														view.projection.trainerProfile.trainerNameMaxLength
+													)}
 													data-ledger-control
 													data-ledger-draft="trainer-name"
-													data-destination-initial={firstTargetIdentity() === 'trainer-name'
+													data-destination-initial={initialTargetIdentity === 'trainer-name'
 														? ''
 														: undefined}
 													data-destination-focus="trainer-name"
@@ -569,7 +593,7 @@
 													<button
 														type="button"
 														data-ledger-control
-														data-destination-initial={firstTargetIdentity() ===
+														data-destination-initial={initialTargetIdentity ===
 														'trainer-gender-male'
 															? ''
 															: undefined}
@@ -625,7 +649,7 @@
 												aria-label="Decrease Money"
 												data-ledger-control
 												data-ledger-consumes-draft
-												data-destination-initial={firstTargetIdentity() === 'money-decrease'
+												data-destination-initial={initialTargetIdentity === 'money-decrease'
 													? ''
 													: undefined}
 												data-destination-focus="money-decrease"
@@ -786,7 +810,7 @@
 															<button
 																type="button"
 																data-ledger-control
-																data-destination-initial={firstTargetIdentity() ===
+																data-destination-initial={initialTargetIdentity ===
 																addIdentity(pocket.key)
 																	? ''
 																	: undefined}
@@ -807,7 +831,7 @@
 																<button
 																	type="button"
 																	data-ledger-control
-																	data-destination-initial={firstTargetIdentity() ===
+																	data-destination-initial={initialTargetIdentity ===
 																	retryIdentity(pocket.key)
 																		? ''
 																		: undefined}
@@ -892,7 +916,7 @@
 																				data-ledger-consumes-draft
 																				data-pocket-key={pocket.key}
 																				data-item-id={item.id}
-																				data-destination-initial={firstTargetIdentity() ===
+																				data-destination-initial={initialTargetIdentity ===
 																				itemIdentity(pocket.key, item.id, 'decrease')
 																					? ''
 																					: undefined}
@@ -1030,6 +1054,7 @@
 		grid-template-rows: auto auto minmax(0, 1fr);
 		gap: var(--pksx-space-2, 8px);
 		font-size: var(--pksx-type-body, 13px);
+		font-family: var(--pksx-font-sans, sans-serif);
 		color: var(--pksx-color-text-primary, #2a241c);
 		overflow: hidden;
 	}
@@ -1051,7 +1076,6 @@
 	}
 
 	h1 {
-		font-family: Georgia, 'Times New Roman', serif;
 		font-size: var(--pksx-type-display, 24px);
 		line-height: 1;
 	}
@@ -1070,6 +1094,7 @@
 	.field-row > span,
 	.add-command label > span,
 	.trainer-facts dt {
+		font-family: var(--pksx-font-mono, monospace);
 		font-size: var(--pksx-type-caption, 10px);
 		font-weight: 700;
 		letter-spacing: 0.08em;
@@ -1089,6 +1114,7 @@
 
 	.filename {
 		min-width: 0;
+		font-family: var(--pksx-font-mono, monospace);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
