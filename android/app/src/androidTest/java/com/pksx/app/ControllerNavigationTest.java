@@ -631,7 +631,7 @@ public class ControllerNavigationTest {
                     + ".map(pane => pane.getBoundingClientRect());"
                     + " return panes.length === 2 && panes[1].top >= panes[0].bottom - 1; })()"
             );
-            assertRotationScrollReveal("portrait to square Slot 8", scrollBeforeRotation);
+            assertMinimumFocusedScroll("portrait resize to square Slot 8", scrollBeforeRotation);
             assertNativeSafeCanvas("two-pane square");
             for (int step = 0; step < 3; step++) {
                 pressGamepadKey(KeyEvent.KEYCODE_DPAD_DOWN, null);
@@ -642,16 +642,41 @@ public class ControllerNavigationTest {
                 pressGamepadKey(KeyEvent.KEYCODE_DPAD_UP, null);
             }
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-7", null);
+            JSONObject scrollBeforeLandscapeRotation = captureFocusedScrollState(
+                "two-pane square Slot 8"
+            );
 
             fixture.setViewport(360, 640, 1, false);
             awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-7", null);
             awaitCapturedIdentity("two-pane landscape", paneIdentity, paneIdentityExpression());
+            assertMinimumFocusedScroll(
+                "square to landscape rotation clamp Slot 8",
+                scrollBeforeLandscapeRotation
+            );
             awaitJavaScript(
                 "(() => { const panes = [...document.querySelectorAll('.box-pane')]"
                     + ".map(pane => pane.getBoundingClientRect());"
                     + " return panes.length === 2 && panes[1].left >= panes[0].right - 1; })()"
             );
             assertNativeSafeCanvas("two-pane landscape");
+
+            runJavaScript(
+                "document.querySelector('[data-source-id=\"pokemon-storage\"] [id$=\"-slot-19\"]').focus()"
+            );
+            awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-19", null);
+            JSONObject scrollBeforeSquareRotation = captureFocusedScrollState(
+                "two-pane landscape Slot 20"
+            );
+            fixture.setViewport(360, SQUARE_NATIVE_HEIGHT, 0, false);
+            awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-19", null);
+            awaitCapturedIdentity("two-pane square after rotation", paneIdentity, paneIdentityExpression());
+            assertInteriorMinimumFocusedScroll(
+                "landscape to square rotation Slot 20",
+                scrollBeforeSquareRotation
+            );
+            fixture.setViewport(360, 640, 1, false);
+            awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-19", null);
+            awaitCapturedIdentity("two-pane landscape restored", paneIdentity, paneIdentityExpression());
 
             runJavaScript(
                 "document.querySelector('[data-pane-id=\"pane-active-save\"] [id$=\"-slot-0\"]').click()"
@@ -1151,7 +1176,23 @@ public class ControllerNavigationTest {
         JSONObject identity = new JSONObject(runJavaScript(expression));
         JSONArray paneIds = identity.optJSONArray("paneIds");
         String activePaneId = identity.optString("activePaneId");
-        if (paneIds == null || paneIds.length() == 0 || activePaneId.isEmpty()) {
+        java.util.HashSet<String> uniquePaneIds = new java.util.HashSet<>();
+        if (paneIds != null) {
+            for (int index = 0; index < paneIds.length(); index++) {
+                Object paneId = paneIds.opt(index);
+                if (!(paneId instanceof String) || ((String) paneId).isEmpty()) {
+                    fail(label + " has an invalid pane ID: " + identity);
+                }
+                uniquePaneIds.add((String) paneId);
+            }
+        }
+        if (
+            paneIds == null
+                || paneIds.length() == 0
+                || uniquePaneIds.size() != paneIds.length()
+                || activePaneId.isEmpty()
+                || !uniquePaneIds.contains(activePaneId)
+        ) {
             fail(label + " is missing pane ownership: " + identity);
         }
         Log.i("PKSXAcceptance", label + " identity=" + identity);
@@ -1306,7 +1347,20 @@ public class ControllerNavigationTest {
         return geometry;
     }
 
-    private void assertRotationScrollReveal(String label, JSONObject before) throws Exception {
+    private void assertMinimumFocusedScroll(String label, JSONObject before) throws Exception {
+        assertMinimumFocusedScroll(label, before, false);
+    }
+
+    private void assertInteriorMinimumFocusedScroll(String label, JSONObject before)
+        throws Exception {
+        assertMinimumFocusedScroll(label, before, true);
+    }
+
+    private void assertMinimumFocusedScroll(
+        String label,
+        JSONObject before,
+        boolean requireInteriorOffset
+    ) throws Exception {
         JSONObject after = focusedScrollGeometry();
         double[] target = requiredBounds(after, "target", label);
         double[] scrollport = requiredBounds(after, "scrollport", label);
@@ -1315,19 +1369,23 @@ public class ControllerNavigationTest {
         double contentTop = target[1] - scrollport[1] + afterScroll;
         double contentBottom = target[3] - scrollport[1] + afterScroll;
         double clientHeight = after.getDouble("clientHeight");
-        boolean fitsAtPreviousOffset = contentTop >= beforeScroll - 1
-            && contentBottom <= beforeScroll + clientHeight + 1;
-        boolean minimal = fitsAtPreviousOffset
-            ? sameEdge(afterScroll, beforeScroll)
-            : contentTop < beforeScroll
-                ? afterScroll < beforeScroll && sameEdge(target[1], scrollport[1])
-                : afterScroll > beforeScroll && sameEdge(target[3], scrollport[3]);
+        double maximumScroll = Math.max(0, after.getDouble("scrollHeight") - clientHeight);
+        double expectedScroll = Math.min(beforeScroll, maximumScroll);
+        if (contentTop < expectedScroll) expectedScroll = Math.max(0, contentTop);
+        if (contentBottom > expectedScroll + clientHeight) {
+            expectedScroll = Math.min(maximumScroll, contentBottom - clientHeight);
+        }
+        boolean interiorOffset = expectedScroll > 0 && expectedScroll < maximumScroll;
         Log.i(
             "PKSXAcceptance",
-            label + " fitsAtPreviousOffset=" + fitsAtPreviousOffset + " before=" + before
-                + " after=" + after
+            label + " expectedScroll=" + expectedScroll + " maximumScroll=" + maximumScroll
+                + " interiorOffset=" + interiorOffset + " before=" + before + " after=" + after
         );
-        if (!contains(scrollport, target) || !minimal) {
+        if (
+            !contains(scrollport, target)
+                || !sameEdge(afterScroll, expectedScroll)
+                || (requireInteriorOffset && !interiorOffset)
+        ) {
             fail(label + " did not preserve the minimum visible scroll: before=" + before + ", after=" + after);
         }
     }
