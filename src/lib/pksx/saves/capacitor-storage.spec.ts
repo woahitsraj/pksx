@@ -9,10 +9,16 @@ describe('CapacitorSavesStorage', () => {
 	let storage: CapacitorSavesStorage;
 	let fileStore: NativeFileStore;
 	let failCatalogWrites: number;
+	let failBackupDeletes: number;
+	let failWorkspaceReads: number;
+	let failWorkspaceWrites: number;
 
 	beforeEach(() => {
 		files = new Map();
 		failCatalogWrites = 0;
+		failBackupDeletes = 0;
+		failWorkspaceReads = 0;
+		failWorkspaceWrites = 0;
 		const ids = ['save-1', 'backup-1'];
 		fileStore = {
 			async readText(path) {
@@ -27,13 +33,25 @@ describe('CapacitorSavesStorage', () => {
 				files.set(path, value);
 			},
 			async readBytes(path) {
+				if (path.startsWith('workspaces/') && failWorkspaceReads > 0) {
+					failWorkspaceReads -= 1;
+					throw new Error('workspace read unavailable');
+				}
 				const value = files.get(path);
 				return value instanceof Uint8Array ? new Uint8Array(value) : null;
 			},
 			async writeBytes(path, value) {
 				files.set(path, new Uint8Array(value));
+				if (path.startsWith('workspaces/') && failWorkspaceWrites > 0) {
+					failWorkspaceWrites -= 1;
+					throw new Error('workspace write unavailable');
+				}
 			},
 			async delete(path) {
+				if (path.startsWith('backups/') && failBackupDeletes > 0) {
+					failBackupDeletes -= 1;
+					throw new Error('backup cleanup unavailable');
+				}
 				files.delete(path);
 			}
 		};
@@ -184,7 +202,7 @@ describe('CapacitorSavesStorage', () => {
 		expect(await storage.getWorkspace(saveFile.id)).toEqual(persisted);
 	});
 
-	it('reconciles orphan automatic Backup bytes after catalog failure and recreation', async () => {
+	it('cleans failed automatic Backup bytes and creates one Backup after recreation', async () => {
 		const saveFile = await storage.importSave({
 			bytes: new Uint8Array([1, 2, 3]),
 			originalFileName: null
@@ -201,8 +219,7 @@ describe('CapacitorSavesStorage', () => {
 		).rejects.toThrow('catalog unavailable');
 		expect(await storage.getWorkspace(saveFile.id)).toBeNull();
 		expect(await storage.listBackups(saveFile.id)).toEqual([]);
-		const orphanPath = [...files.keys()].find((path) => path.startsWith('backups/'));
-		expect(orphanPath).toBeDefined();
+		expect([...files.keys()].filter((path) => path.startsWith('backups/'))).toEqual([]);
 
 		const recreated = new CapacitorSavesStorage({
 			fileStore,
@@ -217,7 +234,53 @@ describe('CapacitorSavesStorage', () => {
 
 		expect(prepared.established).toBe(true);
 		expect(await recreated.listBackups(saveFile.id)).toHaveLength(1);
-		expect([...files.keys()].filter((path) => path.startsWith('backups/'))).toEqual([orphanPath]);
+		expect([...files.keys()].filter((path) => path.startsWith('backups/'))).toHaveLength(1);
+	});
+
+	it.each([
+		['Workspace baseline read', () => (failWorkspaceReads = 1), 'workspace read unavailable'],
+		['Workspace baseline write', () => (failWorkspaceWrites = 1), 'workspace write unavailable']
+	])('cleans new Backup bytes after a failed %s', async (_label, fail, message) => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1, 2, 3]),
+			originalFileName: null
+		});
+		fail();
+
+		await expect(
+			storage.ensureAutomaticBackup({
+				saveFileId: saveFile.id,
+				importedAt: saveFile.importedAt,
+				expectedUpdatedAt: null,
+				reason: 'inventory-editing'
+			})
+		).rejects.toThrow(message);
+		expect(await storage.getWorkspace(saveFile.id)).toBeNull();
+		expect([...files.keys()].filter((path) => path.startsWith('backups/'))).toEqual([]);
+	});
+
+	it('deletes identifiable interrupted automatic Backup bytes after cleanup failure', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1, 2, 3]),
+			originalFileName: null
+		});
+		failCatalogWrites = 1;
+		failBackupDeletes = 1;
+
+		await expect(
+			storage.ensureAutomaticBackup({
+				saveFileId: saveFile.id,
+				importedAt: saveFile.importedAt,
+				expectedUpdatedAt: null,
+				reason: 'inventory-editing'
+			})
+		).rejects.toThrow('backup cleanup unavailable');
+		expect([...files.keys()].filter((path) => path.startsWith('backups/'))).toHaveLength(1);
+
+		await storage.deleteSave(saveFile.id);
+
+		expect(await storage.getSave(saveFile.id)).toBeNull();
+		expect([...files.keys()].filter((path) => path.startsWith('backups/'))).toEqual([]);
 	});
 
 	it('preserves reconciled automatic Backup metadata and distinguishes a byte-identical Restore', async () => {

@@ -28,7 +28,7 @@ describe('automatic Backup mutation integration', () => {
 		expect((await storage.getWorkspace(state.file.id))?.automaticBackupCreated).toBe(true);
 	});
 
-	it('reconciles one orphan Backup after storage and coordinator recreation', async () => {
+	it('creates one stable Backup after storage and coordinator recreation', async () => {
 		const backend = createFileBackend();
 		const firstStorage = createStorage(backend);
 		const state = await importWorkspace(firstStorage);
@@ -47,8 +47,7 @@ describe('automatic Backup mutation integration', () => {
 				operation: { money: 200 }
 			})
 		).resolves.toMatchObject({ ok: false, code: 'backup-write-failed' });
-		const orphanPaths = [...backend.values.keys()].filter((path) => path.startsWith('backups/'));
-		expect(orphanPaths).toHaveLength(1);
+		expect([...backend.values.keys()].filter((path) => path.startsWith('backups/'))).toEqual([]);
 
 		const recreatedStorage = createStorage(backend);
 		const recreatedCoordinator = new SaveFileEditCoordinator({
@@ -62,8 +61,8 @@ describe('automatic Backup mutation integration', () => {
 			})
 		).resolves.toMatchObject({ ok: true, status: 'committed' });
 		expect(await recreatedStorage.listBackups(state.file.id)).toHaveLength(1);
-		expect([...backend.values.keys()].filter((path) => path.startsWith('backups/'))).toEqual(
-			orphanPaths
+		expect([...backend.values.keys()].filter((path) => path.startsWith('backups/'))).toHaveLength(
+			1
 		);
 	});
 

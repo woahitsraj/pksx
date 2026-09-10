@@ -192,9 +192,18 @@ export class CapacitorSavesStorage implements SavesStorage {
 	deleteSave(saveFileId: SaveFileId): Promise<void> {
 		return this.#run(async () => {
 			const catalog = await this.#readCatalog();
-			const backupIds = catalog.backups
-				.filter((backup) => backup.saveFileId === saveFileId)
-				.map((backup) => backup.id);
+			const saveFile = catalog.saves.find(({ id }) => id === saveFileId);
+			const workspace = catalog.workspaces[saveFileId];
+			const identifiableInterruptedBackupId =
+				saveFile && !workspace?.automaticBackupCreated
+					? await this.#interruptedAutomaticBackupId(saveFile, workspace)
+					: null;
+			const backupIds = new Set(
+				catalog.backups
+					.filter((backup) => backup.saveFileId === saveFileId)
+					.map((backup) => backup.id)
+			);
+			if (identifiableInterruptedBackupId) backupIds.add(identifiableInterruptedBackupId);
 			catalog.saves = catalog.saves.filter(({ id }) => id !== saveFileId);
 			catalog.backups = catalog.backups.filter((backup) => backup.saveFileId !== saveFileId);
 			delete catalog.workspaces[saveFileId];
@@ -208,7 +217,7 @@ export class CapacitorSavesStorage implements SavesStorage {
 			await Promise.all([
 				this.#fileStore.delete(saveBytesPath(saveFileId)),
 				this.#fileStore.delete(workspaceBytesPath(saveFileId)),
-				...backupIds.map((backupId) => this.#fileStore.delete(backupBytesPath(backupId)))
+				...[...backupIds].map((backupId) => this.#fileStore.delete(backupBytesPath(backupId)))
 			]);
 		});
 	}
@@ -279,41 +288,57 @@ export class CapacitorSavesStorage implements SavesStorage {
 			if (existingBytes && !bytesEqual(existingBytes, bytes)) {
 				throw new Error('The automatic Backup bytes do not match their identity.');
 			}
-			if (!existingBytes) await this.#fileStore.writeBytes(backupPath, bytes);
-			if (!existingBackup) {
-				catalog.backups.push({
-					id: backupId,
-					saveFileId: input.saveFileId,
-					reason: input.reason,
-					byteLength: bytes.byteLength,
-					createdAt: this.#now()
-				});
-			}
-
-			const metadata: WorkspaceMetadata = {
-				saveFileId: input.saveFileId,
-				dirty: previous?.dirty ?? false,
-				automaticBackupCreated: true,
-				updatedAt: nextWorkspaceRevision(previous?.updatedAt, this.#now())
-			};
-			const previousWorkspaceBytes = previous
-				? null
-				: await this.#fileStore.readBytes(workspacePath);
-			if (!previous) await this.#fileStore.writeBytes(workspacePath, bytes);
-			catalog.workspaces[input.saveFileId] = metadata;
+			const createdUncataloguedBytes = !existingBackup && !existingBytes;
+			let previousWorkspaceBytes: Uint8Array | null = null;
+			let attemptedInitialWorkspaceWrite = false;
 			try {
-				await this.#writeCatalog(catalog);
-			} catch (error) {
+				if (!existingBytes) await this.#fileStore.writeBytes(backupPath, bytes);
+				if (!existingBackup) {
+					catalog.backups.push({
+						id: backupId,
+						saveFileId: input.saveFileId,
+						reason: input.reason,
+						byteLength: bytes.byteLength,
+						createdAt: this.#now()
+					});
+				}
+
+				const metadata: WorkspaceMetadata = {
+					saveFileId: input.saveFileId,
+					dirty: previous?.dirty ?? false,
+					automaticBackupCreated: true,
+					updatedAt: nextWorkspaceRevision(previous?.updatedAt, this.#now())
+				};
 				if (!previous) {
-					if (previousWorkspaceBytes) {
-						await this.#fileStore.writeBytes(workspacePath, previousWorkspaceBytes);
-					} else {
-						await this.#fileStore.delete(workspacePath);
+					previousWorkspaceBytes = await this.#fileStore.readBytes(workspacePath);
+					attemptedInitialWorkspaceWrite = true;
+					await this.#fileStore.writeBytes(workspacePath, bytes);
+				}
+				catalog.workspaces[input.saveFileId] = metadata;
+				await this.#writeCatalog(catalog);
+				return { workspace: { ...metadata, bytes: copyBytes(bytes) }, established: true };
+			} catch (error) {
+				let cleanupError: unknown;
+				if (attemptedInitialWorkspaceWrite) {
+					try {
+						if (previousWorkspaceBytes) {
+							await this.#fileStore.writeBytes(workspacePath, previousWorkspaceBytes);
+						} else {
+							await this.#fileStore.delete(workspacePath);
+						}
+					} catch (failure) {
+						cleanupError = failure;
 					}
 				}
-				throw error;
+				if (createdUncataloguedBytes) {
+					try {
+						await this.#fileStore.delete(backupPath);
+					} catch (failure) {
+						cleanupError ??= failure;
+					}
+				}
+				throw cleanupError ?? error;
 			}
-			return { workspace: { ...metadata, bytes: copyBytes(bytes) }, established: true };
 		});
 	}
 
@@ -365,6 +390,23 @@ export class CapacitorSavesStorage implements SavesStorage {
 
 	#writeCatalog(catalog: NativeCatalog): Promise<void> {
 		return this.#fileStore.writeText(catalogPath, JSON.stringify(catalog));
+	}
+
+	async #interruptedAutomaticBackupId(
+		saveFile: StoredSaveFile,
+		workspace: WorkspaceMetadata | undefined
+	) {
+		const bytes = workspace
+			? await this.#fileStore.readBytes(workspaceBytesPath(saveFile.id))
+			: await this.#fileStore.readBytes(saveBytesPath(saveFile.id));
+		return bytes
+			? stableAutomaticBackupId({
+					saveFileId: saveFile.id,
+					importedAt: saveFile.importedAt,
+					persistedRevision: workspace?.updatedAt ?? saveFile.importedAt,
+					bytes
+				})
+			: null;
 	}
 }
 

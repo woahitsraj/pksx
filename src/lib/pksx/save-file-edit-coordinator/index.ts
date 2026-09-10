@@ -71,7 +71,6 @@ type OriginRecord = {
 	file: StoredSaveFile;
 	latest: WorkspaceState;
 	activeBox: number;
-	persistedRevision: string | null;
 	storedRevision: string | null;
 	tail: Promise<void>;
 	generation: number;
@@ -128,7 +127,6 @@ export class SaveFileEditCoordinator {
 			file: workspace.file,
 			latest: copyWorkspace(workspace),
 			activeBox,
-			persistedRevision: null,
 			storedRevision: null,
 			tail: Promise.resolve(),
 			generation: 0,
@@ -443,7 +441,6 @@ export class SaveFileEditCoordinator {
 			}
 
 			record.latest = copyWorkspace(next);
-			record.persistedRevision = stored.updatedAt;
 			record.storedRevision = stored.updatedAt;
 			if (!this.resultIsCurrent(record)) return this.staleResult(record.origin, next);
 			this.options.publish?.(copyWorkspace(next), record.activeBox);
@@ -508,7 +505,6 @@ export class SaveFileEditCoordinator {
 			throw new StaleWorkspaceError();
 		}
 		record.latest = copyWorkspace(prepared.state);
-		record.persistedRevision = prepared.revision;
 		record.storedRevision = prepared.revision;
 		return prepared.state;
 	}
@@ -519,7 +515,6 @@ export class SaveFileEditCoordinator {
 			throw new Error('The Save File is no longer available.');
 		}
 		const persisted = await this.options.storage.getWorkspace(file.id);
-		record.persistedRevision = persisted?.updatedAt ?? file.importedAt;
 		record.storedRevision = persisted?.updatedAt ?? null;
 		const bytes = persisted?.bytes ?? (await this.options.storage.getSaveBytes(file.id));
 		if (!bytes) throw new Error('The Save File bytes are no longer available.');
@@ -561,7 +556,6 @@ export class SaveFileEditCoordinator {
 				automaticBackupCreated: current.latest.automaticBackupCreated,
 				expectedUpdatedAt: staleRevision
 			});
-			current.persistedRevision = restored.updatedAt;
 			current.storedRevision = restored.updatedAt;
 		} catch (error) {
 			if (error instanceof WorkspaceRevisionConflictError) return;
