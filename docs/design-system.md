@@ -50,8 +50,6 @@ Dark mode overrides are defined with `:root:has(.app-shell.dark)` so global surf
 Reusable template and scoped CSS live under `src/lib/components/pksx/`:
 
 - `TopBar.svelte`: brand lockup, section pills, search affordance, import/export actions, save chip, offline badge, and theme toggle.
-- `StatusStrip.svelte`: status and error message strips.
-- `BoxSidebar.svelte`: box navigation list and active/occupied state rows.
 - `StorageSlot.svelte`: party and box Slot gridcell rendering. Filled Slots use a sprite-first compact layout with a stable sprite stage, PKHeX-projected type-color backgrounds, diagonal split backgrounds when two type hues are present, compact level/name metadata, visible focus/hover rings that do not cover the sprite, and same-size missing/empty fallback states.
 - `SlotActionMenu.svelte`: repeated slot action popover.
 - `DetailRail.svelte`: Active Slot Detail Rail with a large portrait card, filled or empty state, optional Pokemon details such as type, nature, ability, item, stats, moves, and compact storage metadata. Unavailable fields are omitted rather than rendered as placeholders.

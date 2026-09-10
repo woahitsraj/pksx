@@ -275,12 +275,11 @@
 	.pksx-combobox-popover input {
 		width: 100%;
 		min-width: 0;
-		height: 40px;
+		height: var(--pksx-control-height);
 		border: 1px solid var(--rule);
 		border-radius: var(--pksx-radius-sm);
 		background: var(--paper-hi);
 		color: var(--ink);
-		font: 750 0.78rem var(--pksx-font-sans);
 	}
 
 	.pksx-combobox-trigger {
@@ -289,6 +288,7 @@
 		align-items: center;
 		gap: 8px;
 		padding: 0 11px;
+		font: 750 var(--pksx-type-label) var(--pksx-font-sans);
 		text-align: left;
 	}
 
@@ -304,14 +304,14 @@
 	.pksx-combobox-trigger i {
 		color: var(--ink-mute);
 		font:
-			700 0.62rem var(--pksx-font-mono),
+			700 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		font-style: normal;
 		text-transform: uppercase;
 	}
 
 	.pksx-combobox-trigger i {
-		font-size: 0.9rem;
+		font-size: var(--pksx-type-title);
 	}
 
 	.pksx-combobox-popover {
@@ -332,6 +332,7 @@
 
 	.pksx-combobox-popover input {
 		padding: 0 11px;
+		font: 750 var(--pksx-type-editable) var(--pksx-font-sans);
 	}
 
 	.pksx-combobox-list {
@@ -365,7 +366,7 @@
 	}
 
 	.pksx-combobox-option strong {
-		font-size: 0.78rem;
+		font-size: var(--pksx-type-label);
 	}
 
 	.pksx-combobox-option span,
@@ -374,7 +375,7 @@
 		margin: 0;
 		color: var(--ink-mute);
 		font:
-			650 0.6rem var(--pksx-font-mono),
+			650 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		font-style: normal;
 		text-transform: uppercase;

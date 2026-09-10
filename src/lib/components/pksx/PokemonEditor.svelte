@@ -1367,6 +1367,7 @@
 		<button
 			id="pokemon-editor-close"
 			type="button"
+			data-pksx-control-category="icon-only"
 			class="icon-close"
 			aria-label="Close Pokemon Editor"
 			onclick={onClose}
@@ -1386,11 +1387,18 @@
 					: `${draftEditCount} staged ${draftEditCount === 1 ? 'change' : 'changes'} will be lost.`}
 			</span>
 			<div class="internal-actions">
-				<button id="pokemon-editor-keep-editing" type="button" onclick={onKeepEditing}
-					>Keep editing</button
+				<button
+					id="pokemon-editor-keep-editing"
+					type="button"
+					data-pksx-control-category="small"
+					onclick={onKeepEditing}>Keep editing</button
 				>
-				<button id="pokemon-editor-discard-edits" type="button" class="danger" onclick={onDiscard}
-					>Discard edits</button
+				<button
+					id="pokemon-editor-discard-edits"
+					type="button"
+					data-pksx-control-category="small"
+					class="danger"
+					onclick={onDiscard}>Discard edits</button
 				>
 			</div>
 		</section>
@@ -1401,6 +1409,7 @@
 					<button
 						id={`pokemon-editor-section-${section.id}`}
 						type="button"
+						data-pksx-control-category="small"
 						class:active={session.section === section.id}
 						aria-current={session.section === section.id ? 'page' : undefined}
 						data-editor-rail-section={section.id}
@@ -1417,8 +1426,11 @@
 					<section class="delta-review" aria-labelledby="pokemon-editor-review-title">
 						<div class="panel-title">
 							<h3 id="pokemon-editor-review-title">Staged edit review</h3>
-							<button id="pokemon-editor-review-close" type="button" onclick={onKeepEditing}
-								>Done</button
+							<button
+								id="pokemon-editor-review-close"
+								type="button"
+								data-pksx-control-category="small"
+								onclick={onKeepEditing}>Done</button
 							>
 						</div>
 						<div class="delta-list">
@@ -2441,6 +2453,7 @@
 				<button
 					id="pokemon-editor-staged-count"
 					type="button"
+					data-pksx-control-category="small"
 					class="staged-count"
 					onclick={onShowReview}>{draftEditCount} staged</button
 				>
@@ -2448,12 +2461,14 @@
 			<button
 				id="pokemon-editor-legality"
 				type="button"
+				data-pksx-control-category="small"
 				class="secondary-action"
 				onclick={onOpenLegality}>Legality</button
 			>
 			<button
 				id="pokemon-editor-apply"
 				type="button"
+				data-pksx-control-category="small"
 				class="unsupported-apply"
 				disabled={(mode === 'edit' && !draftDirty && !pendingScratch) ||
 					applying ||
@@ -2471,13 +2486,20 @@
 			<button
 				id="pokemon-editor-cancel"
 				type="button"
+				data-pksx-control-category="small"
 				class="close-editor"
 				disabled={(!draftDirty && !pendingScratch) || applying}
 				onclick={handleCancelEdits}
 			>
 				Cancel edits
 			</button>
-			<button id="pokemon-editor-close-footer" type="button" class="close-editor" onclick={onClose}>
+			<button
+				id="pokemon-editor-close-footer"
+				type="button"
+				data-pksx-control-category="small"
+				class="close-editor"
+				onclick={onClose}
+			>
 				Close
 			</button>
 		</footer>
@@ -2523,27 +2545,27 @@
 	.editor-actions p {
 		color: var(--ink-mute);
 		font:
-			650 0.66rem var(--pksx-font-mono),
+			650 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		line-height: 1.2;
 	}
 
 	.editor-header h2 {
 		margin-top: 2px;
-		font-size: 1.22rem;
+		font-size: var(--pksx-type-title);
 		line-height: 1.1;
 	}
 
 	.icon-close {
-		width: 34px;
-		height: 34px;
+		width: var(--pksx-small-control-height);
+		height: var(--pksx-small-control-height);
 		display: grid;
 		place-items: center;
 		flex: 0 0 auto;
 		border-radius: var(--pksx-radius-sm);
 		background: var(--paper-deep);
 		color: var(--ink);
-		font-size: 1.35rem;
+		font-size: var(--pksx-type-title);
 		line-height: 1;
 	}
 
@@ -2599,7 +2621,7 @@
 	.stat-grid em {
 		color: var(--ink-mute);
 		font:
-			650 0.62rem var(--pksx-font-mono),
+			650 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		text-transform: uppercase;
 	}
@@ -2610,7 +2632,7 @@
 	.stat-grid strong {
 		min-width: 0;
 		overflow-wrap: anywhere;
-		font-size: 0.82rem;
+		font-size: var(--pksx-type-body);
 	}
 
 	.editor-panel {
@@ -2644,7 +2666,7 @@
 		margin: 0;
 		color: var(--ink-mute);
 		font:
-			650 0.62rem var(--pksx-font-mono),
+			650 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		line-height: 1.2;
 	}
@@ -2655,14 +2677,14 @@
 
 	.battle-field-controls select {
 		width: 100%;
-		height: 44px;
+		height: var(--pksx-control-height);
 		padding: 0 12px;
 		border: 1px solid var(--rule);
 		border-radius: var(--pksx-radius-sm);
 		background: var(--paper-hi);
 		color: var(--ink);
 		font:
-			750 0.86rem var(--pksx-font-mono),
+			750 var(--pksx-type-editable) var(--pksx-font-mono),
 			monospace;
 	}
 
@@ -2674,7 +2696,7 @@
 		margin: 0;
 		color: var(--ink-mute);
 		font:
-			650 0.62rem var(--pksx-font-mono),
+			650 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		line-height: 1.2;
 		text-transform: uppercase;
@@ -2683,14 +2705,14 @@
 	.nickname-field input {
 		width: 100%;
 		min-width: 0;
-		height: 44px;
+		height: var(--pksx-control-height);
 		padding: 0 12px;
 		border: 1px solid var(--rule);
 		border-radius: var(--pksx-radius-sm);
 		background: var(--paper-hi);
 		color: var(--ink);
 		font:
-			750 0.86rem var(--pksx-font-mono),
+			750 var(--pksx-type-editable) var(--pksx-font-mono),
 			monospace;
 	}
 
@@ -2733,7 +2755,7 @@
 		margin: 0;
 		color: var(--ink-mute);
 		font:
-			650 0.62rem var(--pksx-font-mono),
+			650 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		line-height: 1.2;
 	}
@@ -2752,14 +2774,14 @@
 	.ability-edit-controls select {
 		width: 100%;
 		min-width: 0;
-		height: 44px;
+		height: var(--pksx-control-height);
 		padding: 0 12px;
 		border: 1px solid var(--rule);
 		border-radius: var(--pksx-radius-sm);
 		background: var(--paper-hi);
 		color: var(--ink);
 		font:
-			750 0.78rem var(--pksx-font-mono),
+			750 var(--pksx-type-editable) var(--pksx-font-mono),
 			monospace;
 	}
 
@@ -2804,14 +2826,14 @@
 	.species-form-preview span {
 		color: var(--ink-mute);
 		font:
-			650 0.62rem var(--pksx-font-mono),
+			650 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		text-transform: uppercase;
 	}
 
 	.species-form-controls select {
 		min-width: 0;
-		height: 44px;
+		height: var(--pksx-control-height);
 		border: 1px solid var(--rule);
 		border-radius: var(--pksx-radius-sm);
 		background: var(--paper-hi);
@@ -2839,10 +2861,10 @@
 	}
 
 	.mode-switch {
-		min-height: 44px;
+		min-height: var(--pksx-control-height);
 		border-radius: var(--pksx-radius-sm);
 		font:
-			800 0.72rem var(--pksx-font-mono),
+			800 var(--pksx-type-label) var(--pksx-font-mono),
 			monospace;
 		line-height: 1;
 		text-transform: uppercase;
@@ -2952,7 +2974,7 @@
 		margin: 0;
 		color: var(--ink-mute);
 		font:
-			650 0.62rem var(--pksx-font-mono),
+			650 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		line-height: 1.1;
 		text-transform: uppercase;
@@ -2964,14 +2986,14 @@
 	.move-edit-controls input {
 		width: 100%;
 		min-width: 0;
-		height: 38px;
+		height: var(--pksx-control-height);
 		padding: 0 8px;
 		border: 1px solid var(--rule);
 		border-radius: var(--pksx-radius-sm);
 		background: var(--paper-hi);
 		color: var(--ink);
 		font:
-			750 0.74rem var(--pksx-font-mono),
+			750 var(--pksx-type-editable) var(--pksx-font-mono),
 			monospace;
 	}
 
@@ -2993,7 +3015,7 @@
 	.level-edit-controls label em {
 		color: var(--ink-mute);
 		font:
-			650 0.62rem var(--pksx-font-mono),
+			650 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		line-height: 1.1;
 		text-transform: uppercase;
@@ -3002,14 +3024,14 @@
 	.level-edit-controls input {
 		width: 100%;
 		min-width: 0;
-		height: 44px;
+		height: var(--pksx-control-height);
 		padding: 0 12px;
 		border: 1px solid var(--rule);
 		border-radius: var(--pksx-radius-sm);
 		background: var(--paper-hi);
 		color: var(--ink);
 		font:
-			750 0.86rem var(--pksx-font-mono),
+			750 var(--pksx-type-editable) var(--pksx-font-mono),
 			monospace;
 	}
 
@@ -3024,7 +3046,7 @@
 		justify-content: space-between;
 		gap: 8px;
 		color: var(--ink);
-		font-size: 0.78rem;
+		font-size: var(--pksx-type-label);
 		font-weight: 800;
 	}
 
@@ -3046,14 +3068,14 @@
 
 	.move-chip strong {
 		overflow-wrap: anywhere;
-		font-size: 0.76rem;
+		font-size: var(--pksx-type-label);
 		line-height: 1.1;
 	}
 
 	.move-chip span,
 	.move-chip em {
 		font:
-			650 0.58rem var(--pksx-font-mono),
+			650 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		line-height: 1;
 		text-transform: uppercase;
@@ -3076,10 +3098,10 @@
 
 	.unsupported-apply,
 	.close-editor {
-		min-height: 34px;
+		min-height: var(--pksx-control-height);
 		padding: 7px 12px;
 		border-radius: var(--pksx-radius-sm);
-		font-size: 0.78rem;
+		font-size: var(--pksx-type-label);
 		font-weight: 800;
 	}
 
@@ -3258,7 +3280,12 @@
 	}
 
 	.editor-panel input,
-	.editor-panel select,
+	.editor-panel select {
+		min-height: var(--pksx-control-height);
+		height: var(--pksx-control-height);
+		font-size: var(--pksx-type-editable);
+	}
+
 	.editor-panel button,
 	.editor-panel :global(.pksx-combobox-trigger) {
 		min-height: var(--pksx-control-height);

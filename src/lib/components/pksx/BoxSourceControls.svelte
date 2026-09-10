@@ -13,6 +13,7 @@
 <div class="box-source-controls" aria-label="Collection controls">
 	<button
 		type="button"
+		data-pksx-control-category="small"
 		class="box-arrow"
 		aria-label="Previous Location"
 		onpointerdown={(event) => event.preventDefault()}
@@ -33,6 +34,7 @@
 
 	<button
 		type="button"
+		data-pksx-control-category="small"
 		class="box-arrow"
 		aria-label="Next Location"
 		onpointerdown={(event) => event.preventDefault()}

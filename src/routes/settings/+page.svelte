@@ -88,11 +88,7 @@
 	});
 
 	$effect(() => {
-		appChrome.controllerInputActive = true;
 		appChrome.carryActive = false;
-		return () => {
-			appChrome.controllerInputActive = false;
-		};
 	});
 
 	async function loadMetadata() {

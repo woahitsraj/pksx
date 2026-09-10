@@ -6,8 +6,6 @@
 	"type": "module",
 	"scripts": {
 		"dev": "portless run vite dev",
-		"prototype:box-first": "vite dev --host 0.0.0.0 --port 5173",
-		"prototype:saves": "vite dev --host 0.0.0.0 --port 5173",
 		"prebuild": "pnpm legal:sync",
 		"build": "vite build",
 		"preview": "vite preview",
@@ -31,14 +29,12 @@
 		"typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && tsc --noEmit -p tsconfig.scripts.json",
 		"check": "pnpm typecheck",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"lint": "prettier --check . && eslint .",
+		"lint": "prettier --check . && node scripts/design-contract/check.ts && eslint .",
 		"format": "prettier --write .",
 		"test:unit": "vitest --exclude src/lib/engine/pkhex-engine.browser.spec.ts --exclude 'src/**/*.engine.browser.spec.ts'",
 		"test:engine-smoke": "vitest --project client --run src/lib/engine/pkhex-engine.browser.spec.ts .engine.browser.spec.ts",
 		"test": "pnpm test:unit -- --run && pnpm test:e2e",
-		"test:e2e": "playwright install && playwright test --pass-with-no-tests",
-		"prototype:density": "vite dev --host 0.0.0.0 --port 5174",
-		"prototype:density:measure": "node src/routes/prototype/density/measure.mjs"
+		"test:e2e": "playwright install && playwright test --pass-with-no-tests"
 	},
 	"devDependencies": {
 		"@capacitor/assets": "^3.0.5",

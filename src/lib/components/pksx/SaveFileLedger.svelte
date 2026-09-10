@@ -1610,7 +1610,7 @@
 		display: grid;
 		grid-template-rows: auto auto minmax(0, 1fr);
 		gap: var(--pksx-space-2, 8px);
-		font-size: var(--pksx-type-body, 13px);
+		font-size: var(--pksx-type-body);
 		font-family: var(--pksx-font-sans, sans-serif);
 		color: var(--pksx-color-text-primary, #2a241c);
 		overflow: hidden;
@@ -1634,17 +1634,17 @@
 	}
 
 	h1 {
-		font-size: var(--pksx-type-display, 24px);
+		font-size: var(--pksx-type-display);
 		line-height: 1.05;
 	}
 
 	h2 {
-		font-size: var(--pksx-type-title, 16px);
+		font-size: var(--pksx-type-title);
 		line-height: 1.05;
 	}
 
 	h3 {
-		font-size: var(--pksx-type-body, 13px);
+		font-size: var(--pksx-type-body);
 	}
 
 	.section-number,
@@ -1652,7 +1652,7 @@
 	.add-command label > span,
 	.trainer-facts dt {
 		font-family: var(--pksx-font-mono, monospace);
-		font-size: var(--pksx-type-caption, 10px);
+		font-size: var(--pksx-type-caption);
 		font-weight: 700;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
@@ -1735,7 +1735,7 @@
 	}
 
 	.details-heading > div p {
-		font-size: var(--pksx-type-caption, 10px);
+		font-size: var(--pksx-type-caption);
 		color: var(--pksx-color-text-secondary, #6b5d4a);
 	}
 
@@ -1753,7 +1753,7 @@
 	.trainer-facts dd {
 		margin: 0;
 		font-family: var(--pksx-font-mono, monospace);
-		font-size: var(--pksx-type-label, 12px);
+		font-size: var(--pksx-type-label);
 		font-weight: 650;
 	}
 
@@ -1799,12 +1799,12 @@
 	.money-row,
 	.quantity-controls,
 	.add-command {
-		font-size: var(--pksx-type-editable, 16px);
+		font-size: var(--pksx-type-editable);
 	}
 
 	.field-error {
 		grid-column: 1 / -1;
-		font-size: var(--pksx-type-caption, 10px);
+		font-size: var(--pksx-type-caption);
 		color: var(--pksx-color-feedback-danger, #c93d3d);
 	}
 
@@ -1838,7 +1838,7 @@
 	.pocket-heading span,
 	.item-copy span,
 	.catalogue-status {
-		font-size: var(--pksx-type-caption, 10px);
+		font-size: var(--pksx-type-caption);
 		color: var(--pksx-color-text-secondary, #6b5d4a);
 	}
 
@@ -1991,7 +1991,7 @@
 	button,
 	input,
 	select {
-		min-height: var(--pksx-control-height, 32px);
+		min-height: var(--pksx-control-height);
 		border: var(--pksx-border-width, 1px) solid
 			var(--pksx-color-border-strong, rgba(42, 36, 28, 0.14));
 		border-radius: var(--pksx-radius-small, 4px);
@@ -2002,7 +2002,7 @@
 
 	button {
 		padding-inline: var(--pksx-space-2, 8px);
-		font-size: var(--pksx-type-label, 12px);
+		font-size: var(--pksx-type-label);
 		font-weight: 700;
 		cursor: pointer;
 	}

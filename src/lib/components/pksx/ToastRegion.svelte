@@ -67,7 +67,7 @@
 			0 18px 44px color-mix(in srgb, black, transparent 82%),
 			0 5px 14px color-mix(in srgb, black, transparent 88%);
 		color: var(--ink);
-		font-size: 0.75rem;
+		font-size: var(--pksx-type-label);
 		font-weight: 700;
 		line-height: 1.25;
 		will-change: opacity, transform;

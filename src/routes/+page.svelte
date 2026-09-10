@@ -647,12 +647,11 @@
 	function syncAppChrome() {
 		updateAppChrome({
 			hasLoadedSave: loadedSave !== null,
-			carryActive: carryState !== null,
-			controllerInputActive: true
+			carryActive: carryState !== null
 		});
 
 		return () => {
-			updateAppChrome({ controllerInputActive: false, carryActive: false });
+			updateAppChrome({ carryActive: false });
 		};
 	}
 
@@ -966,15 +965,27 @@
 	}
 
 	function dispatchPokemonEditorRail(action: NavigationAction) {
-		const sideRail = pokemonEditorUsesSideRail();
-		if (
-			(sideRail && (action === 'up' || action === 'down')) ||
-			(!sideRail && (action === 'left' || action === 'right'))
-		) {
-			pageActivePokemonEditorSection(action === 'up' || action === 'left' ? -1 : 1);
+		if (action === 'confirm') {
+			focusPokemonEditorContent();
 			return;
 		}
-		if (action === 'confirm' || (sideRail ? action === 'right' : action === 'down')) {
+		if (action !== 'left' && action !== 'right' && action !== 'up' && action !== 'down') return;
+
+		const active = document.getElementById(
+			`pokemon-editor-section-${pokemonEditorSession.section}`
+		);
+		const controls = Array.from(
+			document.querySelectorAll<HTMLElement>('.pokemon-editor [data-editor-rail-section]')
+		);
+		if (!(active instanceof HTMLElement)) return;
+		const candidate = closestDirectionalControl(active, controls, action);
+		if (candidate) {
+			candidate.click();
+			return;
+		}
+
+		const content = pokemonEditorContentControls()[0];
+		if (content && closestDirectionalControl(active, [content], action)) {
 			focusPokemonEditorContent();
 		}
 	}
@@ -986,7 +997,6 @@
 		}
 		if (action !== 'left' && action !== 'right' && action !== 'up' && action !== 'down') return;
 
-		const sideRail = pokemonEditorUsesSideRail();
 		const controls = pokemonEditorContentControls();
 		const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		if (!active || !controls.includes(active)) {
@@ -999,7 +1009,8 @@
 			candidate.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 			return;
 		}
-		if ((sideRail && action === 'left') || (!sideRail && action === 'up')) {
+		const rail = document.getElementById(`pokemon-editor-section-${pokemonEditorSession.section}`);
+		if (rail instanceof HTMLElement && closestDirectionalControl(active, [rail], action)) {
 			focusPokemonEditorRail();
 			return;
 		}
@@ -1143,11 +1154,6 @@
 		if (!target) return;
 		target.focus();
 		target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-	}
-
-	function pokemonEditorUsesSideRail() {
-		const editor = document.querySelector<HTMLElement>('.pokemon-editor');
-		return editor ? editor.clientWidth > editor.clientHeight : true;
 	}
 
 	function closestDirectionalControl(
@@ -4803,6 +4809,7 @@
 <div class="status-announcer" role="status" aria-live="polite">{statusMessage}</div>
 <input
 	id="quick-save-import"
+	data-pksx-control-category="composition"
 	class="source-picker-import"
 	type="file"
 	accept=".sav,.dat,.bin,application/octet-stream"
@@ -4892,6 +4899,7 @@
 								<button
 									id={`close-pane-${pane.id}`}
 									data-pane-control-index="1"
+									data-pksx-control-category="small"
 									type="button"
 									class="pane-close"
 									aria-label={`Close ${pane.source.label} pane`}
@@ -5092,6 +5100,7 @@
 				</div>
 				<button
 					type="button"
+					data-pksx-control-category="icon-only"
 					class="source-picker-close"
 					aria-label="Close source picker"
 					onfocus={() => (sourcePickerFocusIndex = sourcePickerControls().length - 1)}
@@ -5103,6 +5112,7 @@
 					<button
 						id={`source-picker-control-${index}`}
 						data-source-picker-control
+						data-pksx-control-category="card"
 						type="button"
 						class={['source-card', card.treatment === 'app-owned' && 'app-owned']}
 						onfocus={() => (sourcePickerFocusIndex = index)}
@@ -5115,6 +5125,7 @@
 				<button
 					id={`source-picker-control-${sourcePickerCards.length}`}
 					data-source-picker-control
+					data-pksx-control-category="card"
 					type="button"
 					class="source-card import-row"
 					onfocus={() => (sourcePickerFocusIndex = sourcePickerCards.length)}
@@ -5234,14 +5245,6 @@
 	:global(.app-shell:has(.boxes-route)) {
 		height: 100dvh;
 		overflow: hidden;
-	}
-
-	@media (min-width: 1025px) {
-		:global(html),
-		:global(body) {
-			height: 100%;
-			overflow: hidden;
-		}
 	}
 
 	:global(strong) {
@@ -5495,6 +5498,7 @@
 	}
 
 	.shared-detail {
+		container: detail-rail / size;
 		grid-area: rail;
 		width: 100%;
 		max-width: 260px;
@@ -5623,12 +5627,12 @@
 	}
 
 	.source-picker h2 {
-		font-size: 1.3rem;
+		font-size: var(--pksx-type-title);
 	}
 
 	.source-picker p {
 		color: var(--ink-soft);
-		font-size: 0.82rem;
+		font-size: var(--pksx-type-body);
 	}
 
 	.source-picker header button {
@@ -5677,13 +5681,13 @@
 	}
 
 	.source-card strong {
-		font-size: 1rem;
+		font-size: var(--pksx-type-title);
 	}
 
 	.source-card em {
 		color: var(--ink-soft);
 		font-style: normal;
-		font-size: 0.76rem;
+		font-size: var(--pksx-type-label);
 		line-height: 1.35;
 	}
 </style>

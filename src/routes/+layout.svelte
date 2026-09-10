@@ -512,7 +512,6 @@
 			if (!detail || !isControllerKey(detail.key)) return;
 
 			nativeControllerId = detail.id || 'Controller';
-			appChrome.controllerStatus = nativeControllerId;
 			if (detail.discrete) {
 				if (!detail.pressed) {
 					nativeDiscretePressed.delete(detail.key);
@@ -544,7 +543,6 @@
 			previousPressed.clear();
 			repeatAt.clear();
 			nativeControllerId = detail?.id || 'Controller';
-			appChrome.controllerStatus = nativeControllerId;
 		};
 
 		const read = (time: number) => {
@@ -565,7 +563,6 @@
 				...nativeHeld,
 				...(gamepad ? readGamepadKeys(gamepad) : [])
 			]);
-			appChrome.controllerStatus = nativeControllerId ?? gamepad?.id ?? null;
 
 			for (const key of pressed) {
 				const firstPress = !previousPressed.has(key);
@@ -652,6 +649,7 @@
 	{#if !summonedWorkflow.active && !appChrome.carryActive}
 		<button
 			id="main-menu-opener"
+			data-pksx-control-category="icon-only"
 			class="main-menu-opener"
 			type="button"
 			tabindex="-1"
@@ -688,8 +686,8 @@
 		z-index: 400;
 		top: calc(var(--pksx-safe-area-top) + var(--pksx-space-2, 8px));
 		right: calc(var(--pksx-safe-area-right) + var(--pksx-space-2, 8px));
-		width: var(--pksx-control-height, 40px);
-		height: var(--pksx-control-height, 40px);
+		width: var(--pksx-control-height);
+		height: var(--pksx-control-height);
 		display: grid;
 		place-items: center;
 		padding: 0;

@@ -264,7 +264,7 @@ export function createPokemonEditorState(
 		};
 	}
 
-	const editorSlot = hydrateSaveFileEditorSlot(source, slot);
+	const editorSlot = hydrateSaveFilePokemonEditorSlot(source, slot);
 
 	return {
 		ok: true,
@@ -282,7 +282,10 @@ export function createPokemonEditorState(
 	};
 }
 
-function hydrateSaveFileEditorSlot(source: PokemonEditorSourceInput, slot: SlotView): SlotView {
+function hydrateSaveFilePokemonEditorSlot(
+	source: PokemonEditorSourceInput,
+	slot: SlotView
+): SlotView {
 	if (source.owner !== 'save-file' || slot.kind !== 'pokemon') {
 		return slot;
 	}
