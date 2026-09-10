@@ -7,9 +7,15 @@
 		initialView: SaveFileLedgerView;
 		initialCatalogues?: Readonly<Record<string, SaveFileLedgerCatalogue>>;
 		pendingTargets?: readonly string[];
+		getSessionFocusIdentity?: () => string | null;
 	}
 
-	let { initialView, initialCatalogues = {}, pendingTargets = [] }: Props = $props();
+	let {
+		initialView,
+		initialCatalogues = {},
+		pendingTargets = [],
+		getSessionFocusIdentity
+	}: Props = $props();
 	let view = $state(untrack(() => initialView));
 	let command = $state<SaveFileLedgerCommand | null>(null);
 	let catalogues = $state(untrack(() => initialCatalogues));
@@ -61,6 +67,7 @@
 	{command}
 	{catalogues}
 	pendingTargets={pending}
+	{getSessionFocusIdentity}
 	onCommandChange={(next) => (command = next)}
 	onRemoveItem={removeItem}
 />

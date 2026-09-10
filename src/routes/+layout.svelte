@@ -18,9 +18,12 @@
 	import { heightBandLock } from '$lib/pksx/height-band-lock';
 	import {
 		captureDestinationFocus,
+		isFocusableTarget,
 		resolveDestinationFocus,
+		type Destination,
 		type DestinationFocus
 	} from '$lib/pksx/destination-focus';
+	import { setDestinationFocusIdentityGetter } from '$lib/pksx/destination-focus-context.svelte';
 	import { getSavesStorage } from '$lib/pksx/saves-cache';
 	import { theme } from '$lib/pksx/theme.svelte';
 	import { createToastHost, setToastHost } from '$lib/pksx/toast/host.svelte';
@@ -36,12 +39,14 @@
 		type ControllerKey
 	} from '$lib/pksx/controller-input';
 
-	type Destination = 'boxes' | 'trainer' | 'bag' | 'saves' | 'settings';
 	let { children } = $props();
 	const summonedWorkflow = setSummonedWorkflowHost(createSummonedWorkflowHost());
 	const toastHost = setToastHost(createToastHost());
 	const storage = getSavesStorage();
 	const destinationFocus = new SvelteMap<Destination, DestinationFocus>();
+	setDestinationFocusIdentityGetter(
+		(destination) => destinationFocus.get(destination)?.identity ?? null
+	);
 	let mainMenuIndex = $state(0);
 	let firstRunChecked = false;
 	let skipNextFocusCapture = false;
@@ -438,13 +443,18 @@
 	}
 
 	function rememberControl(destination: Destination, control: HTMLElement, id: string) {
-		destinationFocus.set(destination, captureDestinationFocus(control, id));
+		const captured = captureDestinationFocus(
+			control,
+			id,
+			destinationFocus.get(destination) ?? null
+		);
+		if (captured) destinationFocus.set(destination, captured);
 	}
 
 	function resolveRememberedControl(route: HTMLElement, destination: Destination) {
 		const remembered = destinationFocus.get(destination);
 		if (!remembered) return null;
-		return resolveDestinationFocus(route, remembered, isFocusableTarget);
+		return resolveDestinationFocus(route, remembered);
 	}
 
 	function fallbackControl(route: HTMLElement, destination: Destination) {
@@ -468,17 +478,6 @@
 			route.querySelectorAll<HTMLElement>(
 				'button:not([disabled]), a[href], input:not([disabled]):not([type="hidden"]):not([type="file"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [data-destination-focus]'
 			)
-		);
-	}
-
-	function isFocusableTarget(target: HTMLElement | null): target is HTMLElement {
-		return Boolean(
-			target &&
-			!target.hidden &&
-			!target.closest('[inert]') &&
-			target.getClientRects().length > 0 &&
-			getComputedStyle(target).display !== 'none' &&
-			getComputedStyle(target).visibility !== 'hidden'
 		);
 	}
 

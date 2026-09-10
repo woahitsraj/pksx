@@ -4,7 +4,26 @@ export type DestinationFocus = {
 	fallbackIdentities: readonly string[];
 };
 
-export function captureDestinationFocus(control: HTMLElement, id: string): DestinationFocus {
+export type Destination = 'boxes' | 'trainer' | 'bag' | 'saves' | 'settings';
+
+export function isFocusableTarget(target: HTMLElement | null): target is HTMLElement {
+	return Boolean(
+		target &&
+		!target.hidden &&
+		!target.matches(':disabled') &&
+		!target.closest('[inert]') &&
+		target.getClientRects().length > 0 &&
+		getComputedStyle(target).display !== 'none' &&
+		getComputedStyle(target).visibility !== 'hidden'
+	);
+}
+
+export function captureDestinationFocus(
+	control: HTMLElement,
+	id: string,
+	previous: DestinationFocus | null = null
+): DestinationFocus | null {
+	if (control.closest('[data-destination-focus-memory="preserve"]')) return previous;
 	return {
 		id,
 		identity: control.dataset.destinationFocus ?? null,
@@ -12,20 +31,16 @@ export function captureDestinationFocus(control: HTMLElement, id: string): Desti
 	};
 }
 
-export function resolveDestinationFocus(
-	route: HTMLElement,
-	remembered: DestinationFocus,
-	isFocusable: (target: HTMLElement | null) => target is HTMLElement
-) {
+export function resolveDestinationFocus(route: HTMLElement, remembered: DestinationFocus) {
 	if (!remembered.identity) {
 		const target = document.getElementById(remembered.id);
-		return target && route.contains(target) && isFocusable(target) ? target : null;
+		return target && route.contains(target) && isFocusableTarget(target) ? target : null;
 	}
 
 	for (const identity of [remembered.identity, ...remembered.fallbackIdentities]) {
 		const target = Array.from(
 			route.querySelectorAll<HTMLElement>(`[data-destination-focus="${CSS.escape(identity)}"]`)
-		).find(isFocusable);
+		).find(isFocusableTarget);
 		if (target) return target;
 	}
 	return null;

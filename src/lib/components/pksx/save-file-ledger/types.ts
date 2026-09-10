@@ -55,6 +55,7 @@ export type SaveFileLedgerProps = {
 	drafts?: SaveFileLedgerDrafts;
 	pendingTargets?: readonly string[];
 	errors?: Readonly<Record<string, string>>;
+	getSessionFocusIdentity?: () => string | null;
 	onBackToBoxes?: () => void;
 	onRetryLoad?: () => void;
 	onRetryEditing?: () => void;

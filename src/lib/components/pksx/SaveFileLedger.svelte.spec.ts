@@ -5,7 +5,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vite
 import fixtureUrl from '../../../../test-fixtures/save-files/bl1ndbeholder-pokemon-saves/emerald-011020251345.sav?url';
 import SaveFileLedger from './SaveFileLedger.svelte';
 import SaveFileLedgerTestHarness from './save-file-ledger/SaveFileLedgerTestHarness.svelte';
-import { captureDestinationFocus, resolveDestinationFocus } from '$lib/pksx/destination-focus';
+import {
+	captureDestinationFocus,
+	isFocusableTarget,
+	resolveDestinationFocus
+} from '$lib/pksx/destination-focus';
 import type {
 	SaveFileLedgerCatalogue,
 	SaveFileLedgerProps,
@@ -84,7 +88,8 @@ function render(
 	const props = {
 		initialView: view,
 		initialCatalogues: options.catalogues ?? publicCatalogues,
-		pendingTargets: options.pendingTargets ?? []
+		pendingTargets: options.pendingTargets ?? [],
+		getSessionFocusIdentity: options.props?.getSessionFocusIdentity
 	};
 	mounted =
 		options.harness === false
@@ -108,12 +113,6 @@ function render(
 
 function target(identity: string) {
 	return host.querySelector<HTMLElement>(`[data-destination-focus="${identity}"]`)!;
-}
-
-function isRenderedControl(control: HTMLElement | null): control is HTMLElement {
-	return Boolean(
-		control && !(control as HTMLButtonElement).disabled && control.getClientRects().length
-	);
 }
 
 function press(targetElement: HTMLElement, key: string) {
@@ -216,6 +215,45 @@ describe('SaveFileLedger public fixture presentation', () => {
 		expect(bag.getBoundingClientRect().height).toBeCloseTo(
 			layout.getBoundingClientRect().height,
 			0
+		);
+	});
+
+	test('contains an open Add command and wrapped error at the 616 by 336 safe allocation', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const addConfirmIdentity = `pocket-${pocket.key}-add-confirm`;
+		render(publicFixtureView, {
+			width: 640,
+			height: 360,
+			harness: false,
+			props: {
+				errors: {
+					[addConfirmIdentity]:
+						'This item could not be added to the selected pocket. Choose another item and try again.'
+				},
+				command: {
+					kind: 'add-item',
+					pocketKey: pocket.key,
+					itemId: null,
+					quantity: '',
+					quantityError: 'Enter a whole number between one and the maximum quantity.'
+				}
+			}
+		});
+		await tick();
+		const frame = host.querySelector<HTMLElement>('.save-file-ledger-frame')!;
+		const command = host.querySelector<HTMLElement>('.add-command')!;
+		const pocketCommand = command.closest<HTMLElement>('.pocket-command')!;
+		expect(frame.clientWidth).toBe(616);
+		expect(frame.clientHeight).toBe(336);
+		expect(command.scrollWidth).toBeLessThanOrEqual(command.clientWidth);
+		expect(command.getBoundingClientRect().right).toBeLessThanOrEqual(
+			pocketCommand.getBoundingClientRect().right + 1
+		);
+		expect(command.querySelector('.field-error')?.getBoundingClientRect().height).toBeGreaterThan(
+			16
+		);
+		expect(target(addConfirmIdentity).getAttribute('aria-describedby')).toBe(
+			`${addConfirmIdentity}-error`
 		);
 	});
 
@@ -597,17 +635,17 @@ describe('SaveFileLedger semantic focus graph', () => {
 		const confirmMemory = captureDestinationFocus(
 			target(`item-${pocket.key}-${first.id}-confirm-remove`),
 			'captured-confirm'
-		);
+		)!;
 		await clearMounted();
 		render();
-		expect(resolveDestinationFocus(host, confirmMemory, isRenderedControl)).toBe(
+		expect(resolveDestinationFocus(host, confirmMemory)).toBe(
 			target(`item-${pocket.key}-${first.id}-remove`)
 		);
 
 		const removalMemory = captureDestinationFocus(
 			target(`item-${pocket.key}-${first.id}-remove`),
 			'captured-remove'
-		);
+		)!;
 		await clearMounted();
 		render(
 			projectionWithItems(
@@ -615,7 +653,7 @@ describe('SaveFileLedger semantic focus graph', () => {
 				pocket.items.filter((item) => item.id !== first.id)
 			)
 		);
-		expect(resolveDestinationFocus(host, removalMemory, isRenderedControl)).toBe(
+		expect(resolveDestinationFocus(host, removalMemory)).toBe(
 			target(`item-${pocket.key}-${second.id}-decrease`)
 		);
 
@@ -626,12 +664,176 @@ describe('SaveFileLedger semantic focus graph', () => {
 		const addMemory = captureDestinationFocus(
 			target(`pocket-${pocket.key}-add-quantity`),
 			'captured-add'
-		);
+		)!;
 		await clearMounted();
 		render();
-		expect(resolveDestinationFocus(host, addMemory, isRenderedControl)).toBe(
-			target(`pocket-${pocket.key}-add`)
+		expect(resolveDestinationFocus(host, addMemory)).toBe(target(`pocket-${pocket.key}-add`));
+	});
+
+	test('uses the shell focus predicate for disabled, inherited-disabled, and aria-disabled targets', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets.find(
+			(candidate) => candidate.items.length >= 2
+		)!;
+		const removed = pocket.items[0];
+		render(projectionWithItems(pocket.key, [removed]));
+		const memory = captureDestinationFocus(
+			target(`item-${pocket.key}-${removed.id}-remove`),
+			'captured-remove'
+		)!;
+		const failedCatalogues = {
+			...publicCatalogues,
+			[pocket.key]: { status: 'failed' as const, message: 'Catalogue unavailable.' }
+		};
+		await clearMounted();
+		render(projectionWithItems(pocket.key, []), { catalogues: failedCatalogues });
+		expect((target(`pocket-${pocket.key}-add`) as HTMLButtonElement).disabled).toBe(true);
+		expect(resolveDestinationFocus(host, memory)).toBe(target(`pocket-${pocket.key}-retry`));
+
+		const idOnly = document.createElement('button');
+		idOnly.id = 'disabled-id-only';
+		idOnly.disabled = true;
+		host.append(idOnly);
+		expect(
+			resolveDestinationFocus(host, { id: idOnly.id, identity: null, fallbackIdentities: [] })
+		).toBeNull();
+
+		const fieldset = document.createElement('fieldset');
+		fieldset.disabled = true;
+		const inherited = document.createElement('button');
+		fieldset.append(inherited);
+		host.append(fieldset);
+		expect(isFocusableTarget(inherited)).toBe(false);
+
+		const ariaDisabled = target(`pocket-${pocket.key}-retry`);
+		ariaDisabled.setAttribute('aria-disabled', 'true');
+		expect(isFocusableTarget(ariaDisabled)).toBe(true);
+	});
+
+	test('preserves shell content memory while recovery controls receive focus', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const itemIdentity = `item-${pocket.key}-${pocket.items[0].id}-remove`;
+		render();
+		let memory = captureDestinationFocus(target(itemIdentity), 'content-control')!;
+		await clearMounted();
+		render(
+			{ status: 'load-failed', message: 'Could not read the Save File.' },
+			{
+				props: { getSessionFocusIdentity: () => memory.identity }
+			}
 		);
+		await tick();
+		const retry = target('load-retry');
+		memory = captureDestinationFocus(retry, 'load-retry-control', memory)!;
+		expect(memory.identity).toBe(itemIdentity);
+		const back = target('back-boxes');
+		back.focus();
+		expect(captureDestinationFocus(back, 'back-control', memory)).toBe(memory);
+		expect(captureDestinationFocus(back, 'back-control')).toBeNull();
+
+		await clearMounted();
+		const remounted = render(
+			{ status: 'load-failed', message: 'Could not read the Save File again.' },
+			{ props: { getSessionFocusIdentity: () => memory.identity } }
+		);
+		await tick();
+		expect(document.activeElement).toBe(target('load-retry'));
+		remounted.setView(publicFixtureView);
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(target(itemIdentity));
+	});
+
+	test('restores exact session focus after load and editing recovery', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const itemIdentity = `item-${pocket.key}-${pocket.items[0].id}-remove`;
+		const harness = render(publicFixtureView, {
+			props: { getSessionFocusIdentity: () => itemIdentity }
+		});
+		target(itemIdentity).focus();
+		harness.setView({ status: 'loading' });
+		await tick();
+		harness.setView({ status: 'load-failed', message: 'Could not read the Save File.' });
+		await tick();
+		expect(document.activeElement).toBe(target('load-retry'));
+		harness.setView({ status: 'loading' });
+		await tick();
+		harness.setView({
+			status: 'load-failed',
+			message: 'Could not read the Save File.',
+			retrying: true
+		});
+		await tick();
+		expect(document.activeElement).toBe(target('load-retry'));
+		harness.setView(publicFixtureView);
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(target(itemIdentity));
+
+		await clearMounted();
+		const unavailable = render(
+			{
+				...publicFixtureView,
+				editingUnavailable: { message: 'Editor unavailable.' }
+			},
+			{ props: { getSessionFocusIdentity: () => itemIdentity } }
+		);
+		await tick();
+		expect(document.activeElement).toBe(target('editing-retry'));
+		unavailable.setView(publicFixtureView);
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(target(itemIdentity));
+	});
+
+	test('uses first editable focus when an exact recovery identity no longer exists', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets.find(
+			(candidate) => candidate.items.length >= 2
+		)!;
+		const removed = pocket.items[0];
+		const missingIdentity = `item-${pocket.key}-${removed.id}-remove`;
+		const harness = render(
+			{ status: 'load-failed', message: 'Could not read the Save File.' },
+			{ props: { getSessionFocusIdentity: () => missingIdentity } }
+		);
+		await tick();
+		harness.setView(
+			projectionWithItems(
+				pocket.key,
+				pocket.items.filter((item) => item.id !== removed.id)
+			)
+		);
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(target('trainer-name'));
+	});
+
+	test('restores local focus after load recovery without a shell getter', async () => {
+		const harness = render();
+		target('money-value').focus();
+		harness.setView({ status: 'load-failed', message: 'Could not read the Save File.' });
+		await tick();
+		harness.setView(publicFixtureView);
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(target('money-value'));
+	});
+
+	test('does not restore recovery focus over a shell takeover', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const itemIdentity = `item-${pocket.key}-${pocket.items[0].id}-remove`;
+		const harness = render(publicFixtureView, {
+			props: { getSessionFocusIdentity: () => itemIdentity }
+		});
+		const takeover = document.createElement('button');
+		takeover.textContent = 'Shell takeover';
+		document.body.append(takeover);
+		takeover.focus();
+		harness.setView({ status: 'load-failed', message: 'Could not read the Save File.' });
+		await tick();
+		harness.setView(publicFixtureView);
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(takeover);
 	});
 
 	test('replaces an open command and keeps only one command surface', async () => {
@@ -918,7 +1120,10 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 			'[role="group"][aria-label="Trainer gender"]'
 		)!;
 		expect(genderGroup.getAttribute('aria-busy')).toBe('true');
+		expect(target('trainer-gender-male').getAttribute('aria-disabled')).toBe('true');
+		expect(target('trainer-gender-female').getAttribute('aria-disabled')).toBe('true');
 		(target('trainer-gender-male') as HTMLButtonElement).click();
+		(target('trainer-gender-female') as HTMLButtonElement).click();
 		expect(onTrainerGenderSelect).not.toHaveBeenCalled();
 
 		await clearMounted();
@@ -971,6 +1176,67 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 			}
 		);
 		expect((target(removeIdentity) as HTMLButtonElement).disabled).toBe(true);
+	});
+
+	test('associates an Engine rejection with the Trainer gender group', () => {
+		render(publicFixtureView, {
+			harness: false,
+			props: { errors: { 'trainer-gender': 'This gender could not be saved.' } }
+		});
+		const group = host.querySelector<HTMLElement>('[role="group"][aria-label="Trainer gender"]')!;
+		expect(group.getAttribute('aria-describedby')).toBe('trainer-gender-error');
+		expect(document.getElementById('trainer-gender-error')?.textContent).toBe(
+			'This gender could not be saved.'
+		);
+	});
+
+	test('reconstructs discarded Add and Remove commands from confirmation pending keys', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const item = pocket.items[0];
+		const addIdentity = `pocket-${pocket.key}-add-confirm`;
+		const removeIdentity = `item-${pocket.key}-${item.id}-confirm-remove`;
+		const onCommandChange = vi.fn();
+		render(publicFixtureView, {
+			harness: false,
+			pendingTargets: [addIdentity, removeIdentity],
+			props: { onCommandChange }
+		});
+
+		const add = target(`pocket-${pocket.key}-add`) as HTMLButtonElement;
+		const remove = target(`item-${pocket.key}-${item.id}-remove`) as HTMLButtonElement;
+		expect(add.disabled).toBe(false);
+		expect(add.getAttribute('aria-busy')).toBe('true');
+		expect(add.getAttribute('aria-disabled')).toBe('true');
+		expect(remove.disabled).toBe(false);
+		expect(remove.getAttribute('aria-disabled')).toBe('true');
+		expect(remove.closest('.item-row')?.getAttribute('aria-busy')).toBe('true');
+		expect(host.querySelectorAll('[data-ledger-command]')).toHaveLength(0);
+		expect(host.querySelector('.spinner-graphic')).toBeNull();
+		add.click();
+		remove.click();
+		expect(onCommandChange).not.toHaveBeenCalled();
+		expect((target('money-value') as HTMLInputElement).readOnly).toBe(false);
+
+		await new Promise((resolve) => setTimeout(resolve, 550));
+		expect(add.parentElement?.querySelector('.spinner-graphic')).not.toBeNull();
+		expect(remove.closest('.item-row')?.querySelector('.spinner-graphic')).not.toBeNull();
+	});
+
+	test('associates an Engine rejection with the active Remove confirmation', () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const item = pocket.items[0];
+		const identity = `item-${pocket.key}-${item.id}-confirm-remove`;
+		render(publicFixtureView, {
+			harness: false,
+			props: {
+				command: { kind: 'remove-item', pocketKey: pocket.key, itemId: item.id },
+				errors: { [identity]: 'This item could not be removed from its pocket.' }
+			}
+		});
+		expect(target(identity).getAttribute('aria-describedby')).toBe(`${identity}-error`);
+		expect(document.getElementById(`${identity}-error`)?.textContent).toBe(
+			'This item could not be removed from its pocket.'
+		);
 	});
 
 	test('lets a pointer operator consume the raw draft without a second blur commit', async () => {
@@ -1260,5 +1526,21 @@ describe('SaveFileLedger states and feedback', () => {
 		)!;
 		expect(catalogueStatus.getAttribute('aria-busy')).toBe('true');
 		expect(catalogueStatus.querySelector('.spinner-graphic')).toBeNull();
+	});
+
+	test('associates a failed pocket catalogue with Add and a pocket-specific Retry name', () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		render(publicFixtureView, {
+			catalogues: {
+				...publicCatalogues,
+				[pocket.key]: { status: 'failed', message: 'Catalogue unavailable.' }
+			}
+		});
+		const errorId = `pocket-${pocket.key}-catalogue-error`;
+		expect(document.getElementById(errorId)?.textContent).toBe('Catalogue unavailable.');
+		expect(target(`pocket-${pocket.key}-add`).getAttribute('aria-describedby')).toBe(errorId);
+		const retry = target(`pocket-${pocket.key}-retry`);
+		expect(retry.getAttribute('aria-describedby')).toBe(errorId);
+		expect(retry.getAttribute('aria-label')).toBe(`Retry ${pocket.label} catalogue`);
 	});
 });

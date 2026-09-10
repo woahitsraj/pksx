@@ -17,6 +17,7 @@
 		drafts = {},
 		pendingTargets = [],
 		errors = {},
+		getSessionFocusIdentity,
 		onBackToBoxes,
 		onRetryLoad,
 		onRetryEditing,
@@ -40,14 +41,14 @@
 
 	let root: HTMLElement;
 	let rememberedTarget: string | null = null;
-	let targetBeforeEditingUnavailable: string | null = null;
+	let targetBeforeRecovery: string | null = null;
 	let deferredBlur: {
 		fieldIdentity: string;
 		commit: (reason: SaveFileLedgerCommitReason) => void;
 	} | null = null;
 	let pointerDraftOperator: string | null = null;
 	let previousCommand: SaveFileLedgerCommand | null = null;
-	let editingWasUnavailable = false;
+	let recoveryWasActive = false;
 	let lastItemFocus: { pocketKey: string; itemId: number; index: number } | null = null;
 	let destroying = false;
 
@@ -105,17 +106,13 @@
 		};
 	}
 
-	function reconcileTargets(
-		signature: string,
-		nextCommand: SaveFileLedgerCommand | null,
-		unavailable: boolean
-	) {
+	function reconcileTargets(signature: string, nextCommand: SaveFileLedgerCommand | null) {
 		void signature;
 		return (node: HTMLElement) => {
 			root = node;
 			let disposed = false;
 			void tick().then(() => {
-				if (!disposed) reconcileFocus(nextCommand, unavailable);
+				if (!disposed) reconcileFocus(nextCommand);
 			});
 			return () => {
 				disposed = true;
@@ -123,23 +120,50 @@
 		};
 	}
 
-	function reconcileFocus(nextCommand: SaveFileLedgerCommand | null, unavailable: boolean) {
+	function reconcileFocus(nextCommand: SaveFileLedgerCommand | null) {
 		if (!root) return;
 		const active = document.activeElement;
+		const recoveryIdentity =
+			view.status === 'load-failed'
+				? 'load-retry'
+				: view.status === 'ready' && view.editingUnavailable
+					? 'editing-retry'
+					: null;
+		const recoveryContinues = Boolean(
+			recoveryIdentity || (view.status === 'loading' && recoveryWasActive)
+		);
+		if (recoveryIdentity && !recoveryWasActive) {
+			targetBeforeRecovery = getSessionFocusIdentity?.() ?? rememberedTarget;
+		}
 		if (active instanceof HTMLElement && active !== document.body && !root.contains(active)) {
-			editingWasUnavailable = unavailable;
+			if (recoveryContinues) recoveryWasActive = true;
+			else if (view.status === 'ready') {
+				recoveryWasActive = false;
+				targetBeforeRecovery = null;
+			}
 			previousCommand = nextCommand;
 			return;
 		}
 
-		if (unavailable && !editingWasUnavailable) {
-			targetBeforeEditingUnavailable = rememberedTarget;
-			focusIdentity('editing-retry');
-		} else if (!unavailable && editingWasUnavailable) {
-			if (!focusIdentity(targetBeforeEditingUnavailable ?? '')) focusInitial();
-			targetBeforeEditingUnavailable = null;
+		if (recoveryIdentity) {
+			recoveryWasActive = true;
+			focusIdentity(recoveryIdentity);
+			previousCommand = nextCommand;
+			return;
 		}
-		editingWasUnavailable = unavailable;
+		if (view.status === 'loading' && recoveryWasActive) {
+			previousCommand = nextCommand;
+			return;
+		}
+		if (view.status === 'ready' && recoveryWasActive) {
+			const recoveryTarget = targetBeforeRecovery;
+			recoveryWasActive = false;
+			targetBeforeRecovery = null;
+			if (!focusIdentity(recoveryTarget ?? '')) focusInitial();
+			previousCommand = nextCommand;
+			refreshLastItemIndex();
+			return;
+		}
 
 		if (nextCommand && commandIdentity(nextCommand) !== commandIdentity(previousCommand)) {
 			focusIdentity(commandFirstIdentity(nextCommand));
@@ -491,6 +515,10 @@
 		return `pocket-${pocketKey}-retry`;
 	}
 
+	function catalogueErrorId(pocketKey: string) {
+		return `pocket-${pocketKey}-catalogue-error`;
+	}
+
 	function jumpIdentity(pocketKey: string) {
 		return `pocket-${pocketKey}-jump`;
 	}
@@ -552,7 +580,7 @@
 	onfocusin={handleFocusIn}
 	onfocusout={handleFocusOut}
 	{@attach ledgerRoot}
-	{@attach reconcileTargets(targetSignature, command, editingUnavailable !== null)}
+	{@attach reconcileTargets(targetSignature, command)}
 >
 	<div class="save-file-ledger-density pksx-density">
 		<div class="save-file-ledger-container">
@@ -576,7 +604,7 @@
 					>
 				</div>
 			{:else if view.status === 'load-failed'}
-				<div class="route-state" role="alert">
+				<div class="route-state" role="alert" data-destination-focus-memory="preserve">
 					<h1 id="save-file-ledger-title">Save File</h1>
 					<strong>Could not load this Save File</strong>
 					<p>{view.message}</p>
@@ -619,7 +647,7 @@
 					</header>
 
 					{#if view.editingUnavailable}
-						<div class="editing-unavailable" role="status">
+						<div class="editing-unavailable" role="status" data-destination-focus-memory="preserve">
 							<p><strong>Editing unavailable.</strong> {view.editingUnavailable.message}</p>
 							<button
 								type="button"
@@ -725,13 +753,16 @@
 										{#if view.projection.trainerProfile.genderSupported}
 											{@const maleBusy = isPending('trainer-gender-male')}
 											{@const femaleBusy = isPending('trainer-gender-female')}
+											{@const genderBusy = maleBusy || femaleBusy}
+											{@const genderError = errors['trainer-gender']}
 											<div class="field-row" data-ledger-row="trainer-gender">
 												<span>Gender</span>
 												<div
 													class="segmented"
 													role="group"
 													aria-label="Trainer gender"
-													aria-busy={maleBusy || femaleBusy}
+													aria-busy={genderBusy}
+													aria-describedby={genderError ? 'trainer-gender-error' : undefined}
 												>
 													<button
 														type="button"
@@ -742,10 +773,10 @@
 															: undefined}
 														data-destination-focus="trainer-gender-male"
 														aria-pressed={view.projection.trainerProfile.gender === 'male'}
-														aria-disabled={maleBusy}
+														aria-disabled={genderBusy}
 														disabled={Boolean(editingUnavailable)}
 														onclick={() => {
-															if (!maleBusy) onTrainerGenderSelect?.('male');
+															if (!genderBusy) onTrainerGenderSelect?.('male');
 														}}>Male</button
 													>
 													<button
@@ -753,17 +784,19 @@
 														data-ledger-control
 														data-destination-focus="trainer-gender-female"
 														aria-pressed={view.projection.trainerProfile.gender === 'female'}
-														aria-disabled={femaleBusy}
+														aria-disabled={genderBusy}
 														disabled={Boolean(editingUnavailable)}
 														onclick={() => {
-															if (!femaleBusy) onTrainerGenderSelect?.('female');
+															if (!genderBusy) onTrainerGenderSelect?.('female');
 														}}>Female</button
 													>
-													<DelayedSpinner
-														active={maleBusy || femaleBusy}
-														label="Updating Trainer gender"
-													/>
+													<DelayedSpinner active={genderBusy} label="Updating Trainer gender" />
 												</div>
+												{#if genderError}<small
+														id="trainer-gender-error"
+														class="field-error"
+														aria-live="polite">{genderError}</small
+													>{/if}
 											</div>
 										{/if}
 									</section>
@@ -908,6 +941,8 @@
 											{#each pockets as pocket (pocket.key)}
 												{@const catalogue = catalogueFor(pocket.key)}
 												{@const options = availableOptions(pocket.key)}
+												{@const addConfirmIdentity = `pocket-${pocket.key}-add-confirm`}
+												{@const addPending = isPending(addConfirmIdentity)}
 												<section
 													class="pocket-section"
 													aria-labelledby={`pocket-${pocket.key}-title`}
@@ -932,8 +967,9 @@
 															{@const commandQuantityMax =
 																selectedOption?.maxQuantity ??
 																Math.max(1, ...options.map((option) => option.maxQuantity))}
-															{@const addConfirmIdentity = `pocket-${pocket.key}-add-confirm`}
-															{@const addBusy = isPending(addConfirmIdentity)}
+															{@const addBusy = addPending}
+															{@const addCommandError = errors[addConfirmIdentity]}
+															{@const addCommandErrorId = `${addConfirmIdentity}-error`}
 															{@const addFocusFallbacks = JSON.stringify([addIdentity(pocket.key)])}
 															<div class="add-command" data-ledger-command aria-busy={addBusy}>
 																<label>
@@ -990,6 +1026,7 @@
 																	data-destination-fallbacks={addFocusFallbacks}
 																	data-destination-focus={addConfirmIdentity}
 																	aria-disabled={addBusy}
+																	aria-describedby={addCommandError ? addCommandErrorId : undefined}
 																	disabled={command.itemId === null || Boolean(editingUnavailable)}
 																	onclick={() => {
 																		if (!addBusy) onAddItem?.(command);
@@ -1004,6 +1041,11 @@
 																	onclick={() => onCommandChange?.(null)}>Cancel</button
 																>
 																<DelayedSpinner active={addBusy} label="Adding item" />
+																{#if addCommandError}<small
+																		id={addCommandErrorId}
+																		class="field-error"
+																		aria-live="polite">{addCommandError}</small
+																	>{/if}
 															</div>
 														{:else}
 															<button
@@ -1014,12 +1056,23 @@
 																	? ''
 																	: undefined}
 																data-destination-focus={addIdentity(pocket.key)}
+																aria-busy={addPending}
+																aria-disabled={addPending}
+																aria-describedby={catalogue.status === 'failed'
+																	? catalogueErrorId(pocket.key)
+																	: undefined}
 																disabled={Boolean(editingUnavailable) ||
 																	pocket.full ||
 																	catalogue.status !== 'ready' ||
 																	options.length === 0}
-																onclick={() => openAddItem(pocket.key)}>Add Item</button
+																onclick={() => {
+																	if (!addPending) openAddItem(pocket.key);
+																}}>Add Item</button
 															>
+															<DelayedSpinner
+																active={addPending}
+																label={`Adding item to ${pocket.label}`}
+															/>
 														{/if}
 
 														<div
@@ -1049,7 +1102,9 @@
 																	<DelayedSpinner active label={`Loading ${pocket.label} items`} />
 																{/if}
 															{:else if catalogue.status === 'failed'}
-																<span class="field-error">{catalogue.message}</span>
+																<span id={catalogueErrorId(pocket.key)} class="field-error"
+																	>{catalogue.message}</span
+																>
 																<button
 																	type="button"
 																	data-ledger-control
@@ -1058,6 +1113,8 @@
 																		? ''
 																		: undefined}
 																	data-destination-focus={retryIdentity(pocket.key)}
+																	aria-label={`Retry ${pocket.label} catalogue`}
+																	aria-describedby={catalogueErrorId(pocket.key)}
 																	onclick={() => onRetryCatalogue?.(pocket.key)}
 																	>Retry catalogue</button
 																>
@@ -1097,6 +1154,8 @@
 																	'confirm-remove'
 																)}
 																{@const removeBusy = isPending(removeConfirmIdentity)}
+																{@const removeCommandError = errors[removeConfirmIdentity]}
+																{@const removeCommandErrorId = `${removeConfirmIdentity}-error`}
 																{@const focusFallbacks = JSON.stringify(
 																	itemFocusFallbacks(pocket.key, item.id)
 																)}
@@ -1130,6 +1189,9 @@
 																				data-destination-fallbacks={removeFocusFallbacks}
 																				data-destination-focus={removeConfirmIdentity}
 																				aria-disabled={removeBusy}
+																				aria-describedby={removeCommandError
+																					? removeCommandErrorId
+																					: undefined}
 																				disabled={Boolean(editingUnavailable)}
 																				onclick={() => {
 																					if (!removeBusy) onRemoveItem?.(command);
@@ -1151,6 +1213,11 @@
 																				active={removeBusy}
 																				label={`Removing ${item.name}`}
 																			/>
+																			{#if removeCommandError}<small
+																					id={removeCommandErrorId}
+																					class="field-error"
+																					aria-live="polite">{removeCommandError}</small
+																				>{/if}
 																		</div>
 																	{:else}
 																		<div
@@ -1265,15 +1332,18 @@
 																					item.id,
 																					'remove'
 																				)}
-																				aria-disabled={itemBusy}
+																				aria-disabled={itemBusy || removeBusy}
 																				disabled={Boolean(editingUnavailable)}
 																				onclick={() => {
-																					if (!itemBusy) openRemoveItem(pocket.key, item.id);
+																					if (!itemBusy && !removeBusy)
+																						openRemoveItem(pocket.key, item.id);
 																				}}>Remove</button
 																			>
 																			<DelayedSpinner
-																				active={itemBusy}
-																				label={`Updating ${item.name}`}
+																				active={itemBusy || removeBusy}
+																				label={removeBusy
+																					? `Removing ${item.name}`
+																					: `Updating ${item.name}`}
 																			/>
 																		</div>
 																		{#if quantityError}<small
