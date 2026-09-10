@@ -4391,7 +4391,7 @@ test('Saves imports distinct cards, opens cards and menus, and preserves failure
 	await expect(alphaCard).toContainText('7 Pokemon');
 	await expect(page.locator('.save-card.active').getByText('Active')).toBeVisible();
 
-	await expect(page.locator('body')).toBeFocused();
+	await expect(grid).toBeFocused();
 	await page.keyboard.press('ArrowRight');
 	await expect(grid).toHaveAttribute('aria-activedescendant', 'saves-target-pokemon-storage');
 	await page.keyboard.press('x');
