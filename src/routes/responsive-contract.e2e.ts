@@ -729,7 +729,7 @@ test('[RESP-1][RESP-2] 559/560 reflow preserves pane, focus, Carry, and Menu ide
 	skipNonChromium(testInfo);
 	await importPublicSave(page);
 	await page.setViewportSize({ width: 640, height: 559 });
-	await page.goto('/');
+	await chooseMainMenu(page, 'Boxes');
 	await setSafeArea(page, { top: 10, right: 10, bottom: 10, left: 10 });
 	await expect(page.locator('[data-destination-root="boxes"]')).toHaveAttribute(
 		'data-initial-state',
@@ -836,7 +836,7 @@ test('[LARGE-1][SURFACE-1] large caps and representative surfaces use bounded ge
 	skipNonChromium(testInfo);
 	await importPublicSave(page);
 	await page.setViewportSize({ width: 1280, height: 800 });
-	await page.goto('/');
+	await chooseMainMenu(page, 'Boxes');
 	await setSafeArea(page, { top: 0, right: 0, bottom: 0, left: 0 });
 	await expect(page.locator('[data-destination-root="boxes"]')).toHaveAttribute(
 		'data-initial-state',
