@@ -315,6 +315,10 @@ async function expectControllerHighlights(page: Page, scope: Locator) {
 
 async function importEmeraldThroughSaves(page: Page) {
 	await page.goto('/saves');
+	await expect(page.locator('[data-destination-root="saves"]')).toHaveAttribute(
+		'data-initial-state',
+		'ready'
+	);
 	await page.getByLabel('Import Save File').setInputFiles(emeraldFixturePath);
 	await expect(page.getByText('011020251345.sav imported and made active.')).toBeVisible({
 		timeout: 15000
@@ -627,6 +631,51 @@ async function shellExtents(page: Page) {
 			shellWidth: shell?.scrollWidth ?? 0
 		};
 	});
+}
+
+async function expectLedgerShellGeometry(
+	page: Page,
+	destination: 'trainer' | 'bag',
+	insets: SafeArea
+) {
+	await expect
+		.poll(() =>
+			page.evaluate(
+				({ routeDestination, safeArea }) => {
+					const root = document.querySelector<HTMLElement>(
+						`[data-destination-root="${routeDestination}"]`
+					);
+					const shell = document.querySelector<HTMLElement>('.app-shell');
+					const focus = document.activeElement as HTMLElement | null;
+					const scrollport = document.querySelector<HTMLElement>(
+						`[data-testid="${routeDestination}-ledger-scrollport"]`
+					);
+					if (!root || !shell || !focus || !scrollport) return false;
+					const bounds = root.getBoundingClientRect();
+					const target = focus.getBoundingClientRect();
+					return (
+						bounds.left >= safeArea.left &&
+						bounds.top >= safeArea.top &&
+						bounds.right <= innerWidth - safeArea.right &&
+						bounds.bottom <= innerHeight - safeArea.bottom &&
+						document.documentElement.scrollWidth <= innerWidth &&
+						document.documentElement.scrollHeight <= innerHeight &&
+						document.body.scrollWidth <= innerWidth &&
+						document.body.scrollHeight <= innerHeight &&
+						shell.scrollWidth <= shell.clientWidth &&
+						shell.scrollHeight <= shell.clientHeight &&
+						getComputedStyle(scrollport).overflowY === 'auto' &&
+						root.contains(focus) &&
+						target.left >= bounds.left &&
+						target.top >= bounds.top &&
+						target.right <= bounds.right &&
+						target.bottom <= bounds.bottom
+					);
+				},
+				{ routeDestination: destination, safeArea: insets }
+			)
+		)
+		.toBe(true);
 }
 
 async function boxLayoutMetrics(page: Page) {
@@ -3151,17 +3200,25 @@ test('controller focus framework covers every interactive surface', async ({ pag
 
 	await chooseMainMenu(page, 'Trainer');
 	await expect(page).toHaveURL(/\/trainer$/);
-	await expect(page.locator('.field-sidebar nav button').first()).toBeVisible();
+	const trainerRoot = page.locator('[data-destination-root="trainer"]');
+	await expect(trainerRoot).toHaveAttribute('data-initial-state', 'ready');
 	await pressController(page, 'ArrowDown');
-	await expect(page.locator('.save-file-route').locator(':focus')).toHaveCount(1);
-	await expectControllerHighlights(page, page.locator('.save-file-route'));
-	await page.getByRole('button', { name: /Money/ }).first().click();
-	await pressController(page, 'ArrowDown');
-	await expectControllerHighlights(page, page.locator('.save-file-route'));
+	await expect(trainerRoot.locator(':focus')).toHaveCount(1);
+	await expectControllerHighlights(page, trainerRoot);
+	const money = page.getByRole('spinbutton', { name: 'Money' });
+	await money.focus();
+	await pressController(page, 'ArrowRight');
+	await expect(page.getByRole('button', { name: 'Increase Money' })).toBeFocused();
+	await expect(page.getByRole('button', { name: 'Increase Money' })).toHaveCSS(
+		'outline-style',
+		'solid'
+	);
 	await chooseMainMenu(page, 'Bag');
 	await expect(page).toHaveURL(/\/bag$/);
+	const bagRoot = page.locator('[data-destination-root="bag"]');
+	await expect(bagRoot).toHaveAttribute('data-initial-state', 'ready');
 	await pressController(page, 'ArrowDown');
-	await expectControllerHighlights(page, page.locator('.save-file-route'));
+	await expectControllerHighlights(page, bagRoot);
 
 	await chooseMainMenu(page, 'Saves');
 	await expect(page).toHaveURL(/\/saves$/);
@@ -3630,72 +3687,65 @@ test('imports the Emerald Save File, renders engine data, and exports serialized
 });
 
 test('Trainer and Bag destinations apply their Save File edits', async ({ page }) => {
-	await page.setViewportSize({ width: 1280, height: 800 });
-	await openEmptySaves(page);
 	await importEmeraldThroughSaves(page);
+	await page.setViewportSize({ width: 1280, height: 800 });
 	await chooseMainMenu(page, 'Trainer');
 	await expect(page).toHaveURL(/\/trainer$/);
 
-	await expect(page.getByRole('heading', { name: 'Trainer profile' })).toBeVisible();
-	const applyButton = page.getByRole('button', { name: /Apply edits/ });
-	await expect(applyButton.locator('kbd')).toHaveCount(0);
-	const trainerName = page.locator('#save-file-trainer-name');
+	const trainerName = page.getByLabel('Trainer name');
 	await expect(trainerName).toHaveValue('DIXIE');
-	await trainerName.fill('');
-	await trainerName.pressSequentially('kyx');
-	await expect(trainerName).toHaveValue('kyx');
-	await expect(page.getByRole('dialog', { name: 'Main Menu' })).toBeHidden();
-	await pressController(page, 'Menu');
-	await expect(page.getByRole('dialog', { name: 'Main Menu' })).toBeVisible();
-	await pressController(page, 'Menu');
-	await expect(trainerName).toBeFocused();
 	await trainerName.fill('RAJ');
-	await expect(page.getByText('1 staged edit')).toBeVisible();
-
-	const fields = page.getByLabel('Trainer fields');
-	const trainerSection = fields.getByRole('button', { name: /Trainer profile/ });
-	const moneySection = fields.getByRole('button', { name: /Money/ });
-	await trainerSection.focus();
-	await pressController(page, 'ArrowDown');
-	await expect(moneySection).toBeFocused();
-	await moneySection.click();
-	await expect(page.getByRole('heading', { name: 'Money', exact: true })).toBeVisible();
-	await page.locator('#save-file-money').fill('12345');
-	await expect(page.getByText('Current balance:')).toBeVisible();
+	await trainerName.press('Enter');
+	const money = page.getByRole('spinbutton', { name: 'Money' });
+	await money.fill('12345');
+	await money.press('Enter');
+	await expect(page.getByText(/staged edit/i)).toHaveCount(0);
+	await expect(page.getByRole('button', { name: /Apply edits|Cancel all/i })).toHaveCount(0);
 
 	await chooseMainMenu(page, 'Bag');
-	await expect(page.getByRole('heading', { name: 'Inventory' })).toBeVisible();
-	const quantity = page.locator('.item-list article:not(.new-item) input[type="number"]').first();
-	const originalQuantity = Number(await quantity.inputValue());
-	const quantityLabel = await quantity.getAttribute('aria-label');
-	await quantity.fill(String(originalQuantity + 1));
-	await quantity.press('Tab');
+	const firstPocket = page.locator('.pocket-section').first();
+	const itemRows = firstPocket.locator('.item-row');
+	await expect(itemRows.first()).toBeVisible({ timeout: 15000 });
+	const originalItemCount = await itemRows.count();
+	const addLauncher = firstPocket.getByRole('button', { name: 'Add Item', exact: true });
+	await expect(addLauncher).toBeVisible({ timeout: 15000 });
+	await addLauncher.click();
+	const addCommand = firstPocket.locator('[data-ledger-command]');
+	const itemSelect = addCommand.getByRole('combobox', { name: /Item to add to/ });
+	await itemSelect.selectOption({ index: 1 });
+	await addCommand.getByRole('button', { name: 'Add Item', exact: true }).click();
+	await expect(addCommand).toHaveCount(0, { timeout: 15000 });
+	await expect(itemRows).toHaveCount(originalItemCount + 1);
 
-	const addItem = page.getByRole('combobox', { name: /Add an item to/ });
-	await addItem.click();
-	const itemSearch = page.getByRole('searchbox', { name: /Search items/ });
-	await expect(itemSearch).toBeVisible();
-	await page.getByRole('option').first().click();
-	await page.getByRole('button', { name: '+ Add', exact: true }).click();
-	await expect(page.locator('.item-list article.new-item')).toHaveCount(1);
-	await page.locator('.item-list article:not(.new-item) button.remove').nth(1).click();
+	const quantity = firstPocket.locator('input[data-ledger-draft="item-quantity"]').first();
+	const originalQuantity = Number(await quantity.inputValue());
+	const maximumQuantity = Number(await quantity.getAttribute('max'));
+	const committedQuantity =
+		originalQuantity === maximumQuantity ? originalQuantity - 1 : originalQuantity + 1;
+	const quantityLabel = await quantity.getAttribute('aria-label');
+	await quantity.fill(String(committedQuantity));
+	await quantity.press('Enter');
+	await expect(quantity).not.toHaveAttribute('aria-disabled', 'true', { timeout: 15000 });
+
+	const removable = itemRows.nth(1);
+	await removable.getByRole('button', { name: 'Remove', exact: true }).click();
+	await removable.getByRole('button', { name: 'Confirm', exact: true }).click();
+	await expect(itemRows).toHaveCount(originalItemCount, { timeout: 15000 });
 
 	await chooseMainMenu(page, 'Trainer');
 	await expect(trainerName).toHaveValue('RAJ');
-	await page.getByLabel('Trainer fields').getByRole('button', { name: /Money/ }).click();
-	await expect(page.locator('#save-file-money')).toHaveValue('12345');
-	await expect(page.getByText('5 staged edits')).toBeVisible();
-	await page.getByRole('button', { name: /Apply edits/ }).click();
-	await expect(page.getByText('Save File edits applied.')).toBeVisible({ timeout: 15000 });
+	await expect(money).toHaveValue('12345');
 	expect(await backupCount(page)).toBe(1);
-	await expect(page.getByText('Changes ready to export.')).toBeVisible();
 
 	await chooseMainMenu(page, 'Bag');
-	await expect(page.getByLabel(quantityLabel!)).toHaveValue(String(originalQuantity + 1));
+	await expect(page.getByRole('spinbutton', { name: quantityLabel! })).toHaveValue(
+		String(committedQuantity)
+	);
 	await chooseMainMenu(page, 'Trainer');
 	await expect(trainerName).toHaveValue('RAJ');
 	await trainerName.fill('TEMP');
-	await page.getByRole('button', { name: 'Cancel all' }).click();
+	await pressController(page, 'Escape');
+	await expect(page).toHaveURL(/\/trainer$/);
 	await expect(trainerName).toHaveValue('RAJ');
 
 	await chooseMainMenu(page, 'Boxes');
@@ -3714,6 +3764,114 @@ test('Trainer and Bag destinations apply their Save File edits', async ({ page }
 	const exported = await readFile(await download.path());
 	const fixture = await readFile(emeraldFixturePath);
 	expect(exported).not.toEqual(fixture);
+});
+
+test('pending Money reaches Boxes Export and the exported bytes contain the confirmed edit', async ({
+	page
+}) => {
+	await installWorkspaceResponseHold(page);
+	await importEmeraldThroughSaves(page);
+	await chooseMainMenu(page, 'Trainer');
+	const money = page.getByRole('spinbutton', { name: 'Money' });
+	await expect(money).toBeVisible({ timeout: 15000 });
+	await holdWorkspaceResponses(page, 1, 'applySaveFileEditOperation');
+	await money.fill('12345');
+	await money.press('Enter');
+	await waitForHeldWorkspaceResponses(page);
+	await expect(money).toHaveAttribute('readonly', '');
+	await expect(money).toHaveAttribute('aria-disabled', 'true');
+
+	await pressController(page, 'Escape');
+	await expect(page).toHaveURL(/\/$/);
+	const activeSaveMenu = page.getByRole('button', {
+		name: 'Open Box Menu for emerald-011020251345.sav'
+	});
+	await expect(activeSaveMenu).toBeVisible({ timeout: 15000 });
+	await activeSaveMenu.click();
+	const boxMenu = page.getByRole('dialog', { name: 'Box Menu' });
+	const downloadPromise = page.waitForEvent('download');
+	await boxMenu.getByRole('button', { name: 'Export' }).click();
+	await expect(boxMenu).toBeVisible();
+	await expect(page.locator('.toast-success', { hasText: 'Export ready' })).toHaveCount(0);
+
+	await releaseWorkspaceResponses(page);
+	const download = await downloadPromise;
+	const exported = await readFile(await download.path());
+	await expect(boxMenu).toBeHidden();
+
+	await page.goto('/saves');
+	await expect(page.locator('[data-destination-root="saves"]')).toHaveAttribute(
+		'data-initial-state',
+		'ready'
+	);
+	await page.getByLabel('Import Save File').setInputFiles({
+		name: 'confirmed-money.sav',
+		mimeType: 'application/octet-stream',
+		buffer: exported
+	});
+	await expect(page.getByText('confirmed-money.sav imported and made active.')).toBeVisible({
+		timeout: 15000
+	});
+	await chooseMainMenu(page, 'Trainer');
+	await expect(page.getByRole('spinbutton', { name: 'Money' })).toHaveValue('12345');
+});
+
+test('a remounted Trainer reconstructs pending Money and adopts its published result', async ({
+	page
+}) => {
+	await installWorkspaceResponseHold(page);
+	await importEmeraldThroughSaves(page);
+	await chooseMainMenu(page, 'Trainer');
+	let money = page.getByRole('spinbutton', { name: 'Money' });
+	await expect(money).toBeVisible({ timeout: 15000 });
+	const acceptedMoney = await money.inputValue();
+	await holdWorkspaceResponses(page, 1, 'applySaveFileEditOperation');
+	await money.fill('23456');
+	await money.press('Enter');
+	await waitForHeldWorkspaceResponses(page);
+
+	await pressController(page, 'Escape');
+	await expect(page).toHaveURL(/\/$/);
+	await chooseMainMenu(page, 'Trainer');
+	money = page.getByRole('spinbutton', { name: 'Money' });
+	await expect(money).toHaveValue(acceptedMoney);
+	await expect(money).toHaveAttribute('readonly', '');
+	await expect(money).toHaveAttribute('aria-disabled', 'true');
+
+	await releaseWorkspaceResponses(page);
+	await expect(money).toHaveValue('23456', { timeout: 15000 });
+	await expect(money).not.toHaveAttribute('readonly', '');
+	await expect(money).not.toHaveAttribute('aria-disabled', 'true');
+});
+
+test('Trainer and Bag stay inside the Safe Canvas and keep focused targets visible on rotation', async ({
+	page
+}) => {
+	await importEmeraldThroughSaves(page);
+	await page.setViewportSize({ width: 640, height: 360 });
+	const landscapeInsets = { top: 12, right: 12, bottom: 12, left: 12 };
+	await setSafeArea(page, landscapeInsets);
+	await chooseMainMenu(page, 'Trainer');
+	const money = page.getByRole('spinbutton', { name: 'Money' });
+	await money.focus();
+	await expectLedgerShellGeometry(page, 'trainer', landscapeInsets);
+
+	await page.setViewportSize({ width: 360, height: 640 });
+	const portraitInsets = { top: 0, right: 0, bottom: 96, left: 0 };
+	await setSafeArea(page, portraitInsets);
+	await expect(money).toBeFocused();
+	await expectLedgerShellGeometry(page, 'trainer', portraitInsets);
+
+	await chooseMainMenu(page, 'Bag');
+	const quantity = page.locator('input[data-ledger-draft="item-quantity"]').last();
+	await expect(quantity).toBeVisible({ timeout: 15000 });
+	await quantity.focus();
+	await expectLedgerShellGeometry(page, 'bag', portraitInsets);
+
+	await page.setViewportSize({ width: 640, height: 360 });
+	await setSafeArea(page, landscapeInsets);
+	await expect(quantity).toBeFocused();
+	await expectLedgerShellGeometry(page, 'bag', landscapeInsets);
 });
 
 test('Pokemon Editor changes level through Apply and keeps editor focus', async ({ page }) => {
@@ -4046,15 +4204,16 @@ test('Backup Browser owns active Save File recovery, fresh focus, guarded Back, 
 	await chooseMainMenu(page, 'Settings');
 	await page.getByRole('button', { name: 'Use dark theme' }).click();
 	await chooseMainMenu(page, 'Trainer');
-	const saveFileLauncher = page.getByRole('button', { name: 'Browse Backups' });
-	await expect(saveFileLauncher).toBeVisible({ timeout: 15000 });
-	await saveFileLauncher.click();
+	const trainerName = page.getByLabel('Trainer name');
+	await expect(trainerName).toBeVisible({ timeout: 15000 });
+	await trainerName.focus();
+	await chooseMainMenu(page, 'Backup Browser');
 	await expect(page).toHaveURL(/\/trainer$/);
 	await expect(
 		page.locator('.app-shell.dark').getByRole('dialog', { name: 'Backup Browser' })
 	).toBeVisible();
 	await pressController(page, 'Escape');
-	await expect(saveFileLauncher).toBeFocused();
+	await expect(trainerName).toBeFocused();
 
 	await page.goto('/');
 	await page.locator('#box-grid').focus();

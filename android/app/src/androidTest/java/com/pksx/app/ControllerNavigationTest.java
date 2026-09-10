@@ -495,15 +495,19 @@ public class ControllerNavigationTest {
         chooseMainMenu("Trainer");
         awaitJavaScript("location.pathname.endsWith('/trainer')");
 
-        awaitJavaScript("document.querySelector('.field-sidebar nav button') !== null");
-        runJavaScript("document.querySelector('.field-sidebar nav button').focus()");
+        awaitJavaScript(
+            "document.querySelector('[data-destination-root=\"trainer\"]')"
+                + "?.dataset.initialState === 'ready'"
+                + " && document.querySelector('[data-destination-focus=\"trainer-name\"]') !== null"
+        );
+        runJavaScript("document.querySelector('[data-destination-focus=\"trainer-name\"]').focus()");
         pressGamepadKey(
             KeyEvent.KEYCODE_DPAD_DOWN,
-            "document.activeElement !== document.querySelector('.field-sidebar nav button')"
-                + " && document.activeElement?.closest('.save-file-route') !== null"
+            "document.activeElement?.dataset.destinationFocus !== 'trainer-name'"
+                + " && document.activeElement?.closest('[data-destination-root=\"trainer\"]') !== null"
                 + " && getComputedStyle(document.activeElement).outlineStyle === 'solid'"
         );
-        assertAllFocusableControlsHighlighted(".save-file-route");
+        assertAllFocusableControlsHighlighted("[data-destination-root=\"trainer\"]");
 
         chooseMainMenu("Saves");
         awaitJavaScript(
@@ -606,13 +610,13 @@ public class ControllerNavigationTest {
                 "location.pathname.endsWith('/trainer')"
                     + " && document.querySelector('[data-destination-root=\"trainer\"]')"
                     + "?.dataset.initialState === 'ready'"
-                    + " && document.querySelector('#save-file-trainer-name')"
+                    + " && document.querySelector('[data-destination-focus=\"trainer-name\"]')"
             );
             activityRule
                 .getScenario()
                 .onActivity(activity -> activity.getBridge().getWebView().requestFocus());
             runJavaScript(
-                "(() => { const input = document.querySelector('#save-file-trainer-name');"
+                "(() => { const input = document.querySelector('[data-destination-focus=\"trainer-name\"]');"
                     + " input.focus(); input.click(); return document.activeElement === input; })()"
             );
             activityRule
@@ -630,7 +634,7 @@ public class ControllerNavigationTest {
                     + " && document.documentElement.dataset.pksxHeightBandLock === 'tall'"
                     + " && getComputedStyle(document.querySelector('.app-shell'))"
                     + ".getPropertyValue('--pksx-height-band').trim() === 'tall'"
-                    + " && document.activeElement?.id === 'save-file-trainer-name'"
+                    + " && document.activeElement?.dataset.destinationFocus === 'trainer-name'"
             );
             String withImeHeight = runJavaScript("innerHeight");
             Log.i(
@@ -638,7 +642,7 @@ public class ControllerNavigationTest {
                 "IME fixture measured before=" + beforeImeHeight + " withIme=" + withImeHeight
             );
 
-            runJavaScript("document.querySelector('button[aria-label=\"Back to boxes\"]').focus()");
+            runJavaScript("document.querySelector('button[aria-label=\"Open Main Menu\"]').focus()");
             hideIme();
             awaitJavaScript(
                 "document.documentElement.dataset.pksxHeightBandLock === undefined"

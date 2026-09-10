@@ -392,80 +392,88 @@ test('Trainer and Bag keep independent semantic focus within their separate dest
 	});
 	await choose(page, 'Trainer');
 
-	const trainerName = page.locator('#save-file-trainer-name');
+	const trainerRoot = page.locator('[data-destination-root="trainer"]');
+	const trainerName = page.getByLabel('Trainer name');
 	await expect(trainerName).toHaveValue('DIXIE', { timeout: 15000 });
-	await expect(
-		page.getByLabel('Trainer fields').getByRole('button', { name: /Trainer profile/ })
-	).toBeFocused();
-	await expect(page.getByLabel('Trainer fields').getByRole('button', { name: /Bag/ })).toHaveCount(
-		0
-	);
+	await expect(trainerName).toBeFocused();
+	await expect(trainerRoot.getByRole('heading', { name: 'Bag', exact: true })).toHaveCount(0);
+	await expect(trainerRoot.getByText('emerald-011020251345.sav')).toHaveCount(1);
+
 	await page.setViewportSize({ width: 390, height: 700 });
 	await page.reload();
 	await expectDestinationReady(page, 'trainer');
-	const mobileSections = page.getByLabel('Trainer sections');
-	await expect(mobileSections.getByRole('button', { name: 'Trainer' })).toBeFocused();
-	await mobileSections.getByRole('button', { name: 'Money' }).focus();
+	await expect(trainerName).toBeFocused();
+	const money = page.getByRole('spinbutton', { name: 'Money' });
+	await money.focus();
+	const moneyId = await money.getAttribute('id');
+	expect(moneyId).toBe('pksx-trainer-money-value');
 	await page.setViewportSize({ width: 1280, height: 800 });
+	await expect(money).toBeFocused();
 	await page.keyboard.press('Control+k');
 	await page
 		.getByRole('dialog', { name: 'Main Menu' })
 		.getByRole('button', { name: /^Trainer/ })
 		.click();
-	await expect(
-		page.getByLabel('Trainer fields').getByRole('button', { name: /Money/ })
-	).toBeFocused();
-	await trainerName.fill('RAJ');
-	const cancelAll = page.getByRole('button', { name: 'Cancel all' });
-	await cancelAll.focus();
-	await expect(cancelAll).toHaveAttribute('id', 'pksx-trainer-cancel-all');
-	await page.keyboard.press('Control+k');
-	await page
-		.getByRole('dialog', { name: 'Main Menu' })
-		.getByRole('button', { name: /^Trainer/ })
-		.click();
-	await expect(cancelAll).toBeFocused();
-	await page.getByLabel('Trainer fields').getByRole('button', { name: /Money/ }).focus();
+	await expect(money).toBeFocused();
 
 	await choose(page, 'Bag');
-	await expect(
-		page.getByLabel('Bag fields').getByRole('button', { name: /Trainer|Money/ })
-	).toHaveCount(0);
-	await expect(
-		page.getByLabel('Bag fields').getByRole('button', { name: /Bag Inventory pockets/ })
-	).toBeFocused();
-	const pockets = page.getByLabel('Bag pockets').getByRole('button');
-	const addItem = page.getByRole('button', { name: '+ Add', exact: true });
-	await page.getByRole('combobox', { name: /Add an item to/ }).click();
-	await page.getByRole('option').first().click();
-	await addItem.focus();
-	const firstPocketAddId = await addItem.getAttribute('id');
-	await pockets.nth(1).click();
-	await page.getByRole('combobox', { name: /Add an item to/ }).click();
-	await page.getByRole('option').first().click();
-	await addItem.focus();
-	const secondPocketAddId = await addItem.getAttribute('id');
-	expect(firstPocketAddId).toMatch(/^pksx-bag-inventory-/);
-	expect(secondPocketAddId).toMatch(/^pksx-bag-inventory-/);
-	expect(secondPocketAddId).not.toBe(firstPocketAddId);
+	const bagRoot = page.locator('[data-destination-root="bag"]');
+	await expect(bagRoot.getByLabel('Trainer name')).toHaveCount(0);
+	await expect(bagRoot.getByRole('spinbutton', { name: 'Money' })).toHaveCount(0);
+	await expect(bagRoot.locator(':focus')).toHaveCount(1);
+	await expect(bagRoot.getByText('emerald-011020251345.sav')).toHaveCount(1);
 
-	const quantity = page.locator('.item-list article:not(.new-item) input[type="number"]').first();
+	const pockets = page.getByRole('navigation', { name: 'Bag pockets' }).getByRole('button');
+	const firstPocket = bagRoot.locator('.pocket-section').first();
+	const firstAddLauncher = firstPocket.getByRole('button', { name: 'Add Item', exact: true });
+	await expect(firstAddLauncher).toBeVisible({ timeout: 15000 });
+	await expect(firstAddLauncher).not.toHaveAttribute('aria-disabled', 'true');
+	await firstAddLauncher.click();
+	let addCommand = firstPocket.locator('[data-ledger-command]');
+	let itemSelect = addCommand.getByRole('combobox', { name: /Item to add to/ });
+	await expect(itemSelect).toBeFocused();
+	await itemSelect.selectOption({ index: 1 });
+	let addConfirm = addCommand.getByRole('button', { name: 'Add Item', exact: true });
+	await addConfirm.focus();
+	const firstPocketAddId = await addConfirm.getAttribute('id');
+	expect(firstPocketAddId).toMatch(/^pksx-bag-pocket-.+-add-confirm$/);
+	await pressController(page, 'Escape');
+	await expect(page).toHaveURL(/\/bag$/);
+	await expect(addCommand).toHaveCount(0);
+	await expect(firstAddLauncher).toBeFocused();
+
+	const secondPocket = bagRoot.locator('.pocket-section').nth(1);
+	const secondAddLauncher = secondPocket.getByRole('button', { name: 'Add Item', exact: true });
+	await expect(secondAddLauncher).toBeVisible();
+	await secondAddLauncher.click();
+	addCommand = secondPocket.locator('[data-ledger-command]');
+	itemSelect = addCommand.getByRole('combobox', { name: /Item to add to/ });
+	await itemSelect.selectOption({ index: 1 });
+	addConfirm = addCommand.getByRole('button', { name: 'Add Item', exact: true });
+	await addConfirm.focus();
+	const secondPocketAddId = await addConfirm.getAttribute('id');
+	expect(secondPocketAddId).toMatch(/^pksx-bag-pocket-.+-add-confirm$/);
+	expect(secondPocketAddId).not.toBe(firstPocketAddId);
+	await pressController(page, 'Escape');
+	await expect(addCommand).toHaveCount(0);
+
+	const quantity = bagRoot.locator('input[data-ledger-draft="item-quantity"]').first();
 	await quantity.focus();
 	const quantityId = await quantity.getAttribute('id');
-	expect(quantityId).toMatch(/^pksx-bag-item-/);
+	expect(quantityId).toMatch(/^pksx-bag-item-.+-quantity$/);
 	await page.keyboard.press('Control+k');
 	await page
 		.getByRole('dialog', { name: 'Main Menu' })
 		.getByRole('button', { name: /^Bag/ })
 		.click();
 	await expect(page.locator(`#${quantityId}`)).toBeFocused();
+
 	await pockets.nth(1).focus();
+	const pocketTargetId = await pockets.nth(1).getAttribute('id');
 	await choose(page, 'Trainer');
-	await expect(
-		page.getByLabel('Trainer fields').getByRole('button', { name: /Money/ })
-	).toBeFocused();
+	await expect(page.locator(`#${moneyId}`)).toBeFocused();
 	await choose(page, 'Bag');
-	await expect(pockets.nth(1)).toBeFocused();
+	await expect(page.locator(`#${pocketTargetId}`)).toBeFocused();
 	await expect(page.locator('[id^="pksx-bag-focus-"]')).toHaveCount(0);
 	await expect
 		.poll(() =>
@@ -476,12 +484,13 @@ test('Trainer and Bag keep independent semantic focus within their separate dest
 		)
 		.toBe(0);
 
-	const combobox = page.getByRole('combobox', { name: /Add an item to/ });
-	await combobox.click();
-	await expect(page.getByRole('searchbox', { name: /Search items/ })).toBeVisible();
+	await choose(page, 'Trainer');
+	await trainerName.fill('TEMP');
 	await pressController(page, 'Escape');
-	await expect(page.getByRole('searchbox', { name: /Search items/ })).toBeHidden();
-	await expect(page).toHaveURL(/\/bag$/);
+	await expect(page).toHaveURL(/\/trainer$/);
+	await expect(trainerName).toHaveValue('DIXIE');
+	await expect(trainerName).toBeFocused();
+	await page.getByRole('button', { name: 'Decrease Money' }).focus();
 	await pressController(page, 'Escape');
 	await expect(page).toHaveURL(/\/$/);
 });

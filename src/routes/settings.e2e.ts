@@ -48,6 +48,18 @@ async function expectEditableFontFloor(scope: Locator) {
 	expect(sizes.filter(({ fontSize }) => fontSize < 16)).toEqual([]);
 }
 
+async function expectSharedEditableType(control: Locator) {
+	const type = await control.evaluate((element) => {
+		const style = getComputedStyle(element);
+		return {
+			fontSize: parseFloat(style.fontSize),
+			token: parseFloat(style.getPropertyValue('--pksx-type-editable'))
+		};
+	});
+	expect(Number.isFinite(type.token)).toBe(true);
+	expect(type.fontSize).toBe(Math.max(16, type.token));
+}
+
 async function pressController(page: Page, key: string) {
 	await page.evaluate(async (controllerKey) => {
 		const dispatch = (pressed: boolean) =>
@@ -332,34 +344,31 @@ test('editable focus locks Height Band across pointer transfer and releases afte
 		timeout: 30_000
 	});
 	await page.goto('/trainer');
-	const trainerName = page.locator('#save-file-trainer-name');
+	const trainerName = page.getByLabel('Trainer name');
 	await expect(trainerName).toBeVisible({ timeout: 30_000 });
-	expect(
-		await trainerName.evaluate((element) => parseFloat(getComputedStyle(element).fontSize))
-	).toBeGreaterThan(16);
-	await page.getByRole('button', { name: 'Money' }).first().click();
-	const money = page.locator('#save-file-money');
+	await expectSharedEditableType(trainerName);
+	const money = page.getByRole('spinbutton', { name: 'Money' });
 	await expect(money).toBeVisible({ timeout: 30_000 });
-	expect(
-		await money.evaluate((element) => parseFloat(getComputedStyle(element).fontSize))
-	).toBeGreaterThan(16);
+	await expectSharedEditableType(money);
 	await page.goto('/bag');
-	const quantities = page.locator('[aria-label="Bag inventory"] input[type="number"]');
+	const quantities = page.locator(
+		'[data-destination-root="bag"] input[data-ledger-draft="item-quantity"]'
+	);
 	await expect(quantities.first()).toBeVisible({ timeout: 30_000 });
 	expect(await quantities.count()).toBeGreaterThan(1);
 	await quantities.first().focus();
 	await expect(page.locator('.app-shell')).toHaveCSS('--pksx-height-band', 'tall');
-	const itemWidthBefore = (await page.locator('.item-list article').first().boundingBox())?.width;
+	const itemWidthBefore = (await page.locator('.item-row').first().boundingBox())?.width;
 
 	await page.setViewportSize({ width: 500, height: 500 });
-	const itemWidthAfter = (await page.locator('.item-list article').first().boundingBox())?.width;
+	const itemWidthAfter = (await page.locator('.item-row').first().boundingBox())?.width;
 	expect(itemWidthAfter).not.toBe(itemWidthBefore);
 	await expect(page.locator('.app-shell')).toHaveCSS('--pksx-height-band', 'tall');
 	await quantities.nth(1).click();
 	await expect(quantities.nth(1)).toBeFocused();
 	await expect(page.locator('.app-shell')).toHaveCSS('--pksx-height-band', 'tall');
 
-	await page.getByRole('button', { name: 'Back to boxes' }).focus();
+	await page.getByRole('button', { name: 'Open Main Menu' }).focus();
 	await expect(page.locator('.app-shell')).toHaveCSS('--pksx-height-band', 'short');
 });
 
