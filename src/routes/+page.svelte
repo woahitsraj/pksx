@@ -1627,6 +1627,7 @@
 			if (!resolveBoxMenuSaveTarget(target)) return;
 			downloadBytes(bytes, createExportFileName(resolved.workspace.state.file.originalFileName));
 			statusMessage = `Export ready for ${resolved.workspace.state.file.originalFileName ?? 'Save File'}.`;
+			toastHost.success(statusMessage);
 			closeBoxMenu();
 		} catch (error) {
 			importError = getErrorMessage(error);

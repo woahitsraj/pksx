@@ -3024,6 +3024,9 @@ test('exports the displayed Save File through the edit coordinator boundary', as
 		.click();
 
 	expect((await download).suggestedFilename()).toBe('emerald-011020251345.pksx.sav');
+	await expect(page.locator('.toast-success')).toContainText(
+		'Export ready for emerald-011020251345.sav.'
+	);
 });
 
 test('controller focus framework covers every interactive surface', async ({ page }) => {
