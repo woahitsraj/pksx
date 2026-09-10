@@ -1,5 +1,6 @@
 <script lang="ts">
 	import SaveFileLedger from '$lib/components/pksx/SaveFileLedger.svelte';
+	import type { SaveFileLedgerProps } from '$lib/components/pksx/save-file-ledger/types';
 	import type { EngineApi } from '$lib/engine';
 	import type { WorkspaceState } from '$lib/pksx/backup-workflow';
 	import type { SaveFileEditCoordinator } from '$lib/pksx/save-file-edit-coordinator';
@@ -76,14 +77,14 @@
 		edits.dispose();
 	});
 
-	function currentBindings() {
+	function currentBindings(): SaveFileLedgerProps {
 		const shared = edits.ledgerProps;
-		const bagBindings = bag.ledgerProps;
 		return {
-			...shared,
-			...bagBindings,
-			drafts: { ...shared.drafts, ...bagBindings.drafts },
-			errors: { ...shared.errors, ...bagBindings.errors }
+			destination: 'bag',
+			view: shared.view,
+			pendingTargets: shared.pendingTargets,
+			onRetryEditing: shared.onRetryEditing,
+			...bag.ledgerProps
 		};
 	}
 </script>

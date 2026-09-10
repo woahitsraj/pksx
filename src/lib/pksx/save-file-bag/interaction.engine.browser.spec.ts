@@ -171,6 +171,15 @@ describe('Save File Bag with a real public fixture', () => {
 			engine.applySaveFileEditOperation(...args)
 		);
 		const { harness } = await setup({ ...engine, applySaveFileEditOperation });
+		const ledgerProps = harness.currentLedgerProps();
+		expect(ledgerProps.destination).toBe('bag');
+		expect(ledgerProps.view.status).toBe('ready');
+		if (ledgerProps.view.status === 'ready') {
+			expect(ledgerProps.view.projection).toEqual(harness.currentWorkspace().workspace.saveFile);
+		}
+		expect(host.querySelector('[data-destination-root="bag"]')).not.toBeNull();
+		expect(host.querySelector('[data-destination-focus="trainer-name"]')).toBeNull();
+		expect(host.querySelector('[data-destination-focus="money-value"]')).toBeNull();
 		const projection = harness.currentWorkspace().workspace.saveFile!;
 		const pocket = projection.inventory.pockets.find((candidate) =>
 			candidate.items.some((item) => item.quantity === 2 && item.maxQuantity > 2)
@@ -415,7 +424,7 @@ describe('Save File Bag with a real public fixture', () => {
 		expect(fixtureBytes).toEqual(unchangedFixture);
 	}, 60_000);
 
-	test('shares origin, accepted Workspace, pending state, and Retry across both controllers', async () => {
+	test('uses one shared session for Bag origin, pending state, and Retry', async () => {
 		const firstEdit = deferred<void>();
 		const fatalEdit = deferred<void>();
 		let editCall = 0;
@@ -459,12 +468,6 @@ describe('Save File Bag with a real public fixture', () => {
 		expect(subscribePending).toHaveBeenCalledOnce();
 
 		let props = harness.currentLedgerProps();
-		const accepted = harness.currentWorkspace().workspace.saveFile!;
-		const trainerDraft = accepted.trainerProfile.trainerName === 'PKSX' ? 'PUBLIC' : 'PKSX';
-		const moneyDraft =
-			accepted.money.value === accepted.money.min ? accepted.money.min + 1 : accepted.money.min;
-		props.onTrainerNameInput?.(trainerDraft);
-		props.onMoneyInput?.(String(moneyDraft));
 		const firstQuantity =
 			item.quantity === item.maxQuantity ? item.quantity - 1 : item.quantity + 1;
 		props.onItemQuantityInput?.(pocket.key, item.id, String(firstQuantity));
@@ -476,21 +479,20 @@ describe('Save File Bag with a real public fixture', () => {
 		firstEdit.resolve();
 		await waitForItem(harness, pocket.key, item.id, firstQuantity);
 		props = harness.currentLedgerProps();
-		expect(props.drafts?.trainerName?.value).toBe(trainerDraft);
-		expect(props.drafts?.money?.value).toBe(String(moneyDraft));
 		expect(props.drafts?.itemQuantities?.[`${pocket.key}:${item.id}`]).toBeUndefined();
 
 		props.onRetryCatalogue?.(pocket.key);
 		await vi.waitFor(() => expect(getSaveFileInventoryCatalogue).toHaveBeenCalledTimes(2));
-		props.onItemQuantityInput?.(pocket.key, item.id, String(firstQuantity + 1));
+		const fatalQuantity =
+			firstQuantity === item.maxQuantity ? firstQuantity - 1 : firstQuantity + 1;
+		props.onItemQuantityInput?.(pocket.key, item.id, String(fatalQuantity));
 		props.onCommandChange?.({
 			kind: 'add-item',
 			pocketKey: pocket.key,
 			itemId: null,
 			quantity: '1'
 		});
-		const nextGender = accepted.trainerProfile.gender === 'male' ? 'female' : 'male';
-		props.onTrainerGenderSelect?.(nextGender);
+		props.onItemQuantityCommit?.(pocket.key, item.id, 'enter');
 		await vi.waitFor(() => expect(harness.currentPendingTargets().length).toBeGreaterThan(0));
 		reloadValue = harness.currentWorkspace();
 		const originBeforeFailure = harness.currentOrigin();
@@ -505,14 +507,6 @@ describe('Save File Bag with a real public fixture', () => {
 		props = harness.currentLedgerProps();
 		expect(props.command).toBeNull();
 		expect(props.drafts?.itemQuantities).toEqual({});
-		expect(props.drafts?.trainerName?.value).toBe(
-			harness.currentWorkspace().workspace.saveFile!.trainerProfile.trainerName
-		);
-		expect(props.drafts?.money?.value).toBe(
-			String(harness.currentWorkspace().workspace.saveFile!.money.value)
-		);
-		expect(input('trainer-name').disabled).toBe(true);
-		expect(input('money-value').disabled).toBe(true);
 		expect(input(`item-${pocket.key}-${item.id}-quantity`).disabled).toBe(true);
 
 		target('editing-retry').click();
