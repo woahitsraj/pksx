@@ -1115,13 +1115,21 @@ public class ControllerNavigationTest {
         );
         double[] layer = requiredBounds(geometry, "layer", label);
         double[] panel = requiredBounds(geometry, "panel", label);
-        boolean attached = trailing
+        boolean expectedEndpoint = trailing
             ? geometry.getDouble("innerWidth") > geometry.getDouble("innerHeight")
+            : geometry.getDouble("innerWidth") <= geometry.getDouble("innerHeight");
+        boolean expectedAllocation = trailing
+            ? layer[2] - layer[0] > layer[3] - layer[1]
+            : layer[2] - layer[0] <= layer[3] - layer[1];
+        boolean attached = trailing
+            ? expectedEndpoint
+                && expectedAllocation
                 && sameEdge(panel[2], layer[2])
                 && sameEdge(panel[1], layer[1])
                 && sameEdge(panel[3], layer[3])
                 && panel[0] > layer[0]
-            : geometry.getDouble("innerWidth") <= geometry.getDouble("innerHeight")
+            : expectedEndpoint
+                && expectedAllocation
                 && sameEdge(panel[0], layer[0])
                 && sameEdge(panel[2], layer[2])
                 && sameEdge(panel[3], layer[3])
@@ -1135,23 +1143,36 @@ public class ControllerNavigationTest {
             runJavaScript(
                 "(() => { const rect = node => { const value = node?.getBoundingClientRect();"
                     + " return value ? [value.left,value.top,value.right,value.bottom] : null; };"
+                    + " const editor=document.querySelector('.pokemon-editor'); let owner=editor?.parentElement;"
+                    + " while(owner && !getComputedStyle(owner).getPropertyValue('container-name')"
+                    + ".split(/\\s+/).includes('pksx-density')) owner=owner.parentElement;"
                     + " return {innerWidth,innerHeight,body:rect(document.querySelector('.editor-body')) ,"
                     + "rail:rect(document.querySelector('.editor-rail')) ,"
-                    + "content:rect(document.querySelector('.editor-content'))}; })()"
+                    + "content:rect(document.querySelector('.editor-content')),owner:rect(owner)}; })()"
             )
         );
         double[] body = requiredBounds(geometry, "body", label);
         double[] rail = requiredBounds(geometry, "rail", label);
         double[] content = requiredBounds(geometry, "content", label);
-        boolean attached = left
+        double[] owner = requiredBounds(geometry, "owner", label);
+        boolean expectedEndpoint = left
             ? geometry.getDouble("innerWidth") > geometry.getDouble("innerHeight")
+            : geometry.getDouble("innerWidth") <= geometry.getDouble("innerHeight");
+        boolean expectedAllocation = left
+            ? owner[2] - owner[0] > owner[3] - owner[1]
+            : owner[2] - owner[0] <= owner[3] - owner[1];
+        boolean attached = left
+            ? expectedEndpoint
+                && expectedAllocation
                 && sameEdge(rail[0], body[0])
                 && rail[2] < content[0]
                 && sameEdge(rail[1], body[1])
                 && sameEdge(rail[3], body[3])
-            : geometry.getDouble("innerWidth") <= geometry.getDouble("innerHeight")
+            : expectedEndpoint
+                && expectedAllocation
                 && sameEdge(rail[0], body[0])
                 && sameEdge(rail[2], body[2])
+                && sameEdge(rail[1], body[1])
                 && rail[3] < content[1];
         Log.i("PKSXAcceptance", label + " " + geometry + " " + nativeWindowGeometry());
         if (!attached) fail(label + " rail is attached to the wrong edge: " + geometry);
