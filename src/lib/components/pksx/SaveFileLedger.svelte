@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import { isControllerKeyboardEvent } from '$lib/pksx/controller-input';
 	import DelayedSpinner from './DelayedSpinner.svelte';
 	import type {
 		SaveFileLedgerCatalogue,
 		SaveFileLedgerCommand,
 		SaveFileLedgerCommitReason,
+		SaveFileLedgerFocusFallbacks,
 		SaveFileLedgerProps
 	} from './save-file-ledger/types';
 
@@ -40,10 +41,19 @@
 	let root: HTMLElement;
 	let rememberedTarget: string | null = null;
 	let targetBeforeEditingUnavailable: string | null = null;
-	let suppressBlurCommit = false;
+	let deferredBlur: {
+		fieldIdentity: string;
+		commit: (reason: SaveFileLedgerCommitReason) => void;
+	} | null = null;
 	let previousCommand: SaveFileLedgerCommand | null = null;
 	let editingWasUnavailable = false;
 	let lastItemFocus: { pocketKey: string; itemId: number; index: number } | null = null;
+	let destroying = false;
+
+	onDestroy(() => {
+		destroying = true;
+		deferredBlur = null;
+	});
 
 	const ready = $derived(view.status === 'ready' ? view : null);
 	const projection = $derived(ready?.projection ?? null);
@@ -74,7 +84,20 @@
 	function ledgerRoot(node: HTMLElement) {
 		root = node;
 		window.addEventListener('keydown', handleWindowKeydown, true);
-		return () => window.removeEventListener('keydown', handleWindowKeydown, true);
+		let visibilityFrame = 0;
+		const resizeObserver = new ResizeObserver(() => {
+			cancelAnimationFrame(visibilityFrame);
+			visibilityFrame = requestAnimationFrame(() => {
+				const active = document.activeElement;
+				if (active instanceof HTMLElement && node.contains(active)) ensureTargetVisible(active);
+			});
+		});
+		resizeObserver.observe(node);
+		return () => {
+			window.removeEventListener('keydown', handleWindowKeydown, true);
+			resizeObserver.disconnect();
+			cancelAnimationFrame(visibilityFrame);
+		};
 	}
 
 	function reconcileTargets(
@@ -200,12 +223,12 @@
 	export function handleBack() {
 		const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		if (!active || !root?.contains(active)) return false;
-		if (command && active.closest('[data-ledger-command]')) {
-			onCommandChange?.(null);
-			return true;
-		}
 		if (active.matches('[data-ledger-draft]')) {
 			abandonDraft(active);
+			return true;
+		}
+		if (command) {
+			onCommandChange?.(null);
 			return true;
 		}
 		return false;
@@ -288,7 +311,7 @@
 		if (retry) return focusElement(retry);
 		const pocket = pockets.find((candidate) => candidate.key === pocketKey);
 		const firstItem = pocket?.items[0];
-		if (firstItem) return focusItemRow(pocketKey, firstItem.id);
+		if (firstItem && focusItemRow(pocketKey, firstItem.id)) return true;
 
 		const index = pockets.findIndex((candidate) => candidate.key === pocketKey);
 		for (const nextPocket of pockets.slice(index + 1)) {
@@ -311,7 +334,7 @@
 	}
 
 	function openAddItem(pocketKey: string) {
-		onCommandChange?.({ kind: 'add-item', pocketKey, itemId: null, quantity: 1 });
+		onCommandChange?.({ kind: 'add-item', pocketKey, itemId: null, quantity: '1' });
 	}
 
 	function updateAddCommand(patch: Partial<Extract<SaveFileLedgerCommand, { kind: 'add-item' }>>) {
@@ -344,20 +367,45 @@
 		return direct || pendingTargets.includes(identity);
 	}
 
-	function beginOperatorPointer() {
-		suppressBlurCommit = true;
-		setTimeout(() => (suppressBlurCommit = false), 0);
-	}
-
 	function handleDraftBlur(
 		event: FocusEvent,
 		commit: ((reason: SaveFileLedgerCommitReason) => void) | undefined
 	) {
-		if (suppressBlurCommit) return;
-		const related = event.relatedTarget;
-		if (related instanceof HTMLElement && related.hasAttribute('data-ledger-consumes-draft'))
+		const fieldIdentity = (event.currentTarget as HTMLElement).dataset.destinationFocus;
+		const operatorIdentity =
+			event.relatedTarget instanceof HTMLElement
+				? event.relatedTarget.dataset.ledgerConsumesDraft
+				: null;
+		if (commit && fieldIdentity && operatorIdentity === fieldIdentity) {
+			deferredBlur = { fieldIdentity, commit };
 			return;
+		}
 		commit?.('blur');
+	}
+
+	function handleFocusOut(event: FocusEvent) {
+		if (destroying) return;
+		if (!deferredBlur || !(event.target instanceof HTMLElement)) return;
+		if (event.target.dataset.ledgerConsumesDraft !== deferredBlur.fieldIdentity) return;
+		const relatedTarget = event.relatedTarget instanceof HTMLElement ? event.relatedTarget : null;
+		const nextOperator = relatedTarget?.dataset.ledgerConsumesDraft;
+		if (nextOperator === deferredBlur.fieldIdentity) return;
+		const pending = deferredBlur;
+		if (!relatedTarget || !root.contains(relatedTarget)) {
+			queueMicrotask(() => {
+				if (deferredBlur !== pending) return;
+				deferredBlur = null;
+				if (root.isConnected) pending.commit('blur');
+			});
+			return;
+		}
+		deferredBlur = null;
+		pending.commit('blur');
+	}
+
+	function activateDraftOperator(fieldIdentity: string, action: () => void) {
+		if (deferredBlur?.fieldIdentity === fieldIdentity) deferredBlur = null;
+		action();
 	}
 
 	function commitDraft(target: HTMLElement, reason: SaveFileLedgerCommitReason) {
@@ -404,6 +452,32 @@
 		return `item-${pocketKey}-${itemId}-${control}`;
 	}
 
+	function itemFocusFallbacks(pocketKey: string, itemId: number): SaveFileLedgerFocusFallbacks {
+		const pocketIndex = pockets.findIndex((pocket) => pocket.key === pocketKey);
+		const pocket = pockets[pocketIndex];
+		const itemIndex = pocket?.items.findIndex((item) => item.id === itemId) ?? -1;
+		const identities = [
+			pocket?.items[itemIndex + 1]
+				? itemIdentity(pocketKey, pocket.items[itemIndex + 1].id, 'decrease')
+				: null,
+			pocket?.items[itemIndex - 1]
+				? itemIdentity(pocketKey, pocket.items[itemIndex - 1].id, 'decrease')
+				: null,
+			addIdentity(pocketKey),
+			retryIdentity(pocketKey),
+			...pockets
+				.slice(pocketIndex + 1)
+				.flatMap((nextPocket) => [
+					addIdentity(nextPocket.key),
+					retryIdentity(nextPocket.key),
+					nextPocket.items[0]
+						? itemIdentity(nextPocket.key, nextPocket.items[0].id, 'decrease')
+						: null
+				])
+		];
+		return identities.filter((identity): identity is string => identity !== null);
+	}
+
 	function firstTargetIdentity() {
 		if (!projection) return '';
 		if (projection.trainerProfile.trainerNameSupported) return 'trainer-name';
@@ -428,6 +502,7 @@
 	data-initial-state={view.status === 'loading' ? 'loading' : 'ready'}
 	aria-busy={view.status === 'loading'}
 	onfocusin={handleFocusIn}
+	onfocusout={handleFocusOut}
 	{@attach ledgerRoot}
 	{@attach reconcileTargets(targetSignature, command, editingUnavailable !== null)}
 >
@@ -601,7 +676,12 @@
 											{@const femaleBusy = isPending('trainer-gender-female')}
 											<div class="field-row" data-ledger-row="trainer-gender">
 												<span>Gender</span>
-												<div class="segmented" aria-label="Trainer gender">
+												<div
+													class="segmented"
+													role="group"
+													aria-label="Trainer gender"
+													aria-busy={maleBusy || femaleBusy}
+												>
 													<button
 														type="button"
 														data-ledger-control
@@ -668,17 +748,17 @@
 												type="button"
 												aria-label="Decrease Money"
 												data-ledger-control
-												data-ledger-consumes-draft
+												data-ledger-consumes-draft="money-value"
 												data-destination-initial={initialTargetIdentity === 'money-decrease'
 													? ''
 													: undefined}
 												data-destination-focus="money-decrease"
 												aria-disabled={moneyBusy || moneyAtMin}
 												disabled={Boolean(editingUnavailable)}
-												onpointerdown={beginOperatorPointer}
-												onclick={() => {
-													if (!moneyBusy && !moneyAtMin) onMoneyStep?.(-1, moneyField.value);
-												}}>−</button
+												onclick={() =>
+													activateDraftOperator('money-value', () => {
+														if (!moneyBusy && !moneyAtMin) onMoneyStep?.(-1, moneyField.value);
+													})}>−</button
 											>
 											<input
 												type="number"
@@ -705,26 +785,26 @@
 												type="button"
 												aria-label="Increase Money"
 												data-ledger-control
-												data-ledger-consumes-draft
+												data-ledger-consumes-draft="money-value"
 												data-destination-focus="money-increase"
 												aria-disabled={moneyBusy || moneyAtMax}
 												disabled={Boolean(editingUnavailable)}
-												onpointerdown={beginOperatorPointer}
-												onclick={() => {
-													if (!moneyBusy && !moneyAtMax) onMoneyStep?.(1, moneyField.value);
-												}}>+</button
+												onclick={() =>
+													activateDraftOperator('money-value', () => {
+														if (!moneyBusy && !moneyAtMax) onMoneyStep?.(1, moneyField.value);
+													})}>+</button
 											>
 											<button
 												type="button"
 												data-ledger-control
-												data-ledger-consumes-draft
+												data-ledger-consumes-draft="money-value"
 												data-destination-focus="money-max"
 												aria-disabled={moneyBusy || moneyAtMax}
 												disabled={Boolean(editingUnavailable)}
-												onpointerdown={beginOperatorPointer}
-												onclick={() => {
-													if (!moneyBusy && !moneyAtMax) onMoneyStep?.('max', moneyField.value);
-												}}>Max</button
+												onclick={() =>
+													activateDraftOperator('money-value', () => {
+														if (!moneyBusy && !moneyAtMax) onMoneyStep?.('max', moneyField.value);
+													})}>Max</button
 											>
 											<DelayedSpinner active={moneyBusy} label="Updating Money" />
 											{#if moneyError}<small id="money-error" class="field-error" aria-live="polite"
@@ -789,7 +869,9 @@
 															{@const commandQuantityMax =
 																selectedOption?.maxQuantity ??
 																Math.max(1, ...options.map((option) => option.maxQuantity))}
-															<div class="add-command" data-ledger-command>
+															{@const addConfirmIdentity = `pocket-${pocket.key}-add-confirm`}
+															{@const addBusy = isPending(addConfirmIdentity)}
+															<div class="add-command" data-ledger-command aria-busy={addBusy}>
 																<label>
 																	<span>Item</span>
 																	<select
@@ -820,19 +902,31 @@
 																		style:--quantity-ch={String(commandQuantityMax).length}
 																		data-ledger-control
 																		data-destination-focus={`pocket-${pocket.key}-add-quantity`}
+																		aria-invalid={command.quantityError ? 'true' : undefined}
+																		aria-describedby={command.quantityError
+																			? `pocket-${pocket.key}-add-quantity-error`
+																			: undefined}
 																		disabled={Boolean(editingUnavailable)}
 																		oninput={(event) =>
 																			updateAddCommand({
-																				quantity: Number(event.currentTarget.value)
+																				quantity: event.currentTarget.value
 																			})}
 																	/>
+																	{#if command.quantityError}<small
+																			id={`pocket-${pocket.key}-add-quantity-error`}
+																			class="field-error"
+																			aria-live="polite">{command.quantityError}</small
+																		>{/if}
 																</label>
 																<button
 																	type="button"
 																	data-ledger-control
-																	data-destination-focus={`pocket-${pocket.key}-add-confirm`}
+																	data-destination-focus={addConfirmIdentity}
+																	aria-disabled={addBusy}
 																	disabled={command.itemId === null || Boolean(editingUnavailable)}
-																	onclick={() => onAddItem?.(command)}>Add Item</button
+																	onclick={() => {
+																		if (!addBusy) onAddItem?.(command);
+																	}}>Add Item</button
 																>
 																<button
 																	type="button"
@@ -841,6 +935,7 @@
 																	data-destination-focus={`pocket-${pocket.key}-add-cancel`}
 																	onclick={() => onCommandChange?.(null)}>Cancel</button
 																>
+																<DelayedSpinner active={addBusy} label="Adding item" />
 															</div>
 														{:else}
 															<button
@@ -905,10 +1000,19 @@
 																{@const quantityNumber = Number(quantityField.value)}
 																{@const quantityAtMin = quantityNumber <= 1}
 																{@const quantityAtMax = quantityNumber >= item.maxQuantity}
+																{@const removeConfirmIdentity = itemIdentity(
+																	pocket.key,
+																	item.id,
+																	'confirm-remove'
+																)}
+																{@const removeBusy = isPending(removeConfirmIdentity)}
+																{@const focusFallbacks = JSON.stringify(
+																	itemFocusFallbacks(pocket.key, item.id)
+																)}
 																<li
 																	class="item-row"
 																	data-ledger-row={`item-${pocket.key}-${item.id}`}
-																	aria-busy={itemBusy}
+																	aria-busy={itemBusy || removeBusy}
 																>
 																	<div class="item-copy">
 																		<strong title={item.name}>{item.name}</strong>
@@ -920,6 +1024,7 @@
 																			data-ledger-command
 																			role="group"
 																			aria-label={`Remove ${item.name}?`}
+																			aria-busy={removeBusy}
 																		>
 																			<span>Remove {item.name}?</span>
 																			<button
@@ -927,17 +1032,19 @@
 																				data-ledger-control
 																				data-pocket-key={pocket.key}
 																				data-item-id={item.id}
-																				data-destination-focus={itemIdentity(
-																					pocket.key,
-																					item.id,
-																					'confirm-remove'
-																				)}
-																				onclick={() => onRemoveItem?.(command)}>Confirm</button
+																				data-destination-fallbacks={focusFallbacks}
+																				data-destination-focus={removeConfirmIdentity}
+																				aria-disabled={removeBusy}
+																				disabled={Boolean(editingUnavailable)}
+																				onclick={() => {
+																					if (!removeBusy) onRemoveItem?.(command);
+																				}}>Confirm</button
 																			>
 																			<button
 																				type="button"
 																				data-ledger-control
 																				data-controller-back
+																				data-destination-fallbacks={focusFallbacks}
 																				data-destination-focus={itemIdentity(
 																					pocket.key,
 																					item.id,
@@ -945,6 +1052,10 @@
 																				)}
 																				onclick={() => onCommandChange?.(null)}>Cancel</button
 																			>
+																			<DelayedSpinner
+																				active={removeBusy}
+																				label={`Removing ${item.name}`}
+																			/>
 																		</div>
 																	{:else}
 																		<div
@@ -955,9 +1066,10 @@
 																				type="button"
 																				aria-label={`Decrease ${item.name} quantity`}
 																				data-ledger-control
-																				data-ledger-consumes-draft
+																				data-ledger-consumes-draft={quantityIdentity}
 																				data-pocket-key={pocket.key}
 																				data-item-id={item.id}
+																				data-destination-fallbacks={focusFallbacks}
 																				data-destination-initial={initialTargetIdentity ===
 																				itemIdentity(pocket.key, item.id, 'decrease')
 																					? ''
@@ -969,16 +1081,16 @@
 																				)}
 																				aria-disabled={itemBusy || quantityAtMin}
 																				disabled={Boolean(editingUnavailable)}
-																				onpointerdown={beginOperatorPointer}
-																				onclick={() => {
-																					if (!itemBusy && !quantityAtMin)
-																						onItemQuantityStep?.(
-																							pocket.key,
-																							item.id,
-																							-1,
-																							quantityField.value
-																						);
-																				}}>−</button
+																				onclick={() =>
+																					activateDraftOperator(quantityIdentity, () => {
+																						if (!itemBusy && !quantityAtMin)
+																							onItemQuantityStep?.(
+																								pocket.key,
+																								item.id,
+																								-1,
+																								quantityField.value
+																							);
+																					})}>−</button
 																			>
 																			<input
 																				type="number"
@@ -991,6 +1103,7 @@
 																				data-ledger-draft="item-quantity"
 																				data-pocket-key={pocket.key}
 																				data-item-id={item.id}
+																				data-destination-fallbacks={focusFallbacks}
 																				data-destination-focus={quantityIdentity}
 																				aria-busy={itemBusy}
 																				aria-disabled={itemBusy}
@@ -1016,9 +1129,10 @@
 																				type="button"
 																				aria-label={`Increase ${item.name} quantity`}
 																				data-ledger-control
-																				data-ledger-consumes-draft
+																				data-ledger-consumes-draft={quantityIdentity}
 																				data-pocket-key={pocket.key}
 																				data-item-id={item.id}
+																				data-destination-fallbacks={focusFallbacks}
 																				data-destination-focus={itemIdentity(
 																					pocket.key,
 																					item.id,
@@ -1026,22 +1140,23 @@
 																				)}
 																				aria-disabled={itemBusy || quantityAtMax}
 																				disabled={Boolean(editingUnavailable)}
-																				onpointerdown={beginOperatorPointer}
-																				onclick={() => {
-																					if (!itemBusy && !quantityAtMax)
-																						onItemQuantityStep?.(
-																							pocket.key,
-																							item.id,
-																							1,
-																							quantityField.value
-																						);
-																				}}>+</button
+																				onclick={() =>
+																					activateDraftOperator(quantityIdentity, () => {
+																						if (!itemBusy && !quantityAtMax)
+																							onItemQuantityStep?.(
+																								pocket.key,
+																								item.id,
+																								1,
+																								quantityField.value
+																							);
+																					})}>+</button
 																			>
 																			<button
 																				type="button"
 																				data-ledger-control
 																				data-pocket-key={pocket.key}
 																				data-item-id={item.id}
+																				data-destination-fallbacks={focusFallbacks}
 																				data-destination-focus={itemIdentity(
 																					pocket.key,
 																					item.id,

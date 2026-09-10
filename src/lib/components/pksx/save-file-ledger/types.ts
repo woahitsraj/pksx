@@ -23,7 +23,13 @@ export type SaveFileLedgerCatalogue =
 	| { status: 'failed'; message: string };
 
 export type SaveFileLedgerCommand =
-	| { kind: 'add-item'; pocketKey: string; itemId: number | null; quantity: number }
+	| {
+			kind: 'add-item';
+			pocketKey: string;
+			itemId: number | null;
+			quantity: string;
+			quantityError?: string | null;
+	  }
 	| { kind: 'remove-item'; pocketKey: string; itemId: number };
 
 export type SaveFileLedgerFieldView = {
@@ -39,6 +45,8 @@ export type SaveFileLedgerDrafts = {
 };
 
 export type SaveFileLedgerCommitReason = 'enter' | 'blur';
+
+export type SaveFileLedgerFocusFallbacks = readonly string[];
 
 export type SaveFileLedgerProps = {
 	view: SaveFileLedgerView;

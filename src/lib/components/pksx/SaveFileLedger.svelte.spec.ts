@@ -252,8 +252,11 @@ describe('SaveFileLedger semantic focus graph', () => {
 		expect(jumpRect.left).toBeGreaterThanOrEqual(rowRect.left - 1);
 		expect(jumpRect.right).toBeLessThanOrEqual(rowRect.right + 1);
 
+		const ledger = host.querySelector<HTMLElement>('[data-testid="bag-ledger-scrollport"]')!;
+		ledger.scrollTop = 0;
 		jump.click();
 		expect(document.activeElement).toBe(jump);
+		expect(ledger.scrollTop).toBeGreaterThan(0);
 	});
 
 	test('opens and closes one controlled command with the specified focus returns', async () => {
@@ -399,6 +402,24 @@ describe('SaveFileLedger semantic focus graph', () => {
 		dispatchControllerKey('ArrowDown');
 		expect(document.activeElement).toBe(target(`pocket-${second.key}-add`));
 
+		await clearMounted();
+		render(
+			{
+				...publicFixtureView,
+				editingUnavailable: { message: 'Editor unavailable.' }
+			},
+			{
+				catalogues: {
+					...publicCatalogues,
+					[second.key]: { status: 'failed', message: 'Catalogue unavailable.' }
+				}
+			}
+		);
+		await tick();
+		firstJump().focus();
+		dispatchControllerKey('ArrowDown');
+		expect(document.activeElement).toBe(target(`pocket-${second.key}-retry`));
+
 		const noPocketTargets = {
 			...emptyFirstView,
 			projection: {
@@ -424,6 +445,25 @@ describe('SaveFileLedger semantic focus graph', () => {
 		expect(document.activeElement).toBe(lastJump);
 	});
 
+	test('publishes ordered remount fallbacks through the shell identity seam', () => {
+		render();
+		const pocket = publicFixtureView.projection.inventory.pockets.find(
+			(candidate) => candidate.items.length >= 3
+		)!;
+		const item = pocket.items[1];
+		const fallbacks = JSON.parse(
+			target(`item-${pocket.key}-${item.id}-remove`).dataset.destinationFallbacks!
+		) as string[];
+		expect(fallbacks.slice(0, 3)).toEqual([
+			`item-${pocket.key}-${pocket.items[2].id}-decrease`,
+			`item-${pocket.key}-${pocket.items[0].id}-decrease`,
+			`pocket-${pocket.key}-add`
+		]);
+		expect(fallbacks).toContain(
+			`pocket-${publicFixtureView.projection.inventory.pockets[1].key}-add`
+		);
+	});
+
 	test('replaces an open command and keeps only one command surface', async () => {
 		render();
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
@@ -437,18 +477,32 @@ describe('SaveFileLedger semantic focus graph', () => {
 	});
 
 	test('keeps a focused item row clear of its sticky pocket heading', async () => {
-		render(publicFixtureView, { width: 640, height: 360 });
+		render(publicFixtureView, { width: 393, height: 852 });
 		await tick();
 		const pocket = publicFixtureView.projection.inventory.pockets[0];
 		const ledger = host.querySelector<HTMLElement>('[data-testid="bag-ledger-scrollport"]')!;
 		ledger.scrollTop = ledger.scrollHeight;
-		const control = target(`item-${pocket.key}-${pocket.items[0].id}-decrease`);
+		const control = target(
+			`item-${pocket.key}-${pocket.items[pocket.items.length - 1].id}-decrease`
+		);
 		control.focus();
 		await new Promise(requestAnimationFrame);
 		const row = control.closest<HTMLElement>('.item-row')!;
 		const heading = host.querySelector<HTMLElement>(
 			`[data-ledger-pocket="${pocket.key}"] .pocket-heading`
 		)!;
+		expect(row.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+			heading.getBoundingClientRect().bottom - 1
+		);
+		expect(row.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+			ledger.getBoundingClientRect().bottom + 1
+		);
+
+		host.style.width = '640px';
+		host.style.height = '360px';
+		await new Promise(requestAnimationFrame);
+		await new Promise(requestAnimationFrame);
+		expect(document.activeElement).toBe(control);
 		expect(row.getBoundingClientRect().top).toBeGreaterThanOrEqual(
 			heading.getBoundingClientRect().bottom - 1
 		);
@@ -517,20 +571,68 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		expect(document.activeElement).toBe(target(`pocket-${pocketKey}-add-quantity`));
 	});
 
-	test('uses one local Back handler only for a focused draft or open command', async () => {
+	test('keeps Add quantity raw text and exposes its controlled error', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const onCommandChange = vi.fn();
+		render(publicFixtureView, {
+			harness: false,
+			props: {
+				command: {
+					kind: 'add-item',
+					pocketKey: pocket.key,
+					itemId: null,
+					quantity: '',
+					quantityError: 'Enter a whole number.'
+				},
+				onCommandChange
+			}
+		});
+		await tick();
+		const quantity = target(`pocket-${pocket.key}-add-quantity`) as HTMLInputElement;
+		expect(quantity.getAttribute('aria-invalid')).toBe('true');
+		expect(quantity.getAttribute('aria-describedby')).toBe(
+			`pocket-${pocket.key}-add-quantity-error`
+		);
+		expect(document.getElementById(`pocket-${pocket.key}-add-quantity-error`)?.textContent).toBe(
+			'Enter a whole number.'
+		);
+
+		quantity.value = '007';
+		quantity.dispatchEvent(new InputEvent('input', { bubbles: true }));
+		expect(onCommandChange).toHaveBeenCalledWith(expect.objectContaining({ quantity: '007' }));
+	});
+
+	test('gives a focused draft priority over an open command in the local Back handler', async () => {
 		const onTrainerNameAbandon = vi.fn();
+		const onCommandChange = vi.fn();
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
 		const ledger = render(publicFixtureView, {
 			harness: false,
-			props: { onTrainerNameAbandon }
+			props: {
+				command: { kind: 'add-item', pocketKey: pocket.key, itemId: null, quantity: '1' },
+				onTrainerNameAbandon,
+				onCommandChange
+			}
 		});
 		await tick();
 		const name = target('trainer-name');
 		name.focus();
 		expect(ledger.handleBack()).toBe(true);
 		expect(onTrainerNameAbandon).toHaveBeenCalledOnce();
+		expect(onCommandChange).not.toHaveBeenCalled();
+	});
 
+	test('closes an open command from any ordinary Ledger control and restores its launcher', async () => {
+		const ledger = render();
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const launcherIdentity = `pocket-${pocket.key}-add`;
+		(target(launcherIdentity) as HTMLButtonElement).click();
+		await tick();
 		target('money-decrease').focus();
-		expect(ledger.handleBack()).toBe(false);
+		expect(ledger.handleBack()).toBe(true);
+		await tick();
+		expect(host.querySelector('[data-ledger-command]')).toBeNull();
+		expect(document.activeElement).toBe(target(launcherIdentity));
 	});
 
 	test('does not steal focus when async command reconciliation runs after a shell takeover', async () => {
@@ -635,6 +737,72 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		expect(onItemQuantityStep).not.toHaveBeenCalled();
 	});
 
+	test('exposes and guards pending gender, Add, and Remove operations', async () => {
+		const onTrainerGenderSelect = vi.fn();
+		render(publicFixtureView, {
+			harness: false,
+			pendingTargets: ['trainer-gender-male'],
+			props: { onTrainerGenderSelect }
+		});
+		const genderGroup = host.querySelector<HTMLElement>(
+			'[role="group"][aria-label="Trainer gender"]'
+		)!;
+		expect(genderGroup.getAttribute('aria-busy')).toBe('true');
+		(target('trainer-gender-male') as HTMLButtonElement).click();
+		expect(onTrainerGenderSelect).not.toHaveBeenCalled();
+
+		await clearMounted();
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const occupied = new Set(pocket.items.map((item) => item.id));
+		const catalogue = publicCatalogues[pocket.key];
+		if (catalogue.status !== 'ready') throw new Error('Expected a ready public catalogue.');
+		const option = catalogue.availableItems.find((item) => !occupied.has(item.id))!;
+		const addIdentity = `pocket-${pocket.key}-add-confirm`;
+		const onAddItem = vi.fn();
+		render(publicFixtureView, {
+			harness: false,
+			pendingTargets: [addIdentity],
+			props: {
+				command: { kind: 'add-item', pocketKey: pocket.key, itemId: option.id, quantity: '1' },
+				onAddItem
+			}
+		});
+		const addConfirm = target(addIdentity);
+		expect(addConfirm.closest('[data-ledger-command]')?.getAttribute('aria-busy')).toBe('true');
+		(addConfirm as HTMLButtonElement).click();
+		expect(onAddItem).not.toHaveBeenCalled();
+
+		await clearMounted();
+		const item = pocket.items[0];
+		const removeIdentity = `item-${pocket.key}-${item.id}-confirm-remove`;
+		const onRemoveItem = vi.fn();
+		render(publicFixtureView, {
+			harness: false,
+			pendingTargets: [removeIdentity],
+			props: {
+				command: { kind: 'remove-item', pocketKey: pocket.key, itemId: item.id },
+				onRemoveItem
+			}
+		});
+		const removeConfirm = target(removeIdentity);
+		expect(removeConfirm.closest('[data-ledger-command]')?.getAttribute('aria-busy')).toBe('true');
+		(removeConfirm as HTMLButtonElement).click();
+		expect(onRemoveItem).not.toHaveBeenCalled();
+
+		await clearMounted();
+		render(
+			{ ...publicFixtureView, editingUnavailable: { message: 'Editor unavailable.' } },
+			{
+				harness: false,
+				props: {
+					command: { kind: 'remove-item', pocketKey: pocket.key, itemId: item.id },
+					onRemoveItem
+				}
+			}
+		);
+		expect((target(removeIdentity) as HTMLButtonElement).disabled).toBe(true);
+	});
+
 	test('lets a pointer operator consume the raw draft without a second blur commit', async () => {
 		const onMoneyCommit = vi.fn();
 		const onMoneyStep = vi.fn();
@@ -656,6 +824,101 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 
 		expect(onMoneyCommit).not.toHaveBeenCalled();
 		expect(onMoneyStep).toHaveBeenCalledWith(-1, '001');
+	});
+
+	test('lets controller traversal reach a same-field operator and activate one combined step', async () => {
+		const onMoneyCommit = vi.fn();
+		const onMoneyStep = vi.fn();
+		render(publicFixtureView, {
+			harness: false,
+			props: { drafts: { money: { value: '001' } }, onMoneyCommit, onMoneyStep }
+		});
+		await tick();
+		const input = target('money-value');
+		input.focus();
+		dispatchControllerKey('ArrowRight');
+		expect(document.activeElement).toBe(target('money-increase'));
+		dispatchControllerKey('ArrowRight');
+		expect(document.activeElement).toBe(target('money-max'));
+		expect(onMoneyCommit).not.toHaveBeenCalled();
+		dispatchControllerKey('Enter');
+		expect(onMoneyCommit).not.toHaveBeenCalled();
+		expect(onMoneyStep).toHaveBeenCalledOnce();
+		expect(onMoneyStep).toHaveBeenCalledWith('max', '001');
+	});
+
+	test('commits a deferred draft once when controller focus leaves its operator group', async () => {
+		const onMoneyCommit = vi.fn();
+		render(publicFixtureView, { harness: false, props: { onMoneyCommit } });
+		await tick();
+		const input = target('money-value');
+		input.focus();
+		dispatchControllerKey('ArrowRight');
+		dispatchControllerKey('ArrowRight');
+		expect(onMoneyCommit).not.toHaveBeenCalled();
+		dispatchControllerKey('ArrowDown');
+		expect(onMoneyCommit).toHaveBeenCalledOnce();
+		expect(onMoneyCommit).toHaveBeenCalledWith('blur');
+	});
+
+	test('lets a controller quantity operator consume its own raw draft', async () => {
+		const pocket = publicFixtureView.projection.inventory.pockets.find((candidate) =>
+			candidate.items.some((item) => item.maxQuantity > 2)
+		)!;
+		const item = pocket.items.find((candidate) => candidate.maxQuantity > 2)!;
+		const onItemQuantityCommit = vi.fn();
+		const onItemQuantityStep = vi.fn();
+		render(publicFixtureView, {
+			harness: false,
+			props: {
+				drafts: { itemQuantities: { [`${pocket.key}:${item.id}`]: { value: '002' } } },
+				onItemQuantityCommit,
+				onItemQuantityStep
+			}
+		});
+		await tick();
+		target(`item-${pocket.key}-${item.id}-quantity`).focus();
+		dispatchControllerKey('ArrowRight');
+		expect(document.activeElement).toBe(target(`item-${pocket.key}-${item.id}-increase`));
+		dispatchControllerKey('Enter');
+		expect(onItemQuantityCommit).not.toHaveBeenCalled();
+		expect(onItemQuantityStep).toHaveBeenCalledWith(pocket.key, item.id, 1, '002');
+	});
+
+	test('commits one field when a pointer activates a different field operator', async () => {
+		const onMoneyCommit = vi.fn();
+		render(publicFixtureView, { harness: false, props: { onMoneyCommit } });
+		await tick();
+		const money = target('money-value');
+		const pocket = publicFixtureView.projection.inventory.pockets[0];
+		const item = pocket.items[0];
+		const increase = target(`item-${pocket.key}-${item.id}-increase`);
+		money.focus();
+		increase.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+		increase.focus();
+		expect(onMoneyCommit).toHaveBeenCalledOnce();
+		expect(onMoneyCommit).toHaveBeenCalledWith('blur');
+	});
+
+	test('commits one field when controller focus crosses into a different field group', async () => {
+		const onMoneyCommit = vi.fn();
+		render(publicFixtureView, { harness: false, props: { onMoneyCommit } });
+		await tick();
+		target('money-value').focus();
+		dispatchControllerKey('ArrowDown');
+		expect(onMoneyCommit).toHaveBeenCalledOnce();
+		expect(onMoneyCommit).toHaveBeenCalledWith('blur');
+	});
+
+	test('does not commit a deferred draft when the Ledger is destroyed', async () => {
+		const onMoneyCommit = vi.fn();
+		render(publicFixtureView, { harness: false, props: { onMoneyCommit } });
+		await tick();
+		target('money-value').focus();
+		dispatchControllerKey('ArrowRight');
+		expect(onMoneyCommit).not.toHaveBeenCalled();
+		await clearMounted();
+		expect(onMoneyCommit).not.toHaveBeenCalled();
 	});
 });
 
@@ -696,6 +959,17 @@ describe('SaveFileLedger states and feedback', () => {
 		expect(host.querySelector('.details-block, .bag-block')).toBeNull();
 		expect(host.textContent).toContain('No editable details are available');
 		expect(host.textContent).not.toContain('Generation');
+	});
+
+	test('omits only unsupported capability groups', () => {
+		const projection = structuredClone(publicFixtureView.projection);
+		projection.trainerProfile.trainerNameSupported = false;
+		projection.trainerProfile.genderSupported = false;
+		render({ ...publicFixtureView, projection });
+
+		expect(host.querySelector('[aria-labelledby="ledger-trainer-title"]')).toBeNull();
+		expect(host.querySelector('[aria-labelledby="ledger-money-title"]')).not.toBeNull();
+		expect(host.querySelector('[aria-labelledby="ledger-bag-title"]')).not.toBeNull();
 	});
 
 	test('exposes pending immediately without prose and delays the localized spinner', async () => {
