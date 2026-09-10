@@ -1,6 +1,10 @@
 import { createPkhexEngine, type EngineApi } from '$lib/engine';
+import type { SaveFileLedgerProps } from '$lib/components/pksx/save-file-ledger/types';
 import { createCleanWorkspaceState, type WorkspaceState } from '$lib/pksx/backup-workflow';
-import { SaveFileEditCoordinator } from '$lib/pksx/save-file-edit-coordinator';
+import {
+	SaveFileEditCoordinator,
+	type SaveFileEditOrigin
+} from '$lib/pksx/save-file-edit-coordinator';
 import { IndexedDbSavesStorage } from '$lib/pksx/saves';
 import { mount, tick, unmount } from 'svelte';
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
@@ -10,16 +14,9 @@ import SaveFileBagTestHarness from './SaveFileBagTestHarness.svelte';
 type MountedHarness = {
 	handleBack(): boolean;
 	currentWorkspace(): WorkspaceState;
-	currentLedgerProps(): {
-		command?: {
-			kind: string;
-			pocketKey: string;
-			itemId?: number | null;
-			quantity?: string;
-			quantityError?: string | null;
-		} | null;
-	};
+	currentLedgerProps(): SaveFileLedgerProps;
 	currentPendingTargets(): string[];
+	currentOrigin(): SaveFileEditOrigin;
 };
 
 let engine: EngineApi;
@@ -43,7 +40,8 @@ afterAll(() => {
 
 async function setup(
 	engineForCoordinator: EngineApi = engine,
-	catalogueEngine: Pick<EngineApi, 'getSaveFileInventoryCatalogue'> = engine
+	catalogueEngine: Pick<EngineApi, 'getSaveFileInventoryCatalogue'> = engine,
+	reloadWorkspace?: () => Promise<WorkspaceState | null>
 ) {
 	const response = await fetch(emeraldUrl);
 	const fixtureBytes = new Uint8Array(await response.arrayBuffer());
@@ -87,6 +85,8 @@ async function setup(
 		workspace: loaded.value
 	});
 	const coordinator = new SaveFileEditCoordinator({ storage, engine: engineForCoordinator });
+	const openWorkspace = vi.spyOn(coordinator, 'openWorkspace');
+	const subscribePending = vi.spyOn(coordinator, 'subscribePending');
 	const toast = { error: vi.fn() };
 	host = document.createElement('div');
 	host.style.width = '640px';
@@ -96,7 +96,14 @@ async function setup(
 	document.body.append(host);
 	mounted = mount(SaveFileBagTestHarness, {
 		target: host,
-		props: { workspace, activeBox: 0, coordinator, engine: catalogueEngine, toast }
+		props: {
+			workspace,
+			activeBox: 0,
+			coordinator,
+			engine: catalogueEngine,
+			toast,
+			reloadWorkspace
+		}
 	});
 	await tick();
 	return {
@@ -108,8 +115,17 @@ async function setup(
 		item,
 		option,
 		toast,
+		coordinator,
+		openWorkspace,
+		subscribePending,
 		harness: mounted as unknown as MountedHarness
 	};
+}
+
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((next) => (resolve = next));
+	return { promise, resolve };
 }
 
 function target(identity: string) {
@@ -199,7 +215,9 @@ describe('Save File Bag with a real public fixture', () => {
 		});
 		target(`pocket-${pocket.key}-add-confirm`).click();
 		await tick();
-		expect(harness.currentLedgerProps().command?.quantityError).toBeNull();
+		const pendingCommand = harness.currentLedgerProps().command;
+		expect(pendingCommand?.kind).toBe('add-item');
+		if (pendingCommand?.kind === 'add-item') expect(pendingCommand.quantityError).toBeNull();
 		expect(harness.currentPendingTargets()).toContain(`pocket-${pocket.key}-add-confirm`);
 		const addCommand = host.querySelector<HTMLElement>('[data-ledger-command]')!;
 		expect(addCommand.getAttribute('aria-busy')).toBe('true');
@@ -354,6 +372,144 @@ describe('Save File Bag with a real public fixture', () => {
 		target(`pocket-${pocket.key}-add-confirm`).click();
 		await waitForItem(harness, pocket.key, option.id, 2);
 		expect(toast.error).toHaveBeenCalledOnce();
+		expect(await storage.listBackups(workspace.file.id)).toHaveLength(1);
+		expect(fixtureBytes).toEqual(unchangedFixture);
+	}, 60_000);
+
+	test('shares origin, accepted Workspace, pending state, and Retry across both controllers', async () => {
+		const firstEdit = deferred<void>();
+		const fatalEdit = deferred<void>();
+		let editCall = 0;
+		const applySaveFileEditOperation = vi.fn<EngineApi['applySaveFileEditOperation']>(
+			async (...args) => {
+				editCall += 1;
+				if (editCall === 1) await firstEdit.promise;
+				if (editCall === 2) await fatalEdit.promise;
+				return engine.applySaveFileEditOperation(...args);
+			}
+		);
+		const coordinatorEngine: EngineApi = { ...engine, applySaveFileEditOperation };
+		const staleCatalogue =
+			deferred<Awaited<ReturnType<EngineApi['getSaveFileInventoryCatalogue']>>>();
+		let catalogueCall = 0;
+		const getSaveFileInventoryCatalogue = vi.fn<EngineApi['getSaveFileInventoryCatalogue']>(
+			async (...args) => {
+				catalogueCall += 1;
+				if (catalogueCall === 2) return staleCatalogue.promise;
+				return engine.getSaveFileInventoryCatalogue(...args);
+			}
+		);
+		let reloadValue: WorkspaceState | null = null;
+		const reloadWorkspace = vi.fn(async () => reloadValue);
+		const {
+			fixtureBytes,
+			unchangedFixture,
+			storage,
+			workspace,
+			pocket,
+			item,
+			coordinator,
+			openWorkspace,
+			subscribePending,
+			harness
+		} = await setup(coordinatorEngine, { getSaveFileInventoryCatalogue }, reloadWorkspace);
+		await vi.waitFor(() =>
+			expect((target(`pocket-${pocket.key}-add`) as HTMLButtonElement).disabled).toBe(false)
+		);
+		expect(openWorkspace).toHaveBeenCalledOnce();
+		expect(subscribePending).toHaveBeenCalledOnce();
+
+		let props = harness.currentLedgerProps();
+		const accepted = harness.currentWorkspace().workspace.saveFile!;
+		const trainerDraft = accepted.trainerProfile.trainerName === 'PKSX' ? 'PUBLIC' : 'PKSX';
+		const moneyDraft =
+			accepted.money.value === accepted.money.min ? accepted.money.min + 1 : accepted.money.min;
+		props.onTrainerNameInput?.(trainerDraft);
+		props.onMoneyInput?.(String(moneyDraft));
+		const firstQuantity =
+			item.quantity === item.maxQuantity ? item.quantity - 1 : item.quantity + 1;
+		props.onItemQuantityInput?.(pocket.key, item.id, String(firstQuantity));
+		props.onItemQuantityCommit?.(pocket.key, item.id, 'enter');
+		await vi.waitFor(() =>
+			expect(harness.currentPendingTargets()).toContain(`item-${pocket.key}-${item.id}-quantity`)
+		);
+		expect(subscribePending).toHaveBeenCalledOnce();
+		firstEdit.resolve();
+		await waitForItem(harness, pocket.key, item.id, firstQuantity);
+		props = harness.currentLedgerProps();
+		expect(props.drafts?.trainerName?.value).toBe(trainerDraft);
+		expect(props.drafts?.money?.value).toBe(String(moneyDraft));
+		expect(props.drafts?.itemQuantities?.[`${pocket.key}:${item.id}`]).toBeUndefined();
+
+		props.onRetryCatalogue?.(pocket.key);
+		await vi.waitFor(() => expect(getSaveFileInventoryCatalogue).toHaveBeenCalledTimes(2));
+		props.onItemQuantityInput?.(pocket.key, item.id, String(firstQuantity + 1));
+		props.onCommandChange?.({
+			kind: 'add-item',
+			pocketKey: pocket.key,
+			itemId: null,
+			quantity: '1'
+		});
+		const nextGender = accepted.trainerProfile.gender === 'male' ? 'female' : 'male';
+		props.onTrainerGenderSelect?.(nextGender);
+		await vi.waitFor(() => expect(harness.currentPendingTargets().length).toBeGreaterThan(0));
+		reloadValue = harness.currentWorkspace();
+		const originBeforeFailure = harness.currentOrigin();
+		coordinator.replaceWorkspace(reloadValue, 0);
+		fatalEdit.resolve();
+		await vi.waitFor(() => {
+			const view = harness.currentLedgerProps().view;
+			expect(view.status).toBe('ready');
+			if (view.status === 'ready') expect(view.editingUnavailable?.message).toBeTruthy();
+		});
+
+		props = harness.currentLedgerProps();
+		expect(props.command).toBeNull();
+		expect(props.drafts?.itemQuantities).toEqual({});
+		expect(props.drafts?.trainerName?.value).toBe(
+			harness.currentWorkspace().workspace.saveFile!.trainerProfile.trainerName
+		);
+		expect(props.drafts?.money?.value).toBe(
+			String(harness.currentWorkspace().workspace.saveFile!.money.value)
+		);
+		expect(input('trainer-name').disabled).toBe(true);
+		expect(input('money-value').disabled).toBe(true);
+		expect(input(`item-${pocket.key}-${item.id}-quantity`).disabled).toBe(true);
+
+		target('editing-retry').click();
+		await vi.waitFor(() => {
+			expect(harness.currentOrigin()).not.toEqual(originBeforeFailure);
+			const view = harness.currentLedgerProps().view;
+			expect(view.status).toBe('ready');
+			if (view.status === 'ready') expect(view.editingUnavailable).toBeNull();
+		});
+		expect(reloadWorkspace).toHaveBeenCalledOnce();
+		expect(subscribePending).toHaveBeenCalledTimes(2);
+		await vi.waitFor(() =>
+			expect(harness.currentLedgerProps().catalogues?.[pocket.key]?.status).toBe('ready')
+		);
+		staleCatalogue.resolve({
+			ok: false,
+			value: null,
+			error: { code: 'engine-unavailable', message: 'Old catalogue result.' }
+		});
+		await tick();
+		expect(harness.currentLedgerProps().catalogues?.[pocket.key]?.status).toBe('ready');
+		expect(harness.currentLedgerProps().command).toBeNull();
+		expect(harness.currentLedgerProps().drafts?.itemQuantities).toEqual({});
+
+		const acceptedAfterRetry = harness
+			.currentWorkspace()
+			.workspace.saveFile!.inventory.pockets.find((candidate) => candidate.key === pocket.key)!
+			.items.find((candidate) => candidate.id === item.id)!;
+		const finalQuantity =
+			acceptedAfterRetry.quantity === acceptedAfterRetry.maxQuantity
+				? acceptedAfterRetry.quantity - 1
+				: acceptedAfterRetry.quantity + 1;
+		props = harness.currentLedgerProps();
+		props.onItemQuantityInput?.(pocket.key, item.id, String(finalQuantity));
+		props.onItemQuantityCommit?.(pocket.key, item.id, 'enter');
+		await waitForItem(harness, pocket.key, item.id, finalQuantity);
 		expect(await storage.listBackups(workspace.file.id)).toHaveLength(1);
 		expect(fixtureBytes).toEqual(unchangedFixture);
 	}, 60_000);

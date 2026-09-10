@@ -2,10 +2,8 @@
 	import SaveFileLedger from '$lib/components/pksx/SaveFileLedger.svelte';
 	import type { EngineApi } from '$lib/engine';
 	import type { WorkspaceState } from '$lib/pksx/backup-workflow';
-	import {
-		type PendingSaveFileEdit,
-		type SaveFileEditCoordinator
-	} from '$lib/pksx/save-file-edit-coordinator';
+	import type { SaveFileEditCoordinator } from '$lib/pksx/save-file-edit-coordinator';
+	import { createSaveFileTrainerMoneyController } from '$lib/pksx/save-file-trainer-money/index.svelte';
 	import type { ToastHost } from '$lib/pksx/toast/host.svelte';
 	import { onDestroy, untrack } from 'svelte';
 	import { createSaveFileBagController } from './index.svelte';
@@ -16,67 +14,78 @@
 		coordinator: SaveFileEditCoordinator;
 		engine: Pick<EngineApi, 'getSaveFileInventoryCatalogue'>;
 		toast: Pick<ToastHost, 'error'>;
+		reloadWorkspace?: () => Promise<WorkspaceState | null>;
 	}
 
-	let { workspace: initialWorkspace, activeBox, coordinator, engine, toast }: Props = $props();
+	let {
+		workspace: initialWorkspace,
+		activeBox,
+		coordinator,
+		engine,
+		toast,
+		reloadWorkspace
+	}: Props = $props();
 	const coordinatorInstance = untrack(() => coordinator);
-	let workspace = $state.raw(untrack(() => initialWorkspace));
-	let origin = untrack(() => coordinatorInstance.openWorkspace(initialWorkspace, activeBox));
-	let editingUnavailable = $state.raw<{ message: string; retrying?: boolean } | null>(null);
-	let pendingTargets = $state.raw(pendingKeys(coordinatorInstance.listPending(origin)));
-	const controller = untrack(() =>
+	const edits = untrack(() =>
+		createSaveFileTrainerMoneyController({
+			workspace: initialWorkspace,
+			activeBox,
+			coordinator: coordinatorInstance,
+			toast,
+			reloadWorkspace: reloadWorkspace ?? (async () => initialWorkspace)
+		})
+	);
+	const bag = untrack(() =>
 		createSaveFileBagController({
-			getWorkspace: () => workspace,
-			getOrigin: () => origin,
-			subscribeOrigin: (listener) => {
-				listener(origin);
-				return () => undefined;
-			},
+			getWorkspace: () => edits.workspace,
+			getOrigin: () => edits.origin,
+			subscribeOrigin: edits.subscribeOrigin,
 			coordinator: coordinatorInstance,
 			engine,
 			toast,
-			acceptWorkspace: (next) => (workspace = next),
-			getEditingUnavailable: () => editingUnavailable,
-			rejectEditing: (message) => (editingUnavailable = { message })
+			acceptWorkspace: edits.acceptWorkspace,
+			getEditingUnavailable: () => edits.editingUnavailable,
+			rejectEditing: edits.rejectEditing
 		})
 	);
-	const unsubscribePending = coordinatorInstance.subscribePending(origin, (pending) => {
-		pendingTargets = pendingKeys(pending);
-	});
 	let ledger: SaveFileLedger;
-	let bindings = $derived(controller.ledgerProps);
-	let view = $derived({
-		status: 'ready' as const,
-		originalFilename: workspace.file.originalFileName ?? 'Untitled Save File',
-		summary: workspace.workspace.summary,
-		projection: workspace.workspace.saveFile!,
-		editingUnavailable
-	});
+	let bindings = $derived.by(currentBindings);
 
 	export function handleBack() {
 		return ledger.handleBack();
 	}
 
 	export function currentWorkspace() {
-		return workspace;
+		return edits.workspace;
 	}
 
 	export function currentLedgerProps() {
-		return controller.ledgerProps;
+		return currentBindings();
 	}
 
 	export function currentPendingTargets() {
-		return pendingTargets;
+		return edits.ledgerProps.pendingTargets;
+	}
+
+	export function currentOrigin() {
+		return edits.origin;
 	}
 
 	onDestroy(() => {
-		controller.dispose();
-		unsubscribePending();
+		bag.dispose();
+		edits.dispose();
 	});
 
-	function pendingKeys(pending: readonly PendingSaveFileEdit[]) {
-		return [...new Set(pending.map(({ key }) => key))];
+	function currentBindings() {
+		const shared = edits.ledgerProps;
+		const bagBindings = bag.ledgerProps;
+		return {
+			...shared,
+			...bagBindings,
+			drafts: { ...shared.drafts, ...bagBindings.drafts },
+			errors: { ...shared.errors, ...bagBindings.errors }
+		};
 	}
 </script>
 
-<SaveFileLedger bind:this={ledger} {...bindings} {view} {pendingTargets} />
+<SaveFileLedger bind:this={ledger} {...bindings} />
