@@ -180,6 +180,50 @@ describe('automatic Backup mutation integration', () => {
 		expect(await storage.getWorkspace(state.file.id)).toEqual(concurrent);
 		expect(await storage.listBackups(state.file.id)).toHaveLength(1);
 	});
+
+	it('exports the Workspace bytes committed by the native adapter', async () => {
+		const storage = createStorage();
+		const state = await importWorkspace(storage);
+		const engine = createMockEngine({
+			applySaveFileEditOperation: vi.fn(async () => ({
+				ok: true as const,
+				value: { bytes: new Uint8Array([2]), workspace: saveWorkspace(), mutated: true },
+				error: null
+			}))
+		});
+		const coordinator = new SaveFileEditCoordinator({ storage, engine });
+		const origin = coordinator.openWorkspace(state);
+
+		await expect(
+			coordinator.enqueueEdit(origin, { key: 'money', operation: { money: 200 } })
+		).resolves.toMatchObject({ ok: true, status: 'committed' });
+
+		expect(await coordinator.export(origin)).toEqual(new Uint8Array([2]));
+	});
+
+	it('retains one automatic Backup and its marker when Engine work fails', async () => {
+		const storage = createStorage();
+		const state = await importWorkspace(storage);
+		const engine = createMockEngine({
+			applySaveFileEditOperation: vi.fn(async () => {
+				throw new Error('worker stopped');
+			})
+		});
+		const coordinator = new SaveFileEditCoordinator({ storage, engine });
+		const origin = coordinator.openWorkspace(state);
+
+		await expect(
+			coordinator.enqueueEdit(origin, { key: 'money', operation: { money: 200 } })
+		).resolves.toMatchObject({ ok: false, code: 'engine-unavailable' });
+
+		const workspace = await storage.getWorkspace(state.file.id);
+		expect(workspace).toMatchObject({
+			bytes: new Uint8Array([1]),
+			dirty: false,
+			automaticBackupCreated: true
+		});
+		expect(await storage.listBackups(state.file.id)).toHaveLength(1);
+	});
 });
 
 async function importWorkspace(storage: CapacitorSavesStorage): Promise<WorkspaceState> {
@@ -206,7 +250,7 @@ function createFileBackend(): FileBackend {
 			return typeof value === 'string' ? value : null;
 		},
 		async writeText(path, value) {
-			if (path === 'catalog.json' && backend.failCatalogWrites > 0) {
+			if (path.startsWith('catalog.') && backend.failCatalogWrites > 0) {
 				backend.failCatalogWrites -= 1;
 				throw new Error('catalog unavailable');
 			}
@@ -221,6 +265,16 @@ function createFileBackend(): FileBackend {
 		},
 		async delete(path) {
 			backend.values.delete(path);
+		},
+		async list(path) {
+			const prefix = `${path}/`;
+			return [
+				...new Set(
+					[...backend.values.keys()]
+						.filter((candidate) => candidate.startsWith(prefix))
+						.map((candidate) => candidate.slice(prefix.length).split('/')[0])
+				)
+			];
 		}
 	};
 	backend.fileStore = fileStore;

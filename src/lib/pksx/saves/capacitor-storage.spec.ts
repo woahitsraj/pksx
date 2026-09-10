@@ -12,6 +12,10 @@ describe('CapacitorSavesStorage', () => {
 	let failBackupDeletes: number;
 	let failWorkspaceReads: number;
 	let failWorkspaceWrites: number;
+	let failWorkspaceDeletes: number;
+	let catalogWriteFailure: 'after' | 'partial' | null;
+	let failCatalogReads: number;
+	let failCatalogReadback: boolean;
 
 	beforeEach(() => {
 		files = new Map();
@@ -19,16 +23,33 @@ describe('CapacitorSavesStorage', () => {
 		failBackupDeletes = 0;
 		failWorkspaceReads = 0;
 		failWorkspaceWrites = 0;
+		failWorkspaceDeletes = 0;
+		catalogWriteFailure = null;
+		failCatalogReads = 0;
+		failCatalogReadback = false;
 		const ids = ['save-1', 'backup-1'];
 		fileStore = {
 			async readText(path) {
+				if (path.startsWith('catalog.') && failCatalogReads > 0) {
+					failCatalogReads -= 1;
+					throw new Error('catalog read unavailable');
+				}
 				const value = files.get(path);
 				return typeof value === 'string' ? value : null;
 			},
 			async writeText(path, value) {
-				if (path === 'catalog.json' && failCatalogWrites > 0) {
+				if (path.startsWith('catalog.') && failCatalogWrites > 0) {
 					failCatalogWrites -= 1;
 					throw new Error('catalog unavailable');
+				}
+				if (path.startsWith('catalog.') && catalogWriteFailure) {
+					files.set(path, catalogWriteFailure === 'after' ? value : value.slice(0, 23));
+					catalogWriteFailure = null;
+					if (failCatalogReadback) {
+						failCatalogReadback = false;
+						failCatalogReads = 1;
+					}
+					throw new Error('catalog acknowledgement unavailable');
 				}
 				files.set(path, value);
 			},
@@ -52,7 +73,14 @@ describe('CapacitorSavesStorage', () => {
 					failBackupDeletes -= 1;
 					throw new Error('backup cleanup unavailable');
 				}
+				if (path.startsWith('workspaces/') && failWorkspaceDeletes > 0) {
+					failWorkspaceDeletes -= 1;
+					throw new Error('workspace cleanup unavailable');
+				}
 				files.delete(path);
+			},
+			async list(path) {
+				return listChildren(files, path);
 			}
 		};
 		storage = new CapacitorSavesStorage({
@@ -202,6 +230,189 @@ describe('CapacitorSavesStorage', () => {
 		expect(await storage.getWorkspace(saveFile.id)).toEqual(persisted);
 	});
 
+	it('accepts a complete catalog write whose acknowledgement fails', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		catalogWriteFailure = 'after';
+
+		const persisted = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+
+		expect(await storage.getWorkspace(saveFile.id)).toEqual(persisted);
+	});
+
+	it('ignores a partial inactive catalog and preserves the selected generation', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		const persisted = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+		catalogWriteFailure = 'partial';
+
+		await expect(
+			storage.putWorkspace({
+				saveFileId: saveFile.id,
+				bytes: new Uint8Array([3]),
+				dirty: true,
+				automaticBackupCreated: true,
+				expectedUpdatedAt: persisted.updatedAt
+			})
+		).rejects.toThrow('catalog acknowledgement unavailable');
+
+		const recreated = new CapacitorSavesStorage({ fileStore });
+		expect(await recreated.getWorkspace(saveFile.id)).toEqual(persisted);
+	});
+
+	it('falls back only when the newest catalog envelope checksum is invalid', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+		const newest = JSON.parse(files.get('catalog.0.json') as string) as { checksum: string };
+		newest.checksum = '00000000';
+		files.set('catalog.0.json', JSON.stringify(newest));
+
+		const recreated = new CapacitorSavesStorage({ fileStore });
+		expect(await recreated.listSaves()).toHaveLength(1);
+		expect(await recreated.getWorkspace(saveFile.id)).toBeNull();
+	});
+
+	it('preserves an ambiguously acknowledged candidate for recreation', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		catalogWriteFailure = 'after';
+		failCatalogReadback = true;
+
+		await expect(
+			storage.putWorkspace({
+				saveFileId: saveFile.id,
+				bytes: new Uint8Array([2]),
+				dirty: true,
+				automaticBackupCreated: false
+			})
+		).rejects.toThrow('catalog acknowledgement unavailable');
+
+		const recreated = new CapacitorSavesStorage({ fileStore });
+		expect(await recreated.getWorkspace(saveFile.id)).toMatchObject({
+			bytes: new Uint8Array([2]),
+			dirty: true
+		});
+	});
+
+	it('survives a modified Workspace candidate and failed cleanup', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		const persisted = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+		failWorkspaceWrites = 1;
+		failWorkspaceDeletes = 1;
+
+		await expect(
+			storage.putWorkspace({
+				saveFileId: saveFile.id,
+				bytes: new Uint8Array([3]),
+				dirty: true,
+				automaticBackupCreated: true,
+				expectedUpdatedAt: persisted.updatedAt
+			})
+		).rejects.toThrow('workspace cleanup unavailable');
+
+		const recreated = new CapacitorSavesStorage({ fileStore });
+		expect(await recreated.getWorkspace(saveFile.id)).toEqual(persisted);
+		expect(workspaceRevisionPaths(files)).toHaveLength(1);
+	});
+
+	it('does not turn post-commit cleanup failure into a failed Workspace write', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		const first = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+		failWorkspaceDeletes = 1;
+
+		const second = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([3]),
+			dirty: true,
+			automaticBackupCreated: true,
+			expectedUpdatedAt: first.updatedAt
+		});
+
+		expect(await storage.getWorkspace(saveFile.id)).toEqual(second);
+		const recreated = new CapacitorSavesStorage({ fileStore });
+		expect(await recreated.getWorkspace(saveFile.id)).toEqual(second);
+		expect(workspaceRevisionPaths(files)).toHaveLength(1);
+	});
+
+	it('distinguishes a malformed committed-only catalog from a fresh store', async () => {
+		files.set('catalog.0.json', '{"envelopeVersion":1');
+		const recreated = new CapacitorSavesStorage({ fileStore });
+
+		await expect(recreated.listSaves()).rejects.toThrow('native Saves catalog is malformed');
+	});
+
+	it('migrates legacy Workspace bytes before the first envelope commit', async () => {
+		seedLegacyWorkspace(files);
+		const recreated = new CapacitorSavesStorage({
+			fileStore,
+			now: () => '2026-05-16T12:00:00.000Z'
+		});
+
+		await recreated.setActiveSaveFileId('legacy-save');
+
+		expect(await recreated.getWorkspace('legacy-save')).toMatchObject({
+			bytes: new Uint8Array([7, 8]),
+			dirty: true
+		});
+		expect(files.has('workspaces/legacy-save.bin')).toBe(false);
+		expect(workspaceRevisionPaths(files)).toHaveLength(1);
+	});
+
+	it('retains the legacy generation when its Workspace copy fails', async () => {
+		seedLegacyWorkspace(files);
+		failWorkspaceWrites = 1;
+		const recreated = new CapacitorSavesStorage({ fileStore });
+
+		await expect(recreated.setActiveSaveFileId('legacy-save')).rejects.toThrow(
+			'workspace write unavailable'
+		);
+		expect(await recreated.getWorkspace('legacy-save')).toMatchObject({
+			bytes: new Uint8Array([7, 8]),
+			dirty: true
+		});
+		expect(files.has('catalog.json')).toBe(true);
+	});
+
 	it('cleans failed automatic Backup bytes and creates one Backup after recreation', async () => {
 		const saveFile = await storage.importSave({
 			bytes: new Uint8Array([1, 2, 3]),
@@ -245,18 +456,100 @@ describe('CapacitorSavesStorage', () => {
 			bytes: new Uint8Array([1, 2, 3]),
 			originalFileName: null
 		});
+		const persisted = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([1, 2, 3]),
+			dirty: false,
+			automaticBackupCreated: false
+		});
 		fail();
 
 		await expect(
 			storage.ensureAutomaticBackup({
 				saveFileId: saveFile.id,
 				importedAt: saveFile.importedAt,
-				expectedUpdatedAt: null,
+				expectedUpdatedAt: persisted.updatedAt,
 				reason: 'inventory-editing'
 			})
 		).rejects.toThrow(message);
-		expect(await storage.getWorkspace(saveFile.id)).toBeNull();
+		expect(await storage.getWorkspace(saveFile.id)).toEqual(persisted);
 		expect([...files.keys()].filter((path) => path.startsWith('backups/'))).toEqual([]);
+	});
+
+	it('keeps the newest catalog authoritative when one Save byte file is unavailable', async () => {
+		const first = await storage.importSave({ bytes: new Uint8Array([1]), originalFileName: null });
+		const second = await storage.importSave({ bytes: new Uint8Array([2]), originalFileName: null });
+		await storage.createBackup({
+			id: 'second-backup',
+			saveFileId: second.id,
+			bytes: new Uint8Array([9]),
+			reason: 'manual'
+		});
+		files.delete(`saves/${second.id}.bin`);
+
+		const recreated = new CapacitorSavesStorage({ fileStore });
+		expect((await recreated.listSaves()).map(({ id }) => id)).toEqual([first.id, second.id]);
+		expect(await recreated.getSaveBytes(second.id)).toBeNull();
+		expect(await recreated.listBackups(second.id)).toHaveLength(1);
+		expect(files.has('backups/second-backup.bin')).toBe(true);
+	});
+
+	it('rejects missing bytes for the selected modern Workspace without using an older generation', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2, 3]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+		for (const path of workspaceRevisionPaths(files)) files.delete(path);
+
+		const recreated = new CapacitorSavesStorage({ fileStore });
+		expect(await recreated.listSaves()).toHaveLength(1);
+		await expect(recreated.getWorkspace(saveFile.id)).rejects.toThrow(
+			'persisted Workspace bytes are missing or truncated'
+		);
+	});
+
+	it('deletes an unavailable Save whose modern Workspace and import bytes are missing', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+		files.delete(`saves/${saveFile.id}.bin`);
+		for (const path of workspaceRevisionPaths(files)) files.delete(path);
+
+		await expect(storage.deleteSave(saveFile.id)).resolves.toBeUndefined();
+		expect(await storage.getSave(saveFile.id)).toBeNull();
+	});
+
+	it('commits Workspace clearing before cleanup and sweeps its orphan after recreation', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+		failWorkspaceDeletes = 1;
+
+		await expect(storage.clearWorkspace(saveFile.id)).resolves.toBeUndefined();
+		expect(await storage.getWorkspace(saveFile.id)).toBeNull();
+		const recreated = new CapacitorSavesStorage({ fileStore });
+		expect(await recreated.getWorkspace(saveFile.id)).toBeNull();
+		expect(workspaceRevisionPaths(files)).toEqual([]);
 	});
 
 	it('deletes identifiable interrupted automatic Backup bytes after cleanup failure', async () => {
@@ -281,6 +574,39 @@ describe('CapacitorSavesStorage', () => {
 
 		expect(await storage.getSave(saveFile.id)).toBeNull();
 		expect([...files.keys()].filter((path) => path.startsWith('backups/'))).toEqual([]);
+	});
+
+	it('retries one automatic Backup identity after orphan cleanup and recreation', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1, 2, 3]),
+			originalFileName: null
+		});
+		failCatalogWrites = 1;
+		failBackupDeletes = 1;
+
+		await expect(
+			storage.ensureAutomaticBackup({
+				saveFileId: saveFile.id,
+				importedAt: saveFile.importedAt,
+				expectedUpdatedAt: null,
+				reason: 'inventory-editing'
+			})
+		).rejects.toThrow('backup cleanup unavailable');
+		const [orphanPath] = [...files.keys()].filter((path) => path.startsWith('backups/'));
+
+		const recreated = new CapacitorSavesStorage({
+			fileStore,
+			now: () => '2026-05-16T12:00:00.000Z'
+		});
+		await recreated.ensureAutomaticBackup({
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			expectedUpdatedAt: null,
+			reason: 'inventory-editing'
+		});
+
+		expect([...files.keys()].filter((path) => path.startsWith('backups/'))).toEqual([orphanPath]);
+		expect(await recreated.listBackups(saveFile.id)).toHaveLength(1);
 	});
 
 	it('preserves reconciled automatic Backup metadata and distinguishes a byte-identical Restore', async () => {
@@ -326,3 +652,49 @@ describe('CapacitorSavesStorage', () => {
 		expect(new Set(backups.map(({ id }) => id)).size).toBe(2);
 	});
 });
+
+function listChildren(files: Map<string, string | Uint8Array>, directory: string) {
+	const prefix = `${directory}/`;
+	return [
+		...new Set(
+			[...files.keys()]
+				.filter((path) => path.startsWith(prefix))
+				.map((path) => path.slice(prefix.length).split('/')[0])
+		)
+	];
+}
+
+function workspaceRevisionPaths(files: Map<string, string | Uint8Array>) {
+	return [...files.keys()].filter((path) => path.startsWith('workspaces/revisions/'));
+}
+
+function seedLegacyWorkspace(files: Map<string, string | Uint8Array>) {
+	const timestamp = '2026-05-16T12:00:00.000Z';
+	files.set('saves/legacy-save.bin', new Uint8Array([1]));
+	files.set('workspaces/legacy-save.bin', new Uint8Array([7, 8]));
+	files.set(
+		'catalog.json',
+		JSON.stringify({
+			version: 1,
+			saves: [
+				{
+					id: 'legacy-save',
+					originalFileName: null,
+					byteLength: 1,
+					importedAt: timestamp,
+					updatedAt: timestamp
+				}
+			],
+			backups: [],
+			workspaces: {
+				'legacy-save': {
+					saveFileId: 'legacy-save',
+					dirty: true,
+					automaticBackupCreated: false,
+					updatedAt: timestamp
+				}
+			},
+			activeSaveFileId: 'legacy-save'
+		})
+	);
+}

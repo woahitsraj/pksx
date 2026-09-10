@@ -1,6 +1,16 @@
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
 import { stableAutomaticBackupId } from './automatic-backup';
 import { bytesEqual, copyBytes } from './bytes';
+import {
+	backupBytesPath,
+	cloneCatalog,
+	NativeCatalogJournal,
+	saveBytesPath,
+	storedWorkspaceMetadata,
+	type NativeCatalogSnapshot,
+	type NativeFileStore,
+	type NativeWorkspaceMetadata
+} from './native-catalog-journal';
 import { clonePokemonStorage } from './pokemon-storage';
 import { nextWorkspaceRevision, WorkspaceRevisionConflictError } from './workspace-revision';
 import type {
@@ -10,36 +20,18 @@ import type {
 	EnsureAutomaticBackupInput,
 	EnsureAutomaticBackupResult,
 	ImportSaveInput,
-	SavesStorage,
 	PutWorkspaceInput,
 	SaveFileId,
+	SavesStorage,
 	StoredPokemonStorage,
 	StoredSaveFile,
 	StoredWorkspace
 } from './types';
 
-const catalogVersion = 1;
-const catalogPath = 'catalog.json';
 const pokemonStoragePath = 'pokemon-storage.json';
 const missingFileCode = 'OS-PLUG-FILE-0008';
 
-type WorkspaceMetadata = Omit<StoredWorkspace, 'bytes'>;
-
-type NativeCatalog = {
-	version: typeof catalogVersion;
-	saves: StoredSaveFile[];
-	backups: BackupMetadata[];
-	workspaces: Record<SaveFileId, WorkspaceMetadata>;
-	activeSaveFileId: SaveFileId | null;
-};
-
-export type NativeFileStore = {
-	readText(path: string): Promise<string | null>;
-	writeText(path: string, value: string): Promise<void>;
-	readBytes(path: string): Promise<Uint8Array | null>;
-	writeBytes(path: string, value: Uint8Array): Promise<void>;
-	delete(path: string): Promise<void>;
-};
+export type { NativeFileStore } from './native-catalog-journal';
 
 export type CapacitorSavesStorageOptions = {
 	fileStore?: NativeFileStore;
@@ -49,19 +41,22 @@ export type CapacitorSavesStorageOptions = {
 
 export class CapacitorSavesStorage implements SavesStorage {
 	readonly #fileStore: NativeFileStore;
+	readonly #journal: NativeCatalogJournal;
 	readonly #idFactory: () => string;
 	readonly #now: () => string;
 	#pending: Promise<void> = Promise.resolve();
 
 	constructor(options: CapacitorSavesStorageOptions = {}) {
 		this.#fileStore = options.fileStore ?? createCapacitorFileStore();
+		this.#journal = new NativeCatalogJournal(this.#fileStore);
 		this.#idFactory = options.idFactory ?? (() => crypto.randomUUID());
 		this.#now = options.now ?? (() => new Date().toISOString());
 	}
 
 	importSave(input: ImportSaveInput): Promise<StoredSaveFile> {
 		return this.#run(async () => {
-			const catalog = await this.#readCatalog();
+			const snapshot = await this.#journal.read();
+			const catalog = cloneCatalog(snapshot.catalog);
 			const timestamp = this.#now();
 			const saveFile: StoredSaveFile = {
 				id: this.#idFactory(),
@@ -70,25 +65,27 @@ export class CapacitorSavesStorage implements SavesStorage {
 				importedAt: timestamp,
 				updatedAt: timestamp
 			};
-
-			await this.#fileStore.writeBytes(saveBytesPath(saveFile.id), input.bytes);
 			catalog.saves.push(saveFile);
 			catalog.activeSaveFileId = saveFile.id;
-			await this.#writeCatalog(catalog);
+			await this.#journal.commit(snapshot, catalog, {
+				stagedBytes: [{ path: saveBytesPath(saveFile.id), bytes: input.bytes }]
+			});
 			return { ...saveFile };
 		});
 	}
 
 	getSave(saveFileId: SaveFileId): Promise<StoredSaveFile | null> {
 		return this.#run(async () => {
-			const saveFile = (await this.#readCatalog()).saves.find(({ id }) => id === saveFileId);
+			const saveFile = (await this.#journal.read()).catalog.saves.find(
+				({ id }) => id === saveFileId
+			);
 			return saveFile ? { ...saveFile } : null;
 		});
 	}
 
 	listSaves(): Promise<StoredSaveFile[]> {
 		return this.#run(async () =>
-			(await this.#readCatalog()).saves
+			(await this.#journal.read()).catalog.saves
 				.map((saveFile) => ({ ...saveFile }))
 				.sort((left, right) => right.importedAt.localeCompare(left.importedAt))
 		);
@@ -100,57 +97,51 @@ export class CapacitorSavesStorage implements SavesStorage {
 
 	putWorkspace(input: PutWorkspaceInput): Promise<StoredWorkspace> {
 		return this.#run(async () => {
-			const catalog = await this.#readCatalog();
+			const snapshot = await this.#journal.read();
+			const catalog = cloneCatalog(snapshot.catalog);
 			if (!catalog.saves.some(({ id }) => id === input.saveFileId)) {
 				throw new Error(`Cannot persist workspace for unknown save file: ${input.saveFileId}`);
 			}
+			const previous = catalog.workspaces[input.saveFileId];
 			if (
 				input.expectedUpdatedAt !== undefined &&
-				(catalog.workspaces[input.saveFileId]?.updatedAt ?? null) !== input.expectedUpdatedAt
+				(previous?.updatedAt ?? null) !== input.expectedUpdatedAt
 			) {
 				throw new WorkspaceRevisionConflictError();
 			}
 
-			const metadata: WorkspaceMetadata = {
+			const metadata: NativeWorkspaceMetadata = {
 				saveFileId: input.saveFileId,
 				dirty: input.dirty,
 				automaticBackupCreated: input.automaticBackupCreated,
-				updatedAt: nextWorkspaceRevision(
-					catalog.workspaces[input.saveFileId]?.updatedAt,
-					this.#now()
-				)
+				updatedAt: nextWorkspaceRevision(previous?.updatedAt, this.#now())
 			};
-			const path = workspaceBytesPath(input.saveFileId);
-			const previousBytes = await this.#fileStore.readBytes(path);
-			await this.#fileStore.writeBytes(path, input.bytes);
 			catalog.workspaces[input.saveFileId] = metadata;
-			try {
-				await this.#writeCatalog(catalog);
-			} catch (error) {
-				if (previousBytes) await this.#fileStore.writeBytes(path, previousBytes);
-				else await this.#fileStore.delete(path);
-				throw error;
-			}
-			return { ...metadata, bytes: copyBytes(input.bytes) };
+			await this.#journal.commit(snapshot, catalog, {
+				workspaceBytes: new Map([[input.saveFileId, input.bytes]])
+			});
+			return { ...storedWorkspaceMetadata(metadata), bytes: copyBytes(input.bytes) };
 		});
 	}
 
 	getWorkspace(saveFileId: SaveFileId): Promise<StoredWorkspace | null> {
 		return this.#run(async () => {
-			const metadata = (await this.#readCatalog()).workspaces[saveFileId];
+			const snapshot = await this.#journal.read();
+			const metadata = snapshot.catalog.workspaces[saveFileId];
 			if (!metadata) return null;
-
-			const bytes = await this.#fileStore.readBytes(workspaceBytesPath(saveFileId));
-			return bytes ? { ...metadata, bytes } : null;
+			const bytes = await this.#journal.readWorkspace(snapshot, saveFileId);
+			if (!bytes) throw new Error('The persisted Workspace bytes are missing.');
+			return { ...storedWorkspaceMetadata(metadata), bytes };
 		});
 	}
 
 	clearWorkspace(saveFileId: SaveFileId): Promise<void> {
 		return this.#run(async () => {
-			const catalog = await this.#readCatalog();
+			const snapshot = await this.#journal.read();
+			const catalog = cloneCatalog(snapshot.catalog);
 			delete catalog.workspaces[saveFileId];
-			await this.#writeCatalog(catalog);
-			await this.#fileStore.delete(workspaceBytesPath(saveFileId));
+			await this.#journal.commit(snapshot, catalog);
+			await this.#journal.cleanupWorkspace(saveFileId);
 		});
 	}
 
@@ -170,40 +161,39 @@ export class CapacitorSavesStorage implements SavesStorage {
 	}
 
 	getActiveSaveFileId(): Promise<SaveFileId | null> {
-		return this.#run(async () => (await this.#readCatalog()).activeSaveFileId);
+		return this.#run(async () => (await this.#journal.read()).catalog.activeSaveFileId);
 	}
 
 	setActiveSaveFileId(saveFileId: SaveFileId): Promise<StoredSaveFile> {
 		return this.#run(async () => {
-			const catalog = await this.#readCatalog();
+			const snapshot = await this.#journal.read();
+			const catalog = cloneCatalog(snapshot.catalog);
 			const index = catalog.saves.findIndex(({ id }) => id === saveFileId);
-			if (index < 0) {
-				throw new Error(`Cannot activate unknown save file: ${saveFileId}`);
-			}
-
+			if (index < 0) throw new Error(`Cannot activate unknown save file: ${saveFileId}`);
 			const updated = { ...catalog.saves[index], updatedAt: this.#now() };
 			catalog.saves[index] = updated;
 			catalog.activeSaveFileId = saveFileId;
-			await this.#writeCatalog(catalog);
+			await this.#journal.commit(snapshot, catalog);
 			return { ...updated };
 		});
 	}
 
 	deleteSave(saveFileId: SaveFileId): Promise<void> {
 		return this.#run(async () => {
-			const catalog = await this.#readCatalog();
+			const snapshot = await this.#journal.read();
+			const catalog = cloneCatalog(snapshot.catalog);
 			const saveFile = catalog.saves.find(({ id }) => id === saveFileId);
 			const workspace = catalog.workspaces[saveFileId];
-			const identifiableInterruptedBackupId =
+			const interruptedBackupId =
 				saveFile && !workspace?.automaticBackupCreated
-					? await this.#interruptedAutomaticBackupId(saveFile, workspace)
+					? await this.#interruptedAutomaticBackupId(snapshot, saveFile, workspace)
 					: null;
 			const backupIds = new Set(
 				catalog.backups
 					.filter((backup) => backup.saveFileId === saveFileId)
 					.map((backup) => backup.id)
 			);
-			if (identifiableInterruptedBackupId) backupIds.add(identifiableInterruptedBackupId);
+			if (interruptedBackupId) backupIds.add(interruptedBackupId);
 			catalog.saves = catalog.saves.filter(({ id }) => id !== saveFileId);
 			catalog.backups = catalog.backups.filter((backup) => backup.saveFileId !== saveFileId);
 			delete catalog.workspaces[saveFileId];
@@ -212,23 +202,18 @@ export class CapacitorSavesStorage implements SavesStorage {
 					[...catalog.saves].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]
 						?.id ?? null;
 			}
-
-			await this.#writeCatalog(catalog);
-			await Promise.all([
-				this.#fileStore.delete(saveBytesPath(saveFileId)),
-				this.#fileStore.delete(workspaceBytesPath(saveFileId)),
-				...[...backupIds].map((backupId) => this.#fileStore.delete(backupBytesPath(backupId)))
-			]);
+			await this.#journal.commit(snapshot, catalog);
+			await this.#journal.cleanupSave(saveFileId, backupIds);
 		});
 	}
 
 	createBackup(input: CreateBackupInput): Promise<BackupMetadata> {
 		return this.#run(async () => {
-			const catalog = await this.#readCatalog();
+			const snapshot = await this.#journal.read();
+			const catalog = cloneCatalog(snapshot.catalog);
 			if (!catalog.saves.some(({ id }) => id === input.saveFileId)) {
 				throw new Error(`Cannot create backup for unknown save file: ${input.saveFileId}`);
 			}
-
 			const backup: BackupMetadata = {
 				id: input.id ?? this.#idFactory(),
 				saveFileId: input.saveFileId,
@@ -236,37 +221,40 @@ export class CapacitorSavesStorage implements SavesStorage {
 				byteLength: input.bytes.byteLength,
 				createdAt: this.#now()
 			};
-			await this.#fileStore.writeBytes(backupBytesPath(backup.id), input.bytes);
 			catalog.backups = [
 				...catalog.backups.filter((candidate) => candidate.id !== backup.id),
 				backup
 			];
-			await this.#writeCatalog(catalog);
+			await this.#journal.commit(snapshot, catalog, {
+				stagedBytes: [{ path: backupBytesPath(backup.id), bytes: input.bytes }]
+			});
 			return { ...backup };
 		});
 	}
 
 	ensureAutomaticBackup(input: EnsureAutomaticBackupInput): Promise<EnsureAutomaticBackupResult> {
 		return this.#run(async () => {
-			const catalog = await this.#readCatalog();
+			const snapshot = await this.#journal.read();
+			const catalog = cloneCatalog(snapshot.catalog);
 			const saveFile = catalog.saves.find(({ id }) => id === input.saveFileId);
 			if (!saveFile || saveFile.importedAt !== input.importedAt) {
 				throw new Error('The selected Save File is no longer available.');
 			}
-
 			const previous = catalog.workspaces[input.saveFileId];
 			if ((previous?.updatedAt ?? null) !== input.expectedUpdatedAt) {
 				throw new WorkspaceRevisionConflictError();
 			}
-			const workspacePath = workspaceBytesPath(input.saveFileId);
 			if (previous?.automaticBackupCreated) {
-				const bytes = await this.#fileStore.readBytes(workspacePath);
+				const bytes = await this.#journal.readWorkspace(snapshot, input.saveFileId);
 				if (!bytes) throw new Error('The persisted Workspace bytes are missing.');
-				return { workspace: { ...previous, bytes }, established: false };
+				return {
+					workspace: { ...storedWorkspaceMetadata(previous), bytes },
+					established: false
+				};
 			}
 
 			const bytes = previous
-				? await this.#fileStore.readBytes(workspacePath)
+				? await this.#journal.readWorkspace(snapshot, input.saveFileId)
 				: await this.#fileStore.readBytes(saveBytesPath(input.saveFileId));
 			if (!bytes) throw new Error('The Save File bytes are no longer available.');
 			const backupId = stableAutomaticBackupId({
@@ -288,63 +276,36 @@ export class CapacitorSavesStorage implements SavesStorage {
 			if (existingBytes && !bytesEqual(existingBytes, bytes)) {
 				throw new Error('The automatic Backup bytes do not match their identity.');
 			}
-			const createdUncataloguedBytes = !existingBackup && !existingBytes;
-			let previousWorkspaceBytes: Uint8Array | null = null;
-			let attemptedInitialWorkspaceWrite = false;
-			try {
-				if (!existingBytes) await this.#fileStore.writeBytes(backupPath, bytes);
-				if (!existingBackup) {
-					catalog.backups.push({
-						id: backupId,
-						saveFileId: input.saveFileId,
-						reason: input.reason,
-						byteLength: bytes.byteLength,
-						createdAt: this.#now()
-					});
-				}
-
-				const metadata: WorkspaceMetadata = {
+			if (!existingBackup) {
+				catalog.backups.push({
+					id: backupId,
 					saveFileId: input.saveFileId,
-					dirty: previous?.dirty ?? false,
-					automaticBackupCreated: true,
-					updatedAt: nextWorkspaceRevision(previous?.updatedAt, this.#now())
-				};
-				if (!previous) {
-					previousWorkspaceBytes = await this.#fileStore.readBytes(workspacePath);
-					attemptedInitialWorkspaceWrite = true;
-					await this.#fileStore.writeBytes(workspacePath, bytes);
-				}
-				catalog.workspaces[input.saveFileId] = metadata;
-				await this.#writeCatalog(catalog);
-				return { workspace: { ...metadata, bytes: copyBytes(bytes) }, established: true };
-			} catch (error) {
-				let cleanupError: unknown;
-				if (attemptedInitialWorkspaceWrite) {
-					try {
-						if (previousWorkspaceBytes) {
-							await this.#fileStore.writeBytes(workspacePath, previousWorkspaceBytes);
-						} else {
-							await this.#fileStore.delete(workspacePath);
-						}
-					} catch (failure) {
-						cleanupError = failure;
-					}
-				}
-				if (createdUncataloguedBytes) {
-					try {
-						await this.#fileStore.delete(backupPath);
-					} catch (failure) {
-						cleanupError ??= failure;
-					}
-				}
-				throw cleanupError ?? error;
+					reason: input.reason,
+					byteLength: bytes.byteLength,
+					createdAt: this.#now()
+				});
 			}
+			const metadata: NativeWorkspaceMetadata = {
+				saveFileId: input.saveFileId,
+				dirty: previous?.dirty ?? false,
+				automaticBackupCreated: true,
+				updatedAt: nextWorkspaceRevision(previous?.updatedAt, this.#now())
+			};
+			catalog.workspaces[input.saveFileId] = metadata;
+			await this.#journal.commit(snapshot, catalog, {
+				workspaceBytes: new Map([[input.saveFileId, bytes]]),
+				stagedBytes: existingBytes ? [] : [{ path: backupPath, bytes }]
+			});
+			return {
+				workspace: { ...storedWorkspaceMetadata(metadata), bytes: copyBytes(bytes) },
+				established: true
+			};
 		});
 	}
 
 	listBackups(saveFileId: SaveFileId): Promise<BackupMetadata[]> {
 		return this.#run(async () =>
-			(await this.#readCatalog()).backups
+			(await this.#journal.read()).catalog.backups
 				.filter((backup) => backup.saveFileId === saveFileId)
 				.map((backup) => ({ ...backup }))
 				.sort((left, right) => right.createdAt.localeCompare(left.createdAt))
@@ -357,10 +318,11 @@ export class CapacitorSavesStorage implements SavesStorage {
 
 	deleteBackup(backupId: BackupId): Promise<void> {
 		return this.#run(async () => {
-			const catalog = await this.#readCatalog();
+			const snapshot = await this.#journal.read();
+			const catalog = cloneCatalog(snapshot.catalog);
 			catalog.backups = catalog.backups.filter(({ id }) => id !== backupId);
-			await this.#writeCatalog(catalog);
-			await this.#fileStore.delete(backupBytesPath(backupId));
+			await this.#journal.commit(snapshot, catalog);
+			await this.#fileStore.delete(backupBytesPath(backupId)).catch(() => undefined);
 		});
 	}
 
@@ -377,28 +339,19 @@ export class CapacitorSavesStorage implements SavesStorage {
 		return result;
 	}
 
-	async #readCatalog(): Promise<NativeCatalog> {
-		const value = await this.#fileStore.readText(catalogPath);
-		if (!value) return emptyCatalog();
-
-		const catalog = JSON.parse(value) as NativeCatalog;
-		if (catalog.version !== catalogVersion) {
-			throw new Error(`Unsupported native Saves catalog version: ${catalog.version}`);
-		}
-		return catalog;
-	}
-
-	#writeCatalog(catalog: NativeCatalog): Promise<void> {
-		return this.#fileStore.writeText(catalogPath, JSON.stringify(catalog));
-	}
-
 	async #interruptedAutomaticBackupId(
+		snapshot: NativeCatalogSnapshot,
 		saveFile: StoredSaveFile,
-		workspace: WorkspaceMetadata | undefined
+		workspace: NativeWorkspaceMetadata | undefined
 	) {
-		const bytes = workspace
-			? await this.#fileStore.readBytes(workspaceBytesPath(saveFile.id))
-			: await this.#fileStore.readBytes(saveBytesPath(saveFile.id));
+		let bytes: Uint8Array | null;
+		try {
+			bytes = workspace
+				? await this.#journal.readWorkspace(snapshot, saveFile.id)
+				: await this.#fileStore.readBytes(saveBytesPath(saveFile.id));
+		} catch {
+			return null;
+		}
 		return bytes
 			? stableAutomaticBackupId({
 					saveFileId: saveFile.id,
@@ -420,9 +373,8 @@ function createCapacitorFileStore(rootPath = 'pksx-saves'): NativeFileStore {
 					directory: Directory.Data,
 					encoding: Encoding.UTF8
 				});
-				if (typeof result.data !== 'string') {
+				if (typeof result.data !== 'string')
 					throw new Error(`Expected native text for ${relativePath}`);
-				}
 				return result.data;
 			} catch (error) {
 				if (isMissingFile(error)) return null;
@@ -444,9 +396,8 @@ function createCapacitorFileStore(rootPath = 'pksx-saves'): NativeFileStore {
 					path: path(relativePath),
 					directory: Directory.Data
 				});
-				if (typeof result.data !== 'string') {
+				if (typeof result.data !== 'string')
 					throw new Error(`Expected native bytes for ${relativePath}`);
-				}
 				return base64ToBytes(result.data);
 			} catch (error) {
 				if (isMissingFile(error)) return null;
@@ -467,30 +418,20 @@ function createCapacitorFileStore(rootPath = 'pksx-saves'): NativeFileStore {
 			} catch (error) {
 				if (!isMissingFile(error)) throw error;
 			}
+		},
+		async list(relativePath) {
+			try {
+				const result = await Filesystem.readdir({
+					path: path(relativePath),
+					directory: Directory.Data
+				});
+				return result.files.map((file) => file.name);
+			} catch (error) {
+				if (isMissingFile(error)) return [];
+				throw error;
+			}
 		}
 	};
-}
-
-function emptyCatalog(): NativeCatalog {
-	return {
-		version: catalogVersion,
-		saves: [],
-		backups: [],
-		workspaces: {},
-		activeSaveFileId: null
-	};
-}
-
-function saveBytesPath(saveFileId: SaveFileId) {
-	return `saves/${encodeURIComponent(saveFileId)}.bin`;
-}
-
-function workspaceBytesPath(saveFileId: SaveFileId) {
-	return `workspaces/${encodeURIComponent(saveFileId)}.bin`;
-}
-
-function backupBytesPath(backupId: BackupId) {
-	return `backups/${encodeURIComponent(backupId)}.bin`;
 }
 
 function isMissingFile(error: unknown) {
