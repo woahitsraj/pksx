@@ -14,6 +14,10 @@ async function openSettings(page: Page, width = 1280, height = 800) {
 
 async function openPokemonEditor(page: Page) {
 	await page.goto('/saves');
+	await expect(page.locator('[data-destination-root="saves"]')).toHaveAttribute(
+		'data-initial-state',
+		'ready'
+	);
 	await page.getByLabel('Import Save File').setInputFiles(emeraldFixturePath);
 	await expect(page.getByText('011020251345.sav imported and made active.')).toBeVisible({
 		timeout: 30_000
