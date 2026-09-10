@@ -1,0 +1,61 @@
+<script lang="ts">
+	import SaveFileLedger from '../SaveFileLedger.svelte';
+	import { untrack } from 'svelte';
+	import type { SaveFileLedgerCatalogue, SaveFileLedgerCommand, SaveFileLedgerView } from './types';
+
+	interface Props {
+		initialView: SaveFileLedgerView;
+		initialCatalogues?: Readonly<Record<string, SaveFileLedgerCatalogue>>;
+		pendingTargets?: readonly string[];
+	}
+
+	let { initialView, initialCatalogues = {}, pendingTargets = [] }: Props = $props();
+	let view = $state(untrack(() => initialView));
+	let command = $state<SaveFileLedgerCommand | null>(null);
+	let catalogues = $state(untrack(() => initialCatalogues));
+	let ledger: { handleBack: () => boolean };
+
+	export function setView(next: SaveFileLedgerView) {
+		view = next;
+	}
+
+	export function setCatalogues(next: Readonly<Record<string, SaveFileLedgerCatalogue>>) {
+		catalogues = next;
+	}
+
+	export function handleBack() {
+		return ledger.handleBack();
+	}
+
+	function removeItem(removal: Extract<SaveFileLedgerCommand, { kind: 'remove-item' }>) {
+		if (view.status !== 'ready') return;
+		view = {
+			...view,
+			projection: {
+				...view.projection,
+				inventory: {
+					...view.projection.inventory,
+					pockets: view.projection.inventory.pockets.map((pocket) =>
+						pocket.key === removal.pocketKey
+							? {
+									...pocket,
+									items: pocket.items.filter((item) => item.id !== removal.itemId)
+								}
+							: pocket
+					)
+				}
+			}
+		};
+		command = null;
+	}
+</script>
+
+<SaveFileLedger
+	bind:this={ledger}
+	{view}
+	{command}
+	{catalogues}
+	{pendingTargets}
+	onCommandChange={(next) => (command = next)}
+	onRemoveItem={removeItem}
+/>
