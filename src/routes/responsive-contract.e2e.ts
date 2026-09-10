@@ -78,6 +78,9 @@ const destinations: Destination[] = [
 const editableSelector =
 	'input:not([type="button"]):not([type="checkbox"]):not([type="file"]):not([type="hidden"]):not([type="radio"]):not([type="reset"]):not([type="submit"]), select, textarea, [contenteditable]:not([contenteditable="false" i])';
 
+const visibleControlSelector =
+	'button, a[href], input:not([type="hidden"]), select, textarea, [role="button"], [tabindex]:not([tabindex="-1"]), [contenteditable]:not([contenteditable="false" i])';
+
 async function setSafeArea(page: Page, insets: Insets) {
 	await page.evaluate(({ top, right, bottom, left }) => {
 		const root = document.documentElement;
@@ -112,12 +115,7 @@ async function importPublicSave(page: Page) {
 	});
 }
 
-async function expectDestinationContract(
-	page: Page,
-	root: Locator,
-	destination: Destination,
-	budget: BudgetCase
-) {
+async function expectDestinationContract(page: Page, destination: Destination, budget: BudgetCase) {
 	const result = await page.evaluate(
 		({ rootSelector, ownerSelector, expectedInsets, expectedSafe }) => {
 			const route = document.querySelector<HTMLElement>(rootSelector);
@@ -139,8 +137,14 @@ async function expectDestinationContract(
 				};
 			};
 			if (!route || !shell || !owner || !focus) {
+				const missing = [
+					!route && `[BUDGET-1] missing ${rootSelector}`,
+					!shell && '[BUDGET-1] missing .app-shell',
+					!owner && `[BUDGET-1] missing scroll owner ${ownerSelector}`,
+					!focus && '[FOCUS-1] missing focused target'
+				].filter((value): value is string => Boolean(value));
 				return {
-					errors: ['missing route, shell, scroll owner, or focused target'],
+					errors: missing,
 					focusIdentity: null,
 					safe: null
 				};
@@ -156,9 +160,9 @@ async function expectDestinationContract(
 			const focusRect = rect(focus);
 			const ownerRect = rect(owner);
 			const identity =
-				focus.dataset.destinationFocus ??
-				focus.id ??
-				focus.getAttribute('aria-label') ??
+				focus.dataset.destinationFocus ||
+				focus.id ||
+				focus.getAttribute('aria-label') ||
 				focus.tagName;
 			const within = (
 				target: ReturnType<typeof rect>,
@@ -170,26 +174,35 @@ async function expectDestinationContract(
 				target.bottom <= boundary.bottom + 1;
 
 			if (innerWidth - expectedInsets.left - expectedInsets.right !== expectedSafe.width)
-				errors.push('Safe Canvas width does not match the published case');
+				errors.push('[BUDGET-1] Safe Canvas width does not match the published case');
 			if (innerHeight - expectedInsets.top - expectedInsets.bottom !== expectedSafe.height)
-				errors.push('Safe Canvas height does not match the published case');
+				errors.push('[BUDGET-1] Safe Canvas height does not match the published case');
 			if (!within(routeRect, safe))
-				errors.push(`route ${JSON.stringify(routeRect)} escapes Safe Canvas`);
-			if (!route.contains(focus)) errors.push(`focused target ${identity} is outside the route`);
+				errors.push(`[BUDGET-1] route ${JSON.stringify(routeRect)} escapes Safe Canvas`);
+			if (!route.contains(focus))
+				errors.push(`[FOCUS-1] focused target ${identity} is outside the route`);
 			if (focusRect.width <= 0 || focusRect.height <= 0)
-				errors.push(`focused target ${identity} has no rendered area ${JSON.stringify(focusRect)}`);
+				errors.push(
+					`[FOCUS-1] focused target ${identity} has no rendered area ${JSON.stringify(focusRect)}`
+				);
 			if (!within(focusRect, routeRect))
-				errors.push(`focused target ${identity} ${JSON.stringify(focusRect)} escapes route`);
+				errors.push(
+					`[FOCUS-1] focused target ${identity} ${JSON.stringify(focusRect)} escapes route`
+				);
 			if (!within(focusRect, safe))
-				errors.push(`focused target ${identity} ${JSON.stringify(focusRect)} escapes Safe Canvas`);
+				errors.push(
+					`[FOCUS-1] focused target ${identity} ${JSON.stringify(focusRect)} escapes Safe Canvas`
+				);
 			if (!owner.contains(focus))
-				errors.push(`scroll owner ${ownerSelector} does not contain focused target ${identity}`);
+				errors.push(
+					`[FOCUS-1] scroll owner ${ownerSelector} does not contain focused target ${identity}`
+				);
 			if (!within(focusRect, ownerRect))
 				errors.push(
-					`focused target ${identity} ${JSON.stringify(focusRect)} is clipped by ${ownerSelector}`
+					`[FOCUS-1] focused target ${identity} ${JSON.stringify(focusRect)} is clipped by ${ownerSelector}`
 				);
 			if (!['auto', 'scroll'].includes(getComputedStyle(owner).overflowY))
-				errors.push(`${ownerSelector} does not own vertical overflow`);
+				errors.push(`[BUDGET-1] ${ownerSelector} does not own vertical overflow`);
 			if (workspaceFile && mainMenuOpener) {
 				const fileRect = rect(workspaceFile);
 				const openerRect = rect(mainMenuOpener);
@@ -200,32 +213,34 @@ async function expectDestinationContract(
 					fileRect.bottom > openerRect.top;
 				if (overlaps)
 					errors.push(
-						`workspace filename ${JSON.stringify(fileRect)} overlaps Main Menu ${JSON.stringify(openerRect)}`
+						`[BUDGET-1] workspace filename ${JSON.stringify(fileRect)} overlaps Main Menu ${JSON.stringify(openerRect)}`
 					);
 			}
 			if (document.documentElement.scrollWidth > innerWidth + 1)
-				errors.push(`document width ${document.documentElement.scrollWidth} exceeds ${innerWidth}`);
+				errors.push(
+					`[BUDGET-1] document width ${document.documentElement.scrollWidth} exceeds ${innerWidth}`
+				);
 			if (document.documentElement.scrollHeight > innerHeight + 1)
 				errors.push(
-					`document height ${document.documentElement.scrollHeight} exceeds ${innerHeight}`
+					`[BUDGET-1] document height ${document.documentElement.scrollHeight} exceeds ${innerHeight}`
 				);
 			if (
 				document.body.scrollWidth > innerWidth + 1 ||
 				document.body.scrollHeight > innerHeight + 1
 			)
 				errors.push(
-					`body extent ${document.body.scrollWidth}x${document.body.scrollHeight} exceeds viewport`
+					`[BUDGET-1] body extent ${document.body.scrollWidth}x${document.body.scrollHeight} exceeds viewport`
 				);
 			if (shell.scrollWidth > shell.clientWidth + 1 || shell.scrollHeight > shell.clientHeight + 1)
 				errors.push(
-					`shell extent ${shell.scrollWidth}x${shell.scrollHeight} exceeds its client size`
+					`[BUDGET-1] shell extent ${shell.scrollWidth}x${shell.scrollHeight} exceeds its client size`
 				);
 
 			const style = getComputedStyle(shell);
 			for (const [edge, expected] of Object.entries(expectedInsets)) {
 				const actual = parseFloat(style.getPropertyValue(`--pksx-safe-area-${edge}`));
 				if (actual !== expected)
-					errors.push(`resolved ${edge} inset is ${actual}px, expected ${expected}px`);
+					errors.push(`[BUDGET-1] resolved ${edge} inset is ${actual}px, expected ${expected}px`);
 			}
 
 			return { errors, focusIdentity: identity, safe };
@@ -240,8 +255,77 @@ async function expectDestinationContract(
 
 	expect(
 		result.errors,
-		`[BUDGET-1][FOCUS-1][FOCUS-4] ${destination.name} ${budget.name}, focus ${result.focusIdentity}`
+		`${destination.name} ${budget.name}, focus ${result.focusIdentity}`
 	).toEqual([]);
+}
+
+async function expectDensityContract(root: Locator, context: string) {
+	const owners = root.locator('.pksx-density');
+	const ownerCount = await owners.count();
+	expect(ownerCount, `[DENSITY-1] ${context} must expose a density owner`).toBeGreaterThan(0);
+
+	const failures: string[] = [];
+	for (let index = 0; index < ownerCount; index += 1) {
+		const result = await owners.nth(index).evaluate((owner, selector) => {
+			const style = getComputedStyle(owner);
+			const ownerIdentity =
+				owner.getAttribute('data-testid') ||
+				owner.getAttribute('data-destination-root') ||
+				owner.className ||
+				owner.tagName;
+			const tokens = {
+				control: parseFloat(style.getPropertyValue('--pksx-control-height')),
+				smallControl: parseFloat(style.getPropertyValue('--pksx-small-control-height')),
+				space: parseFloat(style.getPropertyValue('--pksx-space-unit')),
+				focusRing: parseFloat(style.getPropertyValue('--pksx-focus-ring'))
+			};
+			const controls = [...new Set(owner.querySelectorAll<HTMLElement>(selector))]
+				.filter((element) => {
+					const controlStyle = getComputedStyle(element);
+					return (
+						!element.hidden &&
+						controlStyle.display !== 'none' &&
+						controlStyle.visibility !== 'hidden' &&
+						element.getClientRects().length > 0
+					);
+				})
+				.map((element) => {
+					const rect = element.getBoundingClientRect();
+					return {
+						identity:
+							element.dataset.destinationFocus ||
+							element.id ||
+							element.getAttribute('aria-label') ||
+							element.textContent?.trim().slice(0, 40) ||
+							element.tagName,
+						width: rect.width,
+						height: rect.height
+					};
+				});
+			return { ownerIdentity, tokens, controls };
+		}, visibleControlSelector);
+
+		const ranges = [
+			['standard control', result.tokens.control, 32, 44],
+			['small control', result.tokens.smallControl, 24, 33],
+			['spacing unit', result.tokens.space, 2, 6],
+			['focus ring', result.tokens.focusRing, 2, 3]
+		] as const;
+		for (const [name, value, minimum, maximum] of ranges) {
+			if (!Number.isFinite(value) || value < minimum || value > maximum)
+				failures.push(
+					`[DENSITY-1] ${result.ownerIdentity} ${name} is ${value}px, expected ${minimum}-${maximum}px`
+				);
+		}
+		for (const control of result.controls) {
+			if (control.width <= 0 || control.height <= 0)
+				failures.push(
+					`[DENSITY-1] visible control ${control.identity} is ${control.width}x${control.height}px`
+				);
+		}
+	}
+
+	expect(failures, `[DENSITY-1] ${context} density contract`).toEqual([]);
 }
 
 async function expectEditableFontFloor(scope: Locator, context: string, focusEach: boolean) {
@@ -269,6 +353,123 @@ async function expectEditableFontFloor(scope: Locator, context: string, focusEac
 		}
 	}
 	expect(failures, `[DENSITY-1] ${context} editable controls`).toEqual([]);
+}
+
+async function expectFixtureEditables(root: Locator, destination: Destination, context: string) {
+	if (destination.key === 'trainer') {
+		await expect(
+			root.getByLabel('Trainer name'),
+			`[DENSITY-1] ${context} must render the public fixture Trainer name`
+		).toHaveValue('DIXIE');
+		await expect(
+			root.getByRole('spinbutton', { name: 'Money' }),
+			`[DENSITY-1] ${context} must render the public fixture Money input`
+		).toBeVisible();
+	}
+	if (destination.key === 'bag') {
+		const quantities = root.locator('input[data-ledger-draft="item-quantity"]');
+		await expect(
+			quantities.first(),
+			`[DENSITY-1] ${context} must render public fixture Bag quantities`
+		).toBeVisible();
+		expect(
+			await quantities.count(),
+			`[DENSITY-1] ${context} must audit at least one Bag quantity`
+		).toBeGreaterThan(0);
+	}
+}
+
+async function expectBoxSlotsAndReachability(root: Locator, context: string) {
+	const metrics = await root.evaluate((route) => {
+		const grid = route.querySelector<HTMLElement>('.location-grid')!;
+		const workspace = route.querySelector<HTMLElement>('.storage-workspace')!;
+		const slots = Array.from(grid.querySelectorAll<HTMLElement>('.slot')).map((slot) => {
+			const bounds = slot.getBoundingClientRect();
+			return { width: bounds.width, height: bounds.height };
+		});
+		return {
+			gridOverflowY: getComputedStyle(grid).overflowY,
+			workspaceOverflowY: getComputedStyle(workspace).overflowY,
+			slots
+		};
+	});
+	expect(metrics.slots.length, `[DENSITY-2] ${context} must render a 6 by 5 Box`).toBe(30);
+	expect(metrics.gridOverflowY, `[DENSITY-2] ${context} Box Pane must own Slot overflow`).toMatch(
+		/auto|scroll/
+	);
+	expect(
+		metrics.workspaceOverflowY,
+		`[BUDGET-1] ${context} workspace must own composition overflow`
+	).toMatch(/auto|scroll/);
+	for (const { width, height } of metrics.slots) {
+		expect(width, `[DENSITY-2] ${context} Slot width must be at least 44px`).toBeGreaterThanOrEqual(
+			44
+		);
+		expect(
+			height,
+			`[DENSITY-2] ${context} Slot height must be at least 44px`
+		).toBeGreaterThanOrEqual(44);
+	}
+
+	const lastSlot = root.locator('.location-grid .slot').last();
+	await lastSlot.scrollIntoViewIfNeeded();
+	await expect
+		.poll(
+			() =>
+				lastSlot.evaluate((slot) => {
+					const slotBounds = slot.getBoundingClientRect();
+					const gridBounds = slot.closest('.location-grid')!.getBoundingClientRect();
+					return (
+						slotBounds.left >= gridBounds.left - 1 &&
+						slotBounds.top >= gridBounds.top - 1 &&
+						slotBounds.right <= gridBounds.right + 1 &&
+						slotBounds.bottom <= gridBounds.bottom + 1
+					);
+				}),
+			{ message: `[DENSITY-2] ${context} last Slot must be reachable in its Box Pane` }
+		)
+		.toBe(true);
+
+	const rail = root.getByTestId('active-slot-detail-rail');
+	await rail.scrollIntoViewIfNeeded();
+	await expect
+		.poll(
+			() =>
+				rail.evaluate((element) => {
+					const railBounds = element.getBoundingClientRect();
+					const routeBounds = element
+						.closest<HTMLElement>('[data-destination-root="boxes"]')!
+						.getBoundingClientRect();
+					return (
+						railBounds.width > 0 &&
+						railBounds.height > 0 &&
+						railBounds.left >= routeBounds.left - 1 &&
+						railBounds.top >= routeBounds.top - 1 &&
+						railBounds.right <= routeBounds.right + 1 &&
+						railBounds.bottom <= routeBounds.bottom + 1
+					);
+				}),
+			{ message: `[BUDGET-1] ${context} detail rail must be reachable` }
+		)
+		.toBe(true);
+}
+
+async function anonymizeTrainerEvidence(
+	root: Locator,
+	testInfo: TestInfo,
+	budget: BudgetCase,
+	destination: Destination
+) {
+	if (testInfo.project.name !== 'chromium' || !budget.target || destination.key !== 'trainer')
+		return;
+	const trainerName = root.getByLabel('Trainer name');
+	await trainerName.fill('SAMPLE');
+	await trainerName.press('Enter');
+	await expect(
+		trainerName,
+		'[DENSITY-1] target evidence must display the committed sample Trainer identity'
+	).toHaveValue('SAMPLE');
+	await expect(trainerName).not.toHaveAttribute('aria-disabled', 'true', { timeout: 30_000 });
 }
 
 async function attachTargetScreenshot(
@@ -305,8 +506,12 @@ for (const budget of floorAndTargetCases) {
 		for (const destination of destinations) {
 			await test.step(destination.name, async () => {
 				const root = await openDestination(page, destination, budget);
-				await expectDestinationContract(page, root, destination, budget);
+				await expectDestinationContract(page, destination, budget);
+				await expectDensityContract(root, `${destination.name} ${budget.name}`);
 				if (budget.portrait) {
+					await expectFixtureEditables(root, destination, `${destination.name} ${budget.name}`);
+					if (destination.key === 'boxes')
+						await expectBoxSlotsAndReachability(root, `${destination.name} ${budget.name}`);
 					await expectEditableFontFloor(root, `${destination.name} ${budget.name}`, true);
 					if (destination.key === 'bag') {
 						const addItem = root.getByRole('button', { name: 'Add Item' }).first();
@@ -316,6 +521,7 @@ for (const budget of floorAndTargetCases) {
 						await root.getByRole('button', { name: 'Cancel' }).click();
 					}
 				}
+				await anonymizeTrainerEvidence(root, testInfo, budget, destination);
 				await attachTargetScreenshot(page, testInfo, budget, destination);
 			});
 		}
@@ -342,6 +548,8 @@ test('[BUDGET-1][NAV-1] below-floor canvas keeps every destination reachable', a
 		const root = page.locator(`[data-destination-root="${destination.key}"]`);
 		await expect(root).toHaveAttribute('data-initial-state', 'ready');
 		await expect(root, `[BUDGET-1] ${destination.name} must render below the floor`).toBeVisible();
+		if (destination.key === 'boxes')
+			await expectBoxSlotsAndReachability(root, `${destination.name} below-floor`);
 		await expect(
 			page.getByText(/screen too small|unsupported viewport|rotate your device/i)
 		).toHaveCount(0);
@@ -351,7 +559,8 @@ test('[BUDGET-1][NAV-1] below-floor canvas keeps every destination reachable', a
 			`[FOCUS-1] ${destination.name} must retain a reachable target`
 		).toHaveCount(1);
 		expect(
-			await target.evaluate((element) => element.getBoundingClientRect().width)
+			await target.evaluate((element) => element.getBoundingClientRect().width),
+			`[FOCUS-1] ${destination.name} focused target must have positive width below the floor`
 		).toBeGreaterThan(0);
 	}
 });
@@ -414,7 +623,7 @@ test('[RESP-1][RESP-2] 559/560 reflow preserves pane, focus, Carry, and Menu ide
 	).toEqual(paneState.map(({ pane }) => pane));
 });
 
-test('[DENSITY-2] landscape floor co-displays the collection control, 30 Slots, and detail rail', async ({
+test('[BUDGET-1][DENSITY-2] landscape floor co-displays the collection control, 30 Slots, and detail rail', async ({
 	page
 }, testInfo) => {
 	skipNonChromium(testInfo);
@@ -476,22 +685,43 @@ test('[LARGE-1][SURFACE-1] large caps and representative surfaces use bounded ge
 		'ready'
 	);
 	let boxes = await page.evaluate(() => {
-		const workspace = document
-			.querySelector<HTMLElement>('.storage-workspace')!
-			.getBoundingClientRect();
+		const workspaceElement = document.querySelector<HTMLElement>('.storage-workspace')!;
+		const workspace = workspaceElement.getBoundingClientRect();
 		const pane = document.querySelector<HTMLElement>('.box-pane')!.getBoundingClientRect();
 		const rail = document.querySelector<HTMLElement>('.detail-rail')!.getBoundingClientRect();
+		const style = getComputedStyle(workspaceElement);
 		return {
 			paneCount: document.querySelectorAll('.box-pane').length,
 			paneWidth: pane.width,
 			railWidth: rail.width,
 			leftSpend: pane.left - workspace.left,
-			rightSpend: workspace.right - rail.right
+			rightSpend: workspace.right - rail.right,
+			type: {
+				caption: parseFloat(style.getPropertyValue('--pksx-type-caption')),
+				label: parseFloat(style.getPropertyValue('--pksx-type-label')),
+				body: parseFloat(style.getPropertyValue('--pksx-type-body')),
+				title: parseFloat(style.getPropertyValue('--pksx-type-title')),
+				display: parseFloat(style.getPropertyValue('--pksx-type-display'))
+			}
 		};
 	});
 	expect(boxes.paneCount, '[LARGE-1] a large canvas must not open another pane').toBe(1);
-	expect(boxes.paneWidth).toBeLessThanOrEqual(800);
-	expect(boxes.railWidth).toBeLessThanOrEqual(260);
+	expect(boxes.paneWidth, '[LARGE-1] single Box Pane must be at most 800px').toBeLessThanOrEqual(
+		800
+	);
+	expect(
+		boxes.railWidth,
+		'[LARGE-1] Active Slot Detail Rail must be at most 260px'
+	).toBeLessThanOrEqual(260);
+	expect(boxes.type, '[LARGE-1] 1280x800 Boxes density owner must use the large type step').toEqual(
+		{
+			caption: 11,
+			label: 13,
+			body: 15,
+			title: 18,
+			display: 28
+		}
+	);
 	expect(
 		Math.abs(boxes.leftSpend - boxes.rightSpend),
 		'[LARGE-1] Boxes composition must be centered'
@@ -508,21 +738,34 @@ test('[LARGE-1][SURFACE-1] large caps and representative surfaces use bounded ge
 		.click();
 	await expect(page.locator('.box-pane')).toHaveCount(2);
 	boxes = await page.evaluate(() => {
-		const workspace = document
-			.querySelector<HTMLElement>('.storage-workspace')!
-			.getBoundingClientRect();
+		const workspaceElement = document.querySelector<HTMLElement>('.storage-workspace')!;
+		const workspace = workspaceElement.getBoundingClientRect();
 		const pane = document.querySelector<HTMLElement>('.box-pane')!.getBoundingClientRect();
 		const rail = document.querySelector<HTMLElement>('.detail-rail')!.getBoundingClientRect();
+		const style = getComputedStyle(workspaceElement);
 		return {
 			paneCount: document.querySelectorAll('.box-pane').length,
 			paneWidth: pane.width,
 			railWidth: rail.width,
 			leftSpend: pane.left - workspace.left,
-			rightSpend: workspace.right - rail.right
+			rightSpend: workspace.right - rail.right,
+			type: {
+				caption: parseFloat(style.getPropertyValue('--pksx-type-caption')),
+				label: parseFloat(style.getPropertyValue('--pksx-type-label')),
+				body: parseFloat(style.getPropertyValue('--pksx-type-body')),
+				title: parseFloat(style.getPropertyValue('--pksx-type-title')),
+				display: parseFloat(style.getPropertyValue('--pksx-type-display'))
+			}
 		};
 	});
-	expect(boxes.paneWidth).toBeLessThanOrEqual(640);
-	expect(boxes.railWidth).toBeLessThanOrEqual(260);
+	expect(
+		boxes.paneWidth,
+		'[LARGE-1] each explicitly opened Box Pane must be at most 640px'
+	).toBeLessThanOrEqual(640);
+	expect(
+		boxes.railWidth,
+		'[LARGE-1] two-pane Active Slot Detail Rail must be at most 260px'
+	).toBeLessThanOrEqual(260);
 
 	await page.setViewportSize({ width: 1920, height: 1080 });
 	await page.goto('/saves');
@@ -544,16 +787,24 @@ test('[LARGE-1][SURFACE-1] large caps and representative surfaces use bounded ge
 			columns: getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).length
 		};
 	});
-	expect(saves.width).toBeLessThanOrEqual(1200);
+	expect(saves.width, '[LARGE-1] Saves composition must be at most 1200px').toBeLessThanOrEqual(
+		1200
+	);
 	expect(saves.top, '[LARGE-1] Saves stays top-aligned').toBe(saves.routeTop);
-	expect(saves.columns).toBe(4);
+	expect(saves.columns, '[LARGE-1] Saves must use four columns on a large canvas').toBe(4);
 
 	await page.setViewportSize({ width: 1280, height: 800 });
 	await setSafeArea(page, { top: 0, right: 0, bottom: 0, left: 0 });
 	await chooseMainMenu(page, 'Backup Browser');
 	const browserBounds = await page.getByRole('dialog', { name: 'Backup Browser' }).boundingBox();
-	expect(browserBounds?.width).toBeLessThanOrEqual(760);
-	expect(browserBounds?.height).toBeLessThanOrEqual(560);
+	expect(
+		browserBounds?.width,
+		'[SURFACE-1] Tall Takeover width must be at most 760px'
+	).toBeLessThanOrEqual(760);
+	expect(
+		browserBounds?.height,
+		'[SURFACE-1] Tall Takeover height must be at most 560px'
+	).toBeLessThanOrEqual(560);
 });
 
 test('[DENSITY-1][SURFACE-1] portrait Pokemon Editor audits focused and open combobox controls', async ({
@@ -569,8 +820,14 @@ test('[DENSITY-1][SURFACE-1] portrait Pokemon Editor audits focused and open com
 	const editor = page.getByRole('dialog', { name: 'ARON' });
 	await expect(editor.locator('#pokemon-editor-species')).toBeEnabled({ timeout: 30_000 });
 	const editorBounds = await editor.boundingBox();
-	expect(editorBounds?.width).toBeLessThanOrEqual(760);
-	expect(editorBounds?.height).toBeLessThanOrEqual(560);
+	expect(
+		editorBounds?.width,
+		'[SURFACE-1] Pokemon Editor width must be at most 760px'
+	).toBeLessThanOrEqual(760);
+	expect(
+		editorBounds?.height,
+		'[SURFACE-1] Pokemon Editor height must be at most 560px'
+	).toBeLessThanOrEqual(560);
 
 	for (const budget of floorAndTargetCases.filter(({ portrait }) => portrait)) {
 		await page.setViewportSize(budget.viewport);
@@ -625,19 +882,32 @@ test('[SURFACE-1][SURFACE-2] Menu and Backup Browser follow Safe Canvas edges wi
 			left: budget.insets.left
 		});
 		if (budget.portrait) {
-			expect(geometry.panel.left).toBe(geometry.layer.left);
-			expect(geometry.panel.right).toBe(geometry.layer.right);
-			expect(geometry.panel.bottom).toBe(geometry.layer.bottom);
+			expect(geometry.panel.left, `[SURFACE-1] ${budget.name} Menu uses the left edge`).toBe(
+				geometry.layer.left
+			);
+			expect(geometry.panel.right, `[SURFACE-1] ${budget.name} Menu uses the right edge`).toBe(
+				geometry.layer.right
+			);
+			expect(geometry.panel.bottom, `[SURFACE-1] ${budget.name} Menu uses the bottom edge`).toBe(
+				geometry.layer.bottom
+			);
 		} else {
-			expect(geometry.panel.top).toBe(geometry.layer.top);
-			expect(geometry.panel.right).toBe(geometry.layer.right);
-			expect(geometry.panel.bottom).toBe(geometry.layer.bottom);
+			expect(geometry.panel.top, `[SURFACE-1] ${budget.name} Menu uses the top edge`).toBe(
+				geometry.layer.top
+			);
+			expect(geometry.panel.right, `[SURFACE-1] ${budget.name} Menu uses the right edge`).toBe(
+				geometry.layer.right
+			);
+			expect(geometry.panel.bottom, `[SURFACE-1] ${budget.name} Menu uses the bottom edge`).toBe(
+				geometry.layer.bottom
+			);
 		}
 		expect(
 			await page.locator('.app-shell').evaluate((shell) => ({
 				width: shell.scrollWidth,
 				height: shell.scrollHeight
-			}))
+			})),
+			`[SURFACE-1] ${budget.name} Menu must not grow the shell`
 		).toEqual(before);
 		await page.keyboard.press('Escape');
 	}
@@ -648,7 +918,7 @@ test('[SURFACE-1][SURFACE-2] Menu and Backup Browser follow Safe Canvas edges wi
 	const browser = page.getByRole('dialog', { name: 'Backup Browser' });
 	await expect(browser).toBeVisible();
 	const bounds = await browser.boundingBox();
-	expect(bounds).toMatchObject({
+	expect(bounds, '[SURFACE-1] portrait Backup Browser fills the Safe Canvas').toMatchObject({
 		x: portraitFloor.insets.left,
 		y: portraitFloor.insets.top,
 		width: portraitFloor.safe.width,
