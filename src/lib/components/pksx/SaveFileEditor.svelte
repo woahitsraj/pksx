@@ -11,7 +11,9 @@
 	import { onMount } from 'svelte';
 	import { updateAppChrome } from '$lib/pksx/app-chrome.svelte';
 	import { prepareAutomaticBackup, type WorkspaceState } from '$lib/pksx/backup-workflow';
+	import { bytesEqual } from '$lib/pksx/saves';
 	import {
+		getActiveWorkspaceService,
 		getCachedActiveWorkspaceBox,
 		getSavesStorage,
 		getPkhexEngine,
@@ -72,6 +74,7 @@
 	let itemCatalogue = $state<Record<string, InventoryItemOption[]> | null>(null);
 	let catalogueLoading = $state(false);
 	let catalogueError = $state<string | null>(null);
+	let mounted = false;
 
 	const projection = $derived(editor?.projection ?? null);
 	const pockets = $derived(projection?.inventory.pockets ?? []);
@@ -119,9 +122,13 @@
 	);
 
 	onMount(() => {
+		mounted = true;
 		engine = getPkhexEngine();
 		syncAppChrome();
 		void loadEditor();
+		return () => {
+			mounted = false;
+		};
 	});
 
 	function syncAppChrome() {
@@ -302,6 +309,9 @@
 		if (!editor || !workspace || busy) return;
 		const activeEngine = engine;
 		if (!activeEngine) return;
+		const applyingEditor = editor;
+		const sourceFile = workspace.file;
+		const activeBox = getCachedActiveWorkspaceBox();
 		busy = true;
 		syncAppChrome();
 		let preparedRevision: string | null = null;
@@ -405,13 +415,94 @@
 			editor = updateSaveFileEditorSession(result.state, workspace.bytes);
 			if (result.outcome.status === 'success') resetDrafts();
 		} catch (error) {
-			editor = updateSaveFileEditorSession({
-				...editor,
-				applyOutcome: { status: 'failed', message: errorMessage(error) }
-			});
+			const message = errorMessage(error);
+			if (
+				!(await recoverAfterApplyFailure(sourceFile, applyingEditor, activeBox, message)) &&
+				isApplyingContextCurrent(sourceFile, applyingEditor)
+			) {
+				editor = updateSaveFileEditorSession({
+					...editor,
+					applyOutcome: { status: 'failed', message }
+				});
+			}
 		} finally {
 			busy = false;
 			syncAppChrome();
+		}
+	}
+
+	function isApplyingContextCurrent(
+		sourceFile: WorkspaceState['file'],
+		stagedEditor: SaveFileEditorState
+	) {
+		return (
+			mounted &&
+			workspace?.file.id === sourceFile.id &&
+			workspace.file.importedAt === sourceFile.importedAt &&
+			editor?.source.saveFileId === stagedEditor.source.saveFileId &&
+			editor.source.identity.key === stagedEditor.source.identity.key
+		);
+	}
+
+	async function recoverAfterApplyFailure(
+		sourceFile: WorkspaceState['file'],
+		stagedEditor: SaveFileEditorState,
+		activeBox: number,
+		message: string
+	) {
+		try {
+			const recovered = await getActiveWorkspaceService().load(sourceFile.id, activeBox);
+			if (!recovered) return false;
+			const [activeSaveFileId, activeFile, persisted, saveBytes] = await Promise.all([
+				storage.getActiveSaveFileId(),
+				storage.getSave(sourceFile.id),
+				storage.getWorkspace(sourceFile.id),
+				storage.getSaveBytes(sourceFile.id)
+			]);
+			const authoritativeBytes = persisted?.bytes ?? saveBytes;
+			if (
+				!mounted ||
+				activeSaveFileId !== sourceFile.id ||
+				activeFile?.importedAt !== sourceFile.importedAt ||
+				recovered.file.importedAt !== sourceFile.importedAt ||
+				!authoritativeBytes ||
+				!bytesEqual(recovered.bytes, authoritativeBytes) ||
+				recovered.dirty !== (persisted?.dirty ?? false) ||
+				recovered.automaticBackupCreated !== (persisted?.automaticBackupCreated ?? false) ||
+				!isApplyingContextCurrent(sourceFile, stagedEditor)
+			) {
+				return false;
+			}
+
+			const opened = createSaveFileEditorState(
+				{ saveFileId: recovered.file.id, fileName: recovered.file.originalFileName },
+				recovered.workspace.summary,
+				{
+					dirty: recovered.dirty,
+					automaticBackupCreated: recovered.automaticBackupCreated
+				},
+				recovered.workspace.saveFile
+			);
+			if (!opened.ok) return false;
+
+			workspace = recovered;
+			setCachedActiveWorkspace(recovered, activeBox);
+			editor = updateSaveFileEditorSession(
+				{
+					...opened.state,
+					stagedEdits: stagedEditor.stagedEdits,
+					staged: stagedEditor.staged,
+					applyOutcome: { status: 'failed', message }
+				},
+				recovered.bytes
+			);
+			if (!editor.projection.inventory.pockets.some((pocket) => pocket.key === activePocket)) {
+				activePocket = editor.projection.inventory.pockets[0]?.key ?? '';
+			}
+			resetDrafts();
+			return true;
+		} catch {
+			return false;
 		}
 	}
 

@@ -62,6 +62,12 @@ export class ActiveWorkspaceService {
 	}
 
 	async hydrate(saveFileId: SaveFileId, activeBox = 0) {
+		const state = await this.load(saveFileId, activeBox);
+		if (state) this.set(state, activeBox);
+		return state;
+	}
+
+	async load(saveFileId: SaveFileId, activeBox = 0) {
 		const [file, saveBytes, persisted] = await Promise.all([
 			this.options.storage.getSave(saveFileId),
 			this.options.storage.getSaveBytes(saveFileId),
@@ -86,7 +92,6 @@ export class ActiveWorkspaceService {
 					automaticBackupCreated: persisted.automaticBackupCreated
 				})
 			: createCleanWorkspaceState({ file, bytes, workspace: result.value });
-		this.set(state, activeBox);
 		return state;
 	}
 

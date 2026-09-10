@@ -74,6 +74,15 @@ describe('ActiveWorkspaceService', () => {
 		unsubscribe();
 	});
 
+	it('loads an authoritative Workspace without publishing it', async () => {
+		const service = createService();
+
+		const loaded = await service.load(file.id);
+
+		expect(loaded?.file.id).toBe(file.id);
+		expect(service.current).toBeNull();
+	});
+
 	it('exports unchanged Workspace bytes byte-for-byte', async () => {
 		const service = createService();
 		await service.hydrate(file.id);
