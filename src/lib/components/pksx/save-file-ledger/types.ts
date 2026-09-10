@@ -46,6 +46,13 @@ export type SaveFileLedgerDrafts = {
 
 export type SaveFileLedgerCommitReason = 'enter' | 'blur';
 
+export type SaveFileLedgerCommitOutcome = 'complete' | 'invalid';
+
+export type SaveFileLedgerCommitContext = {
+	reason: SaveFileLedgerCommitReason;
+	isEditing: () => boolean;
+};
+
 export type SaveFileLedgerFocusFallbacks = readonly string[];
 
 export type SaveFileLedgerDestination = 'trainer' | 'bag';
@@ -64,19 +71,23 @@ export type SaveFileLedgerProps = {
 	onRetryEditing?: () => void;
 	onRetryCatalogue?: (pocketKey: string) => void;
 	onTrainerNameInput?: (value: string) => void;
-	onTrainerNameCommit?: (reason: SaveFileLedgerCommitReason) => void;
+	onTrainerNameCommit?: (
+		context: SaveFileLedgerCommitContext
+	) => SaveFileLedgerCommitOutcome | Promise<SaveFileLedgerCommitOutcome>;
 	onTrainerNameAbandon?: () => void;
 	onTrainerGenderSelect?: (gender: TrainerGender) => void;
 	onMoneyInput?: (value: string) => void;
-	onMoneyCommit?: (reason: SaveFileLedgerCommitReason) => void;
+	onMoneyCommit?: (
+		context: SaveFileLedgerCommitContext
+	) => SaveFileLedgerCommitOutcome | Promise<SaveFileLedgerCommitOutcome>;
 	onMoneyAbandon?: () => void;
 	onMoneyStep?: (step: -1 | 1 | 'max', draft: string) => boolean;
 	onItemQuantityInput?: (pocketKey: string, itemId: number, value: string) => void;
 	onItemQuantityCommit?: (
 		pocketKey: string,
 		itemId: number,
-		reason: SaveFileLedgerCommitReason
-	) => void;
+		context: SaveFileLedgerCommitContext
+	) => SaveFileLedgerCommitOutcome | Promise<SaveFileLedgerCommitOutcome>;
 	onItemQuantityAbandon?: (pocketKey: string, itemId: number) => void;
 	onItemQuantityStep?: (pocketKey: string, itemId: number, step: -1 | 1, draft: string) => boolean;
 	onCommandChange?: (command: SaveFileLedgerCommand | null) => void;

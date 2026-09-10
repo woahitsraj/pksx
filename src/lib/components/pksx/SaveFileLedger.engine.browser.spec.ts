@@ -12,6 +12,8 @@ import {
 } from '$lib/pksx/destination-focus';
 import type {
 	SaveFileLedgerCatalogue,
+	SaveFileLedgerCommitContext,
+	SaveFileLedgerCommitOutcome,
 	SaveFileLedgerDestination,
 	SaveFileLedgerProps,
 	SaveFileLedgerView
@@ -300,6 +302,28 @@ describe('SaveFileLedger public fixture presentation', () => {
 		expect(getComputedStyle(host.querySelector<HTMLElement>('.ledger-screen')!).overflowY).toBe(
 			'hidden'
 		);
+	});
+
+	test('keeps Save File identity clear of the fixed Main Menu launcher', async () => {
+		render(publicFixtureView, { destination: 'trainer', width: 640, height: 360 });
+		await tick();
+		host.style.position = 'relative';
+		const launcher = document.createElement('button');
+		launcher.style.position = 'absolute';
+		launcher.style.top = '18px';
+		launcher.style.right = '18px';
+		launcher.style.width = '34px';
+		launcher.style.height = '34px';
+		host.append(launcher);
+
+		const identity = host.querySelector<HTMLElement>('.workspace-file')!;
+		const filename = identity.querySelector<HTMLElement>('.filename')!;
+		const version = identity.querySelector<HTMLElement>('span:last-child')!;
+		expect(identity.getBoundingClientRect().right).toBeLessThanOrEqual(
+			launcher.getBoundingClientRect().left
+		);
+		expect(filename.getBoundingClientRect().width).toBeGreaterThan(0);
+		expect(version.getBoundingClientRect().width).toBeGreaterThan(0);
 	});
 });
 
@@ -1010,8 +1034,64 @@ describe('SaveFileLedger semantic focus graph', () => {
 });
 
 describe('SaveFileLedger direct-edit boundary seam', () => {
+	test('separates Controller Focus from edit activation and lets Back abandon once', async () => {
+		const onMoneyCommit = vi.fn();
+		const onMoneyAbandon = vi.fn();
+		const ledger = render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { onMoneyCommit, onMoneyAbandon }
+		});
+		await tick();
+		const money = target('money-value');
+		money.focus();
+
+		expect(ledger.handleBack()).toBe(false);
+		expect(onMoneyAbandon).not.toHaveBeenCalled();
+
+		dispatchControllerKey('Enter');
+		expect(onMoneyCommit).not.toHaveBeenCalled();
+		expect(document.activeElement).toBe(money);
+		expect(ledger.handleBack()).toBe(true);
+		expect(onMoneyAbandon).toHaveBeenCalledOnce();
+		expect(document.activeElement).toBe(money);
+
+		expect(ledger.handleBack()).toBe(false);
+		expect(onMoneyAbandon).toHaveBeenCalledOnce();
+	});
+
+	test('activates a draft from pointer intent or native text input', async () => {
+		const onTrainerNameAbandon = vi.fn();
+		let ledger = render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { onTrainerNameAbandon }
+		});
+		await tick();
+		let name = target('trainer-name') as HTMLInputElement;
+		name.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+		name.focus();
+		expect(ledger.handleBack()).toBe(true);
+		expect(onTrainerNameAbandon).toHaveBeenCalledOnce();
+
+		await clearMounted();
+		onTrainerNameAbandon.mockClear();
+		ledger = render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { onTrainerNameAbandon }
+		});
+		await tick();
+		name = target('trainer-name') as HTMLInputElement;
+		name.focus();
+		name.value = 'May';
+		name.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'y' }));
+		expect(ledger.handleBack()).toBe(true);
+		expect(onTrainerNameAbandon).toHaveBeenCalledOnce();
+	});
+
 	test('preserves native text editing and commits only completed Enter input', async () => {
-		const onTrainerNameCommit = vi.fn();
+		const onTrainerNameCommit = vi.fn(() => 'complete' as const);
 		const onTrainerNameAbandon = vi.fn();
 		render(publicFixtureView, {
 			destination: 'trainer',
@@ -1040,14 +1120,122 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		expect(onTrainerNameCommit).not.toHaveBeenCalled();
 
 		press(name, 'Enter');
+		expect(onTrainerNameCommit).not.toHaveBeenCalled();
+		press(name, 'Enter');
 		expect(onTrainerNameCommit).toHaveBeenCalledOnce();
-		expect(onTrainerNameCommit).toHaveBeenCalledWith('enter');
+		expect(onTrainerNameCommit).toHaveBeenCalledWith(
+			expect.objectContaining({ reason: 'enter', isEditing: expect.any(Function) })
+		);
+		press(name, 'Enter');
 		press(name, 'Escape');
 		expect(onTrainerNameAbandon).toHaveBeenCalledOnce();
 
 		name.focus();
 		dispatchControllerKey('ArrowDown');
 		expect(document.activeElement).toBe(target('trainer-gender-male'));
+	});
+
+	test('uses the explicit confirmation outcome to retain or finish edit mode', async () => {
+		let commitContext!: SaveFileLedgerCommitContext;
+		let commitOutcome: SaveFileLedgerCommitOutcome = 'invalid';
+		const onMoneyAbandon = vi.fn();
+		const onMoneyCommit = vi.fn((context: SaveFileLedgerCommitContext) => {
+			commitContext = context;
+			return commitOutcome;
+		});
+		let ledger = render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { onMoneyAbandon, onMoneyCommit }
+		});
+		await tick();
+		let money = target('money-value') as HTMLInputElement;
+		money.focus();
+		money.value = '';
+		money.dispatchEvent(new InputEvent('input', { bubbles: true }));
+		press(money, 'Enter');
+		expect(onMoneyCommit).toHaveBeenCalledOnce();
+		expect(commitContext.isEditing()).toBe(true);
+		expect(ledger.handleBack()).toBe(true);
+		expect(onMoneyAbandon).toHaveBeenCalledOnce();
+		expect(ledger.handleBack()).toBe(false);
+
+		await clearMounted();
+		onMoneyAbandon.mockClear();
+		commitOutcome = 'complete';
+		ledger = render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { onMoneyAbandon, onMoneyCommit }
+		});
+		await tick();
+		money = target('money-value') as HTMLInputElement;
+		money.focus();
+		press(money, 'Enter');
+		press(money, 'Enter');
+		expect(ledger.handleBack()).toBe(false);
+		expect(onMoneyAbandon).not.toHaveBeenCalled();
+	});
+
+	test('invalidates pending confirmation on Back and ignores its late outcome', async () => {
+		let resolveCommit!: (outcome: 'complete' | 'invalid') => void;
+		let commitContext!: SaveFileLedgerCommitContext;
+		const onMoneyAbandon = vi.fn();
+		const onMoneyCommit = vi.fn(
+			(context: SaveFileLedgerCommitContext) =>
+				new Promise<'complete' | 'invalid'>((resolve) => {
+					commitContext = context;
+					resolveCommit = resolve;
+				})
+		);
+		const ledger = render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { onMoneyAbandon, onMoneyCommit }
+		});
+		await tick();
+		const money = target('money-value');
+		money.focus();
+		press(money, 'Enter');
+		press(money, 'Enter');
+		press(money, 'Enter');
+		expect(onMoneyCommit).toHaveBeenCalledOnce();
+		expect(commitContext.isEditing()).toBe(true);
+
+		expect(ledger.handleBack()).toBe(false);
+		expect(onMoneyAbandon).not.toHaveBeenCalled();
+		expect(commitContext.isEditing()).toBe(false);
+		resolveCommit('invalid');
+		await Promise.resolve();
+		expect(ledger.handleBack()).toBe(false);
+		expect(onMoneyAbandon).not.toHaveBeenCalled();
+	});
+
+	test('retains the current edit for an asynchronous invalid outcome', async () => {
+		let resolveCommit!: (outcome: 'complete' | 'invalid') => void;
+		const onMoneyAbandon = vi.fn();
+		const onMoneyCommit = vi.fn(
+			() =>
+				new Promise<'complete' | 'invalid'>((resolve) => {
+					resolveCommit = resolve;
+				})
+		);
+		const ledger = render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { onMoneyAbandon, onMoneyCommit }
+		});
+		await tick();
+		const money = target('money-value');
+		money.focus();
+		press(money, 'Enter');
+		press(money, 'Enter');
+		resolveCommit('invalid');
+		await Promise.resolve();
+
+		expect(ledger.handleBack()).toBe(true);
+		expect(onMoneyAbandon).toHaveBeenCalledOnce();
+		expect(ledger.handleBack()).toBe(false);
 	});
 
 	test('preserves native Add Item selection while controller arrows cross controls', async () => {
@@ -1116,6 +1304,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		});
 		await expectFocused(`pocket-${pocket.key}-add-item`);
 		const quantity = target(`item-${pocket.key}-${item.id}-quantity`);
+		quantity.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 		quantity.focus();
 		expect(ledger.handleBack()).toBe(true);
 		expect(onItemQuantityAbandon).toHaveBeenCalledWith(pocket.key, item.id);
@@ -1586,6 +1775,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		await tick();
 		const input = target('money-value');
 		const increase = target('money-increase');
+		input.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 		input.focus();
 		increase.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
 		input.dispatchEvent(new FocusEvent('blur', { relatedTarget: null }));
@@ -1609,6 +1799,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		await tick();
 		const input = target('money-value');
 		const increase = target('money-increase');
+		input.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 		input.focus();
 		increase.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
 		window.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true }));
@@ -1636,6 +1827,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		await tick();
 		const input = target('money-value');
 		input.focus();
+		dispatchControllerKey('Enter');
 		dispatchControllerKey('ArrowRight');
 		expect(document.activeElement).toBe(target('money-increase'));
 		dispatchControllerKey('ArrowRight');
@@ -1657,12 +1849,35 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		await tick();
 		const input = target('money-value');
 		input.focus();
+		dispatchControllerKey('Enter');
 		dispatchControllerKey('ArrowRight');
 		dispatchControllerKey('ArrowRight');
 		expect(onMoneyCommit).not.toHaveBeenCalled();
 		dispatchControllerKey('ArrowUp');
 		expect(onMoneyCommit).toHaveBeenCalledOnce();
-		expect(onMoneyCommit).toHaveBeenCalledWith('blur');
+		expect(onMoneyCommit).toHaveBeenCalledWith(
+			expect.objectContaining({ reason: 'blur', isEditing: expect.any(Function) })
+		);
+	});
+
+	test('abandons a deferred draft without committing when Back is pressed from its operator group', async () => {
+		const onMoneyCommit = vi.fn();
+		const onMoneyAbandon = vi.fn();
+		const ledger = render(publicFixtureView, {
+			destination: 'trainer',
+			harness: false,
+			props: { onMoneyCommit, onMoneyAbandon }
+		});
+		await tick();
+		target('money-value').focus();
+		dispatchControllerKey('Enter');
+		dispatchControllerKey('ArrowRight');
+
+		expect(ledger.handleBack()).toBe(true);
+		expect(onMoneyAbandon).toHaveBeenCalledOnce();
+		target('trainer-name').focus();
+		expect(onMoneyCommit).not.toHaveBeenCalled();
+		expect(ledger.handleBack()).toBe(false);
 	});
 
 	test('lets a controller quantity operator consume its own raw draft', async () => {
@@ -1702,6 +1917,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		});
 		await tick();
 		target('money-value').focus();
+		dispatchControllerKey('Enter');
 		target('money-increase').focus();
 		(target('money-increase') as HTMLButtonElement).click();
 		expect(onMoneyStep).not.toHaveBeenCalled();
@@ -1717,6 +1933,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		});
 		await tick();
 		target('money-value').focus();
+		dispatchControllerKey('Enter');
 		target('money-increase').focus();
 		(target('money-increase') as HTMLButtonElement).click();
 		expect(onMoneyStep).toHaveBeenCalledWith(1, '001');
@@ -1738,7 +1955,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		(target('money-increase') as HTMLButtonElement).click();
 		expect(onMoneyStep).not.toHaveBeenCalled();
 		target('trainer-name').focus();
-		expect(onMoneyCommit).toHaveBeenCalledOnce();
+		expect(onMoneyCommit).not.toHaveBeenCalled();
 	});
 
 	test('commits one field when a pointer activates a different field operator', async () => {
@@ -1751,11 +1968,14 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		await tick();
 		const name = target('trainer-name');
 		const increase = target('money-increase');
+		name.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 		name.focus();
 		increase.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 		increase.focus();
 		expect(onTrainerNameCommit).toHaveBeenCalledOnce();
-		expect(onTrainerNameCommit).toHaveBeenCalledWith('blur');
+		expect(onTrainerNameCommit).toHaveBeenCalledWith(
+			expect.objectContaining({ reason: 'blur', isEditing: expect.any(Function) })
+		);
 	});
 
 	test('commits one field when controller focus crosses into a different field group', async () => {
@@ -1767,9 +1987,12 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		});
 		await tick();
 		target('money-value').focus();
+		dispatchControllerKey('Enter');
 		dispatchControllerKey('ArrowUp');
 		expect(onMoneyCommit).toHaveBeenCalledOnce();
-		expect(onMoneyCommit).toHaveBeenCalledWith('blur');
+		expect(onMoneyCommit).toHaveBeenCalledWith(
+			expect.objectContaining({ reason: 'blur', isEditing: expect.any(Function) })
+		);
 	});
 
 	test('does not commit a deferred draft when the Ledger is destroyed', async () => {
@@ -1781,6 +2004,7 @@ describe('SaveFileLedger direct-edit boundary seam', () => {
 		});
 		await tick();
 		target('money-value').focus();
+		dispatchControllerKey('Enter');
 		dispatchControllerKey('ArrowRight');
 		expect(onMoneyCommit).not.toHaveBeenCalled();
 		await clearMounted();

@@ -5,11 +5,19 @@
 	import type {
 		SaveFileLedgerCatalogue,
 		SaveFileLedgerCommand,
+		SaveFileLedgerCommitContext,
+		SaveFileLedgerCommitOutcome,
 		SaveFileLedgerCommitReason,
 		SaveFileLedgerFocusFallbacks,
 		SaveFileLedgerProps,
 		SaveFileLedgerView
 	} from './save-file-ledger/types';
+	type ActiveEdit = {
+		identity: string;
+		target: HTMLElement;
+		generation: number;
+		confirming: boolean;
+	};
 
 	let {
 		destination,
@@ -46,8 +54,12 @@
 	let targetBeforeRecovery: string | null = null;
 	let deferredBlur: {
 		fieldIdentity: string;
-		commit: (reason: SaveFileLedgerCommitReason) => void;
+		commit: (
+			context: SaveFileLedgerCommitContext
+		) => SaveFileLedgerCommitOutcome | Promise<SaveFileLedgerCommitOutcome>;
 	} | null = null;
+	let activeEdit: ActiveEdit | null = null;
+	let editGeneration = 0;
 	let pointerDraftOperator: string | null = null;
 	let previousCommand: SaveFileLedgerCommand | null = null;
 	let recoveryWasActive = false;
@@ -57,6 +69,7 @@
 	onDestroy(() => {
 		destroying = true;
 		deferredBlur = null;
+		activeEdit = null;
 	});
 
 	const ready = $derived(view.status === 'ready' ? view : null);
@@ -142,6 +155,7 @@
 		unavailable: boolean
 	) {
 		if (!root) return;
+		if (activeEdit && findIdentity(activeEdit.identity) !== activeEdit.target) endDraftEditing();
 		const active = document.activeElement;
 		const recoveryIdentity =
 			viewStatus === 'load-failed'
@@ -247,7 +261,12 @@
 
 		if (event.key === 'Enter' && !event.isComposing && active.matches('[data-ledger-draft]')) {
 			consume(event);
-			if (active.getAttribute('aria-disabled') !== 'true') commitDraft(active, 'enter');
+			if (active.getAttribute('aria-disabled') === 'true') return;
+			if (!isDraftEditing(active)) {
+				activateDraft(active);
+				return;
+			}
+			commitDraft(active, 'enter');
 			return;
 		}
 
@@ -288,9 +307,15 @@
 	export function handleBack() {
 		const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		if (!active || !root?.contains(active)) return false;
-		if (active.matches('[data-ledger-draft]') && active.getAttribute('aria-disabled') !== 'true') {
-			abandonDraft(active);
-			return true;
+		if (activeEdit && !activeEdit.target.isConnected) endDraftEditing(activeEdit.identity);
+		if (activeEdit && activeEdit.target.isConnected) {
+			if (activeEdit.confirming || activeEdit.target.getAttribute('aria-disabled') === 'true') {
+				endDraftEditing(activeEdit.identity);
+			} else {
+				abandonDraft(activeEdit.target);
+				endDraftEditing(activeEdit.identity);
+				return true;
+			}
 		}
 		if (activeCommand) {
 			const closingCommand = activeCommand;
@@ -477,9 +502,15 @@
 
 	function handleDraftBlur(
 		event: FocusEvent,
-		commit: ((reason: SaveFileLedgerCommitReason) => void) | undefined
+		commit:
+			| ((
+					context: SaveFileLedgerCommitContext
+			  ) => SaveFileLedgerCommitOutcome | Promise<SaveFileLedgerCommitOutcome>)
+			| undefined
 	) {
-		const fieldIdentity = (event.currentTarget as HTMLElement).dataset.destinationFocus;
+		const target = event.currentTarget as HTMLElement;
+		const fieldIdentity = target.dataset.destinationFocus;
+		if (!fieldIdentity || !isDraftEditing(target)) return;
 		const operatorIdentity =
 			event.relatedTarget instanceof HTMLElement
 				? event.relatedTarget.dataset.ledgerConsumesDraft
@@ -488,7 +519,10 @@
 			deferredBlur = { fieldIdentity, commit };
 			return;
 		}
-		commit?.('blur');
+		const confirming = activeEdit?.confirming === true;
+		const context = commitContext(activeEdit, 'blur');
+		endDraftEditing(fieldIdentity);
+		if (!confirming) commit?.(context);
 	}
 
 	function handleFocusOut(event: FocusEvent) {
@@ -503,17 +537,72 @@
 			queueMicrotask(() => {
 				if (deferredBlur !== pending) return;
 				deferredBlur = null;
-				if (root.isConnected) pending.commit('blur');
+				const context = commitContext(activeEdit, 'blur');
+				endDraftEditing(pending.fieldIdentity);
+				if (root.isConnected) pending.commit(context);
 			});
 			return;
 		}
 		deferredBlur = null;
-		pending.commit('blur');
+		const context = commitContext(activeEdit, 'blur');
+		endDraftEditing(pending.fieldIdentity);
+		pending.commit(context);
 	}
 
 	function activateDraftOperator(fieldIdentity: string, action: (() => boolean) | undefined) {
 		if (action?.() !== true) return;
 		if (deferredBlur?.fieldIdentity === fieldIdentity) deferredBlur = null;
+		endDraftEditing(fieldIdentity);
+	}
+
+	function activateDraft(target: HTMLElement) {
+		const identity = target.dataset.destinationFocus;
+		if (!identity || target.getAttribute('aria-disabled') === 'true') return;
+		if (activeEdit?.target === target) return;
+		activeEdit = { identity, target, generation: ++editGeneration, confirming: false };
+	}
+
+	function activateDraftFromPointer(event: PointerEvent) {
+		const target = event.currentTarget as HTMLElement;
+		if (!activeEdit || activeEdit.target === target) {
+			activateDraft(target);
+			return;
+		}
+		queueMicrotask(() => {
+			if (target.isConnected && document.activeElement === target) activateDraft(target);
+		});
+	}
+
+	function isDraftEditing(target: HTMLElement) {
+		return activeEdit?.target === target;
+	}
+
+	function endDraftEditing(identity?: string) {
+		if (!activeEdit || (identity && activeEdit.identity !== identity)) return;
+		if (deferredBlur?.fieldIdentity === activeEdit.identity) deferredBlur = null;
+		activeEdit = null;
+		editGeneration += 1;
+	}
+
+	function commitContext(
+		edit: ActiveEdit | null,
+		reason: SaveFileLedgerCommitReason
+	): SaveFileLedgerCommitContext {
+		return {
+			reason,
+			isEditing: () => isCurrentEdit(edit)
+		};
+	}
+
+	function isCurrentEdit(edit: ActiveEdit | null) {
+		return Boolean(
+			edit &&
+			activeEdit === edit &&
+			edit.generation === editGeneration &&
+			edit.target.isConnected &&
+			root?.contains(edit.target) &&
+			document.activeElement === edit.target
+		);
 	}
 
 	function beginDraftOperatorPointer(event: PointerEvent) {
@@ -533,11 +622,31 @@
 	}
 
 	function commitDraft(target: HTMLElement, reason: SaveFileLedgerCommitReason) {
-		if (target.dataset.ledgerDraft === 'trainer-name') onTrainerNameCommit?.(reason);
-		else if (target.dataset.ledgerDraft === 'money') onMoneyCommit?.(reason);
-		else if (target.dataset.pocketKey && target.dataset.itemId) {
-			onItemQuantityCommit?.(target.dataset.pocketKey, Number(target.dataset.itemId), reason);
+		const edit = activeEdit;
+		if (!edit || edit.target !== target || edit.confirming) return;
+		const context = commitContext(edit, reason);
+		let outcome: SaveFileLedgerCommitOutcome | Promise<SaveFileLedgerCommitOutcome> = 'complete';
+		if (target.dataset.ledgerDraft === 'trainer-name') {
+			outcome = onTrainerNameCommit?.(context) ?? 'complete';
+		} else if (target.dataset.ledgerDraft === 'money') {
+			outcome = onMoneyCommit?.(context) ?? 'complete';
+		} else if (target.dataset.pocketKey && target.dataset.itemId) {
+			outcome =
+				onItemQuantityCommit?.(target.dataset.pocketKey, Number(target.dataset.itemId), context) ??
+				'complete';
 		}
+		if (outcome instanceof Promise) {
+			edit.confirming = true;
+			void outcome.then((settled) => settleDraftCommit(edit, settled));
+		} else {
+			settleDraftCommit(edit, outcome);
+		}
+	}
+
+	function settleDraftCommit(edit: ActiveEdit, outcome: SaveFileLedgerCommitOutcome) {
+		if (!isCurrentEdit(edit)) return;
+		if (outcome === 'complete') endDraftEditing(edit.identity);
+		else edit.confirming = false;
 	}
 
 	function abandonDraft(target: HTMLElement) {
@@ -800,8 +909,12 @@
 														aria-describedby={nameError ? 'trainer-name-error' : undefined}
 														disabled={Boolean(editingUnavailable)}
 														readonly={nameBusy}
+														onpointerdown={activateDraftFromPointer}
 														oninput={(event) => {
-															if (!nameBusy) onTrainerNameInput?.(event.currentTarget.value);
+															if (!nameBusy) {
+																activateDraft(event.currentTarget);
+																onTrainerNameInput?.(event.currentTarget.value);
+															}
 														}}
 														onblur={(event) => handleDraftBlur(event, onTrainerNameCommit)}
 													/>
@@ -944,8 +1057,12 @@
 													aria-describedby={moneyError ? 'money-error' : undefined}
 													disabled={Boolean(editingUnavailable)}
 													readonly={moneyBusy}
+													onpointerdown={activateDraftFromPointer}
 													oninput={(event) => {
-														if (!moneyBusy) onMoneyInput?.(event.currentTarget.value);
+														if (!moneyBusy) {
+															activateDraft(event.currentTarget);
+															onMoneyInput?.(event.currentTarget.value);
+														}
 													}}
 													onblur={(event) => handleDraftBlur(event, onMoneyCommit)}
 												/>
@@ -1366,16 +1483,23 @@
 																					: undefined}
 																				disabled={Boolean(editingUnavailable)}
 																				readonly={itemBusy}
-																				oninput={(event) =>
-																					!itemBusy &&
-																					onItemQuantityInput?.(
-																						pocket.key,
-																						item.id,
-																						event.currentTarget.value
-																					)}
+																				onpointerdown={activateDraftFromPointer}
+																				oninput={(event) => {
+																					if (!itemBusy) {
+																						activateDraft(event.currentTarget);
+																						onItemQuantityInput?.(
+																							pocket.key,
+																							item.id,
+																							event.currentTarget.value
+																						);
+																					}
+																				}}
 																				onblur={(event) =>
-																					handleDraftBlur(event, (reason) =>
-																						onItemQuantityCommit?.(pocket.key, item.id, reason)
+																					handleDraftBlur(
+																						event,
+																						(reason) =>
+																							onItemQuantityCommit?.(pocket.key, item.id, reason) ??
+																							'complete'
 																					)}
 																			/>
 																			<button
@@ -1491,7 +1615,8 @@
 		justify-content: space-between;
 		gap: var(--pksx-space-3, 12px);
 		min-width: 0;
-		padding-inline: var(--pksx-space-1, 4px);
+		padding-inline: var(--pksx-space-1, 4px)
+			calc(var(--pksx-control-height, 40px) + var(--pksx-space-3, 12px));
 	}
 
 	h1,
