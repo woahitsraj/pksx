@@ -71,6 +71,7 @@
 				>
 					<strong>Delete from Saves</strong>
 				</button>
+				<DelayedSpinner active={busy} label="Opening Save File" />
 			{:else}
 				<button
 					id="save-file-delete-command-0"

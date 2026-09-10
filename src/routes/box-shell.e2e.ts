@@ -4574,6 +4574,7 @@ test('Saves imports distinct cards, opens cards and menus, and preserves failure
 });
 
 test('Saves menu activates its Save File before opening Trainer or Bag', async ({ page }) => {
+	await installWorkspaceResponseHold(page);
 	await openEmptySaves(page);
 	await chooseMainMenu(page, 'Saves');
 	const fixture = await readFile(emeraldFixturePath);
@@ -4607,9 +4608,26 @@ test('Saves menu activates its Save File before opening Trainer or Bag', async (
 	await pressController(page, 'ArrowDown');
 	await expect(menu.getByRole('button', { name: 'Open Bag' })).toBeFocused();
 	await pressController(page, 'ArrowUp');
-	await pressController(page, 'Enter');
+	const now = Date.now();
+	await page.clock.setFixedTime(now);
+	await page.clock.pauseAt(now);
+	await page.clock.setSystemTime(now);
+	await holdWorkspaceResponses(page, 1);
+	await menu.getByRole('button', { name: 'Open Trainer' }).click();
+	await expect(menu.locator('.save-file-menu')).toHaveAttribute('aria-busy', 'true');
+	await waitForHeldWorkspaceResponses(page);
+	const progress = menu.getByRole('status').filter({ hasText: 'Opening Save File' });
+	await expect(menu.getByRole('button', { name: 'Open Trainer' })).toHaveText('Open Trainer');
+	await expect(menu.getByRole('button', { name: 'Open Bag' })).toHaveText('Open Bag');
+	await page.clock.runFor(499);
+	await expect(progress).toHaveCount(0);
+	await page.clock.runFor(1);
+	await expect(progress).toBeVisible();
+	await page.clock.resume();
+	await releaseWorkspaceResponses(page);
 
 	await expect(page).toHaveURL(/\/trainer$/);
+	await expect(progress).toHaveCount(0);
 	const trainer = page.locator('[data-destination-root="trainer"]');
 	await expect(trainer).toHaveAttribute('data-initial-state', 'ready');
 	await expect(trainer).toContainText('alpha.sav');
