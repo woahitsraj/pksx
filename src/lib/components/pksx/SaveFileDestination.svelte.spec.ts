@@ -59,7 +59,7 @@ it('recovers authoritative bytes after a stale final write and publishes them ac
 	harness.replaceCurrent(11);
 	harness.releaseFinalWrite();
 
-	await expect.poll(() => retryButton()).not.toBeNull();
+	await expect.poll(() => retryButton()).toBeDefined();
 	await expect.poll(() => persistedRevision(harness.baseStorage)).toBe(11);
 	expect(cachedRevision()).toBe(10);
 	expect(trainerNameInput().value).toBe('BASE AGAIN');
@@ -89,7 +89,7 @@ it('keeps failed recovery actionable without publishing unpersisted Engine outpu
 	harness.replaceCurrent(11);
 	harness.releaseFinalWrite();
 
-	await expect.poll(() => retryButton()).not.toBeNull();
+	await expect.poll(() => retryButton()).toBeDefined();
 	await expect.poll(() => persistedRevision(harness.baseStorage)).toBe(11);
 	expect(cachedRevision()).toBe(10);
 	expect(trainerNameInput().value).toBe('BASE AGAIN');
@@ -110,7 +110,47 @@ it('keeps failed recovery actionable without publishing unpersisted Engine outpu
 	expect(harness.applyInputs).toEqual([10, 11]);
 });
 
-async function setup(options: { failFirstRecovery?: boolean } = {}) {
+it('replaces stale ready content when a published Workspace has no editable projection', async () => {
+	await setup();
+	const current = fakes.service!.current!;
+	const invalid = {
+		...current,
+		file: { ...current.file, importedAt: '2026-09-10T12:00:00.000Z' },
+		workspace: { ...current.workspace, saveFile: undefined }
+	};
+
+	expect(() => fakes.service!.set(invalid, 0)).not.toThrow();
+	await tick();
+
+	expect(container.textContent).toContain('Could not load this Save File');
+	expect(container.textContent).toContain('The Save File has no editable projection.');
+	expect(container.querySelector('input[aria-label="Trainer name"]')).toBeNull();
+
+	await unmount(component!);
+	component = null;
+	expect(() =>
+		fakes.service!.set(
+			{ ...invalid, file: { ...invalid.file, importedAt: '2026-09-10T12:00:01.000Z' } },
+			0
+		)
+	).not.toThrow();
+});
+
+it('shows a readable initial Engine failure and retries the load', async () => {
+	await setup({ failFirstInitialLoad: true });
+
+	await expect.poll(() => retryButton()).toBeDefined();
+	expect(container.textContent).toContain('Initial load unavailable.');
+	expect(container.textContent).not.toContain('[object Object]');
+
+	retryButton()!.click();
+	await expect.poll(() => trainerNameInput().value).toBe('BASE AGAIN');
+	expect(retryButton()).toBeUndefined();
+});
+
+async function setup(
+	options: { failFirstInitialLoad?: boolean; failFirstRecovery?: boolean } = {}
+) {
 	databaseName = `pksx-save-file-destination-test-${crypto.randomUUID()}`;
 	const baseStorage = new IndexedDbSavesStorage({ databaseName });
 	await baseStorage.importSave({
@@ -129,9 +169,18 @@ async function setup(options: { failFirstRecovery?: boolean } = {}) {
 		return baseStorage.putWorkspace(input);
 	});
 	const applyInputs: number[] = [];
+	let initialLoadFailures = options.failFirstInitialLoad ? 1 : 0;
 	let recoveryFailures = options.failFirstRecovery ? 1 : 0;
 	const engine = createMockEngine({
 		loadSaveWorkspace: async (bytes) => {
+			if (bytes[0] === 10 && initialLoadFailures > 0) {
+				initialLoadFailures -= 1;
+				return {
+					ok: false,
+					value: null,
+					error: { code: 'engine-unavailable', message: 'Initial load unavailable.' }
+				};
+			}
 			if (bytes[0] === 11 && recoveryFailures > 0) {
 				recoveryFailures -= 1;
 				return {
@@ -165,7 +214,9 @@ async function setup(options: { failFirstRecovery?: boolean } = {}) {
 	fakes.coordinator = coordinator;
 	fakes.engine = engine;
 	render();
-	await expect.poll(() => trainerNameInput().value).toBe('BASE AGAIN');
+	if (!options.failFirstInitialLoad) {
+		await expect.poll(() => trainerNameInput().value).toBe('BASE AGAIN');
+	}
 
 	return {
 		applyInputs,

@@ -398,6 +398,10 @@ test('Trainer and Bag keep independent semantic focus within their separate dest
 	await expect(trainerName).toBeFocused();
 	await expect(trainerRoot.getByRole('heading', { name: 'Bag', exact: true })).toHaveCount(0);
 	await expect(trainerRoot.getByText('emerald-011020251345.sav')).toHaveCount(1);
+	await expect(trainerRoot.locator('.workspace-file > span:not(.filename)')).toHaveCount(1);
+	await expect(trainerRoot.locator('.workspace-file > span:not(.filename)')).toHaveText(/\S/);
+	await expect(trainerRoot.getByText('DIXIE', { exact: true })).toHaveCount(0);
+	await expect(trainerRoot.getByText(/^\d+ boxes?$/i)).toHaveCount(0);
 
 	await page.setViewportSize({ width: 390, height: 700 });
 	await page.reload();
@@ -420,11 +424,23 @@ test('Trainer and Bag keep independent semantic focus within their separate dest
 	const bagRoot = page.locator('[data-destination-root="bag"]');
 	await expect(bagRoot.getByLabel('Trainer name')).toHaveCount(0);
 	await expect(bagRoot.getByRole('spinbutton', { name: 'Money' })).toHaveCount(0);
-	await expect(bagRoot.locator(':focus')).toHaveCount(1);
 	await expect(bagRoot.getByText('emerald-011020251345.sav')).toHaveCount(1);
+	await expect(bagRoot.locator('.workspace-file > span:not(.filename)')).toHaveCount(1);
+	await expect(bagRoot.locator('.workspace-file > span:not(.filename)')).toHaveText(/\S/);
+	await expect(bagRoot.getByRole('heading', { name: 'Trainer', exact: true })).toHaveCount(0);
+	await expect(bagRoot.getByText('DIXIE', { exact: true })).toHaveCount(0);
+	await expect(bagRoot.getByText(/^\d+ boxes?$/i)).toHaveCount(0);
 
 	const pockets = page.getByRole('navigation', { name: 'Bag pockets' }).getByRole('button');
 	const firstPocket = bagRoot.locator('.pocket-section').first();
+	const firstQuantityDecrease = firstPocket
+		.getByRole('button', { name: /^Decrease .* quantity$/ })
+		.first();
+	await expect(firstQuantityDecrease).toHaveAttribute(
+		'data-destination-focus',
+		/^item-.+-decrease$/
+	);
+	await expect(firstQuantityDecrease).toBeFocused();
 	const firstAddLauncher = firstPocket.getByRole('button', { name: 'Add Item', exact: true });
 	await expect(firstAddLauncher).toBeVisible({ timeout: 15000 });
 	await expect(firstAddLauncher).not.toHaveAttribute('aria-disabled', 'true');

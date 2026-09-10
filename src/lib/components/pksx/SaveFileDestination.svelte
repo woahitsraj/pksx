@@ -40,6 +40,7 @@
 	let bag = $state.raw<ReturnType<typeof createSaveFileBagController> | null>(null);
 	let unsubscribeWorkspace: () => void = () => undefined;
 	let loadRequest = 0;
+	let workspaceSubscription = 0;
 	let mounted = false;
 
 	const ledgerProps = $derived.by<SaveFileLedgerProps>(() => {
@@ -78,6 +79,7 @@
 		return () => {
 			mounted = false;
 			loadRequest += 1;
+			workspaceSubscription += 1;
 			unsubscribeWorkspace();
 			unregisterBack?.();
 			disposeSession();
@@ -115,23 +117,31 @@
 
 	function bindWorkspacePublication() {
 		unsubscribeWorkspace();
+		const subscription = ++workspaceSubscription;
 		unsubscribeWorkspace = workspaceService.subscribe((workspace) => {
-			if (!mounted) return;
-			if (!workspace) {
+			if (!mounted || subscription !== workspaceSubscription) return;
+			try {
+				if (!workspace) {
+					disposeSession();
+					view = { status: 'no-active-save' };
+					updateAppChrome({ hasLoadedSave: false });
+					return;
+				}
+				if (
+					!session ||
+					session.workspace.file.id !== workspace.file.id ||
+					session.workspace.file.importedAt !== workspace.file.importedAt
+				) {
+					installSession(workspace);
+					return;
+				}
+				session.acceptWorkspace(workspace);
+			} catch (error) {
+				if (!mounted || subscription !== workspaceSubscription) return;
 				disposeSession();
-				view = { status: 'no-active-save' };
+				view = { status: 'load-failed', message: errorMessage(error) };
 				updateAppChrome({ hasLoadedSave: false });
-				return;
 			}
-			if (
-				!session ||
-				session.workspace.file.id !== workspace.file.id ||
-				session.workspace.file.importedAt !== workspace.file.importedAt
-			) {
-				installSession(workspace);
-				return;
-			}
-			session.acceptWorkspace(workspace);
 		});
 	}
 
@@ -173,7 +183,14 @@
 	}
 
 	function errorMessage(error: unknown) {
-		return error instanceof Error ? error.message : String(error);
+		return error instanceof Error
+			? error.message
+			: typeof error === 'object' &&
+				  error &&
+				  'message' in error &&
+				  typeof error.message === 'string'
+				? error.message
+				: String(error);
 	}
 </script>
 

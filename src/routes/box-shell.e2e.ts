@@ -665,7 +665,24 @@ async function expectLedgerShellGeometry(
 					);
 					if (!root || !shell || !focus || !scrollport) return false;
 					const bounds = root.getBoundingClientRect();
+					const scrollBounds = scrollport.getBoundingClientRect();
 					const target = focus.getBoundingClientRect();
+					const stickyHeaderBottom =
+						routeDestination === 'bag'
+							? Math.max(
+									scrollBounds.top,
+									...Array.from(scrollport.querySelectorAll<HTMLElement>('.pocket-heading'))
+										.map((header) => header.getBoundingClientRect())
+										.filter(
+											(header) =>
+												header.top <= scrollBounds.top + 1 &&
+												header.bottom > scrollBounds.top &&
+												header.left < target.right &&
+												header.right > target.left
+										)
+										.map((header) => header.bottom)
+								)
+							: scrollBounds.top;
 					return (
 						bounds.left >= safeArea.left &&
 						bounds.top >= safeArea.top &&
@@ -678,11 +695,20 @@ async function expectLedgerShellGeometry(
 						shell.scrollWidth <= shell.clientWidth &&
 						shell.scrollHeight <= shell.clientHeight &&
 						getComputedStyle(scrollport).overflowY === 'auto' &&
+						scrollport.contains(focus) &&
 						root.contains(focus) &&
 						target.left >= bounds.left &&
 						target.top >= bounds.top &&
 						target.right <= bounds.right &&
-						target.bottom <= bounds.bottom
+						target.bottom <= bounds.bottom &&
+						target.left >= safeArea.left &&
+						target.top >= safeArea.top &&
+						target.right <= innerWidth - safeArea.right &&
+						target.bottom <= innerHeight - safeArea.bottom &&
+						target.left >= scrollBounds.left &&
+						target.top >= stickyHeaderBottom &&
+						target.right <= scrollBounds.right &&
+						target.bottom <= scrollBounds.bottom
 					);
 				},
 				{ routeDestination: destination, safeArea: insets }
@@ -3707,6 +3733,14 @@ test('Trainer and Bag destinations apply their Save File edits', async ({ page }
 
 	const trainerName = page.getByLabel('Trainer name');
 	await expect(trainerName).toHaveValue('DIXIE');
+	await trainerName.fill('');
+	await trainerName.pressSequentially('kyx');
+	await expect(trainerName).toHaveValue('kyx');
+	await pressController(page, 'Menu');
+	await expect(page.getByRole('dialog', { name: 'Main Menu' })).toBeVisible();
+	await pressController(page, 'Menu');
+	await expect(trainerName).toBeFocused();
+	await expect(trainerName).toHaveValue('kyx');
 	await trainerName.fill('RAJ');
 	await trainerName.press('Enter');
 	const money = page.getByRole('spinbutton', { name: 'Money' });
@@ -3850,11 +3884,72 @@ test('a remounted Trainer reconstructs pending Money and adopts its published re
 	await expect(money).toHaveValue(acceptedMoney);
 	await expect(money).toHaveAttribute('readonly', '');
 	await expect(money).toHaveAttribute('aria-disabled', 'true');
+	await expect(money).toHaveAttribute('aria-busy', 'true');
 
 	await releaseWorkspaceResponses(page);
 	await expect(money).toHaveValue('23456', { timeout: 15000 });
 	await expect(money).not.toHaveAttribute('readonly', '');
 	await expect(money).not.toHaveAttribute('aria-disabled', 'true');
+	await expect(money).not.toHaveAttribute('aria-busy', 'true');
+});
+
+test('a remounted Bag adopts a pending quantity and publishes conflict recovery', async ({
+	page
+}) => {
+	await installWorkspaceResponseHold(page);
+	await importEmeraldThroughSaves(page);
+	await chooseMainMenu(page, 'Bag');
+	let quantity = page.locator('input[data-ledger-draft="item-quantity"]').first();
+	await expect(quantity).toBeVisible({ timeout: 15000 });
+	const quantityLabel = await quantity.getAttribute('aria-label');
+	const acceptedQuantity = Number(await quantity.inputValue());
+	const maximumQuantity = Number(await quantity.getAttribute('max'));
+	const confirmedQuantity =
+		acceptedQuantity === maximumQuantity ? acceptedQuantity - 1 : acceptedQuantity + 1;
+
+	await holdWorkspaceResponses(page, 1, 'applySaveFileEditOperation');
+	await quantity.fill(String(confirmedQuantity));
+	await quantity.press('Enter');
+	await waitForHeldWorkspaceResponses(page);
+	await pressController(page, 'Escape');
+	await expect(page).toHaveURL(/\/$/);
+	await chooseMainMenu(page, 'Bag');
+	quantity = page.getByRole('spinbutton', { name: quantityLabel! });
+	await expect(quantity).toHaveValue(String(acceptedQuantity));
+	await expect(quantity).toHaveAttribute('readonly', '');
+	await expect(quantity).toHaveAttribute('aria-disabled', 'true');
+	await expect(quantity).toHaveAttribute('aria-busy', 'true');
+
+	await releaseWorkspaceResponses(page);
+	await expect(quantity).toHaveValue(String(confirmedQuantity), { timeout: 15000 });
+	await expect(quantity).not.toHaveAttribute('readonly', '');
+	await expect(quantity).not.toHaveAttribute('aria-disabled', 'true');
+	await expect(quantity).not.toHaveAttribute('aria-busy', 'true');
+	await expect.poll(() => backupCount(page)).toBe(1);
+
+	const conflictingQuantity = confirmedQuantity === 1 ? 2 : confirmedQuantity - 1;
+	await holdWorkspaceResponses(page, 1, 'applySaveFileEditOperation');
+	await quantity.fill(String(conflictingQuantity));
+	await quantity.press('Enter');
+	await waitForHeldWorkspaceResponses(page);
+	await restoreEditingBackup(page);
+	await releaseWorkspaceResponses(page);
+
+	const retry = page.getByRole('button', { name: 'Retry', exact: true });
+	await expect(retry).toBeVisible({ timeout: 15000 });
+	await expect(quantity).toHaveValue(String(acceptedQuantity));
+	await retry.click();
+	await expect(retry).toHaveCount(0, { timeout: 15000 });
+	await expect(quantity).toHaveValue(String(acceptedQuantity));
+
+	await quantity.locator('..').getByRole('button').first().focus();
+	await pressController(page, 'Escape');
+	await expect(page).toHaveURL(/\/$/);
+	await chooseMainMenu(page, 'Bag');
+	await expect(page.getByRole('spinbutton', { name: quantityLabel! })).toHaveValue(
+		String(acceptedQuantity)
+	);
+	await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
 });
 
 test('Trainer Retry publishes its recovered Workspace for navigation and remount', async ({
