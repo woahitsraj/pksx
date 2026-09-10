@@ -142,7 +142,7 @@
 			if (index >= 0) lastItemFocus = { pocketKey, itemId, index };
 		}
 
-		event.target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+		ensureTargetVisible(event.target);
 	}
 
 	function handleWindowKeydown(event: KeyboardEvent) {
@@ -159,7 +159,7 @@
 
 		if (event.key === 'Enter' && !event.isComposing && active.matches('[data-ledger-draft]')) {
 			consume(event);
-			commitDraft(active, 'enter');
+			if (active.getAttribute('aria-disabled') !== 'true') commitDraft(active, 'enter');
 			return;
 		}
 
@@ -217,9 +217,7 @@
 	}
 
 	function controlsFor(row: Element) {
-		return Array.from(
-			row.querySelectorAll<HTMLElement>('[data-ledger-control]:not([disabled])')
-		).filter((control) => control.getAttribute('aria-disabled') !== 'true');
+		return Array.from(row.querySelectorAll<HTMLElement>('[data-ledger-control]:not([disabled])'));
 	}
 
 	function focusRows() {
@@ -231,8 +229,13 @@
 	function focusElement(target: HTMLElement | undefined) {
 		if (!target) return false;
 		target.focus({ preventScroll: true });
-		target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+		ensureTargetVisible(target);
 		return true;
+	}
+
+	function ensureTargetVisible(target: HTMLElement) {
+		const verticalTarget = target.closest<HTMLElement>('.item-row, .pocket-command') ?? target;
+		verticalTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 	}
 
 	function findIdentity(identity: string) {
@@ -261,6 +264,8 @@
 		}
 		const retry = rememberedTarget?.match(/^pocket-(.+)-retry$/);
 		if (retry && focusPocketEntry(retry[1])) return;
+		const add = rememberedTarget?.match(/^pocket-(.+)-add$/);
+		if (add && focusPocketEntry(add[1])) return;
 		focusInitial();
 	}
 
@@ -459,8 +464,10 @@
 							data-destination-initial
 							data-destination-focus="load-retry"
 							aria-busy={view.retrying === true}
-							disabled={view.retrying === true}
-							onclick={onRetryLoad}
+							aria-disabled={view.retrying === true}
+							onclick={() => {
+								if (view.retrying !== true) onRetryLoad?.();
+							}}
 						>
 							Retry <DelayedSpinner
 								active={view.retrying === true}
@@ -499,8 +506,10 @@
 								data-destination-initial
 								data-destination-focus="editing-retry"
 								aria-busy={view.editingUnavailable.retrying === true}
-								disabled={view.editingUnavailable.retrying === true}
-								onclick={onRetryEditing}
+								aria-disabled={view.editingUnavailable.retrying === true}
+								onclick={() => {
+									if (view.editingUnavailable?.retrying !== true) onRetryEditing?.();
+								}}
 							>
 								Retry
 								<DelayedSpinner
@@ -549,6 +558,7 @@
 												value: view.projection.trainerProfile.trainerName ?? ''
 											}}
 											{@const nameError = nameField.error ?? errors['trainer-name']}
+											{@const nameBusy = isPending('trainer-name', nameField.pending)}
 											<label class="field-row" data-ledger-row="trainer-name">
 												<span>Trainer name</span>
 												<input
@@ -566,18 +576,18 @@
 														? ''
 														: undefined}
 													data-destination-focus="trainer-name"
-													aria-busy={isPending('trainer-name', nameField.pending)}
+													aria-busy={nameBusy}
+													aria-disabled={nameBusy}
 													aria-invalid={nameError ? 'true' : undefined}
 													aria-describedby={nameError ? 'trainer-name-error' : undefined}
-													disabled={Boolean(editingUnavailable) ||
-														isPending('trainer-name', nameField.pending)}
-													oninput={(event) => onTrainerNameInput?.(event.currentTarget.value)}
+													disabled={Boolean(editingUnavailable)}
+													readonly={nameBusy}
+													oninput={(event) => {
+														if (!nameBusy) onTrainerNameInput?.(event.currentTarget.value);
+													}}
 													onblur={(event) => handleDraftBlur(event, onTrainerNameCommit)}
 												/>
-												<DelayedSpinner
-													active={isPending('trainer-name', nameField.pending)}
-													label="Updating Trainer name"
-												/>
+												<DelayedSpinner active={nameBusy} label="Updating Trainer name" />
 												{#if nameError}<small
 														id="trainer-name-error"
 														class="field-error"
@@ -587,6 +597,8 @@
 										{/if}
 
 										{#if view.projection.trainerProfile.genderSupported}
+											{@const maleBusy = isPending('trainer-gender-male')}
+											{@const femaleBusy = isPending('trainer-gender-female')}
 											<div class="field-row" data-ledger-row="trainer-gender">
 												<span>Gender</span>
 												<div class="segmented" aria-label="Trainer gender">
@@ -599,22 +611,25 @@
 															: undefined}
 														data-destination-focus="trainer-gender-male"
 														aria-pressed={view.projection.trainerProfile.gender === 'male'}
-														disabled={Boolean(editingUnavailable) ||
-															isPending('trainer-gender-male')}
-														onclick={() => onTrainerGenderSelect?.('male')}>Male</button
+														aria-disabled={maleBusy}
+														disabled={Boolean(editingUnavailable)}
+														onclick={() => {
+															if (!maleBusy) onTrainerGenderSelect?.('male');
+														}}>Male</button
 													>
 													<button
 														type="button"
 														data-ledger-control
 														data-destination-focus="trainer-gender-female"
 														aria-pressed={view.projection.trainerProfile.gender === 'female'}
-														disabled={Boolean(editingUnavailable) ||
-															isPending('trainer-gender-female')}
-														onclick={() => onTrainerGenderSelect?.('female')}>Female</button
+														aria-disabled={femaleBusy}
+														disabled={Boolean(editingUnavailable)}
+														onclick={() => {
+															if (!femaleBusy) onTrainerGenderSelect?.('female');
+														}}>Female</button
 													>
 													<DelayedSpinner
-														active={isPending('trainer-gender-male') ||
-															isPending('trainer-gender-female')}
+														active={maleBusy || femaleBusy}
 														label="Updating Trainer gender"
 													/>
 												</div>
@@ -628,6 +643,10 @@
 										value: String(view.projection.money.value ?? '')
 									}}
 									{@const moneyError = moneyField.error ?? errors.money}
+									{@const moneyBusy = isPending('money', moneyField.pending)}
+									{@const moneyNumber = Number(moneyField.value)}
+									{@const moneyAtMin = moneyNumber <= view.projection.money.min}
+									{@const moneyAtMax = moneyNumber >= view.projection.money.max}
 									<section
 										class="details-section money-section"
 										aria-labelledby="ledger-money-title"
@@ -642,7 +661,8 @@
 										<div
 											class="money-row"
 											data-ledger-row="money"
-											aria-busy={isPending('money', moneyField.pending)}
+											aria-busy={moneyBusy}
+											style:--money-ch={String(view.projection.money.max).length}
 										>
 											<button
 												type="button"
@@ -653,10 +673,12 @@
 													? ''
 													: undefined}
 												data-destination-focus="money-decrease"
-												disabled={Boolean(editingUnavailable) ||
-													isPending('money', moneyField.pending)}
+												aria-disabled={moneyBusy || moneyAtMin}
+												disabled={Boolean(editingUnavailable)}
 												onpointerdown={beginOperatorPointer}
-												onclick={() => onMoneyStep?.(-1, moneyField.value)}>−</button
+												onclick={() => {
+													if (!moneyBusy && !moneyAtMin) onMoneyStep?.(-1, moneyField.value);
+												}}>−</button
 											>
 											<input
 												type="number"
@@ -668,11 +690,15 @@
 												data-ledger-control
 												data-ledger-draft="money"
 												data-destination-focus="money-value"
+												aria-busy={moneyBusy}
+												aria-disabled={moneyBusy}
 												aria-invalid={moneyError ? 'true' : undefined}
 												aria-describedby={moneyError ? 'money-error' : undefined}
-												disabled={Boolean(editingUnavailable) ||
-													isPending('money', moneyField.pending)}
-												oninput={(event) => onMoneyInput?.(event.currentTarget.value)}
+												disabled={Boolean(editingUnavailable)}
+												readonly={moneyBusy}
+												oninput={(event) => {
+													if (!moneyBusy) onMoneyInput?.(event.currentTarget.value);
+												}}
 												onblur={(event) => handleDraftBlur(event, onMoneyCommit)}
 											/>
 											<button
@@ -681,25 +707,26 @@
 												data-ledger-control
 												data-ledger-consumes-draft
 												data-destination-focus="money-increase"
-												disabled={Boolean(editingUnavailable) ||
-													isPending('money', moneyField.pending)}
+												aria-disabled={moneyBusy || moneyAtMax}
+												disabled={Boolean(editingUnavailable)}
 												onpointerdown={beginOperatorPointer}
-												onclick={() => onMoneyStep?.(1, moneyField.value)}>+</button
+												onclick={() => {
+													if (!moneyBusy && !moneyAtMax) onMoneyStep?.(1, moneyField.value);
+												}}>+</button
 											>
 											<button
 												type="button"
 												data-ledger-control
 												data-ledger-consumes-draft
 												data-destination-focus="money-max"
-												disabled={Boolean(editingUnavailable) ||
-													isPending('money', moneyField.pending)}
+												aria-disabled={moneyBusy || moneyAtMax}
+												disabled={Boolean(editingUnavailable)}
 												onpointerdown={beginOperatorPointer}
-												onclick={() => onMoneyStep?.('max', moneyField.value)}>Max</button
+												onclick={() => {
+													if (!moneyBusy && !moneyAtMax) onMoneyStep?.('max', moneyField.value);
+												}}>Max</button
 											>
-											<DelayedSpinner
-												active={isPending('money', moneyField.pending)}
-												label="Updating Money"
-											/>
+											<DelayedSpinner active={moneyBusy} label="Updating Money" />
 											{#if moneyError}<small id="money-error" class="field-error" aria-live="polite"
 													>{moneyError}</small
 												>{/if}
@@ -756,6 +783,12 @@
 														data-ledger-row={`pocket-${pocket.key}-command`}
 													>
 														{#if command?.kind === 'add-item' && command.pocketKey === pocket.key}
+															{@const selectedOption = options.find(
+																(option) => option.id === command.itemId
+															)}
+															{@const commandQuantityMax =
+																selectedOption?.maxQuantity ??
+																Math.max(1, ...options.map((option) => option.maxQuantity))}
 															<div class="add-command" data-ledger-command>
 																<label>
 																	<span>Item</span>
@@ -781,7 +814,10 @@
 																	<input
 																		type="number"
 																		min="1"
+																		max={commandQuantityMax}
 																		value={command.quantity}
+																		size={String(commandQuantityMax).length}
+																		style:--quantity-ch={String(commandQuantityMax).length}
 																		data-ledger-control
 																		data-destination-focus={`pocket-${pocket.key}-add-quantity`}
 																		disabled={Boolean(editingUnavailable)}
@@ -866,6 +902,9 @@
 																	quantityIdentity,
 																	quantityField.pending
 																)}
+																{@const quantityNumber = Number(quantityField.value)}
+																{@const quantityAtMin = quantityNumber <= 1}
+																{@const quantityAtMax = quantityNumber >= item.maxQuantity}
 																<li
 																	class="item-row"
 																	data-ledger-row={`item-${pocket.key}-${item.id}`}
@@ -908,7 +947,10 @@
 																			>
 																		</div>
 																	{:else}
-																		<div class="quantity-controls">
+																		<div
+																			class="quantity-controls"
+																			style:--quantity-ch={String(item.maxQuantity).length}
+																		>
 																			<button
 																				type="button"
 																				aria-label={`Decrease ${item.name} quantity`}
@@ -925,17 +967,18 @@
 																					item.id,
 																					'decrease'
 																				)}
-																				disabled={Boolean(editingUnavailable) ||
-																					itemBusy ||
-																					Number(quantityField.value) <= 1}
+																				aria-disabled={itemBusy || quantityAtMin}
+																				disabled={Boolean(editingUnavailable)}
 																				onpointerdown={beginOperatorPointer}
-																				onclick={() =>
-																					onItemQuantityStep?.(
-																						pocket.key,
-																						item.id,
-																						-1,
-																						quantityField.value
-																					)}>−</button
+																				onclick={() => {
+																					if (!itemBusy && !quantityAtMin)
+																						onItemQuantityStep?.(
+																							pocket.key,
+																							item.id,
+																							-1,
+																							quantityField.value
+																						);
+																				}}>−</button
 																			>
 																			<input
 																				type="number"
@@ -949,12 +992,16 @@
 																				data-pocket-key={pocket.key}
 																				data-item-id={item.id}
 																				data-destination-focus={quantityIdentity}
+																				aria-busy={itemBusy}
+																				aria-disabled={itemBusy}
 																				aria-invalid={quantityError ? 'true' : undefined}
 																				aria-describedby={quantityError
 																					? `item-${pocket.key}-${item.id}-error`
 																					: undefined}
-																				disabled={Boolean(editingUnavailable) || itemBusy}
+																				disabled={Boolean(editingUnavailable)}
+																				readonly={itemBusy}
 																				oninput={(event) =>
+																					!itemBusy &&
 																					onItemQuantityInput?.(
 																						pocket.key,
 																						item.id,
@@ -977,17 +1024,18 @@
 																					item.id,
 																					'increase'
 																				)}
-																				disabled={Boolean(editingUnavailable) ||
-																					itemBusy ||
-																					Number(quantityField.value) >= item.maxQuantity}
+																				aria-disabled={itemBusy || quantityAtMax}
+																				disabled={Boolean(editingUnavailable)}
 																				onpointerdown={beginOperatorPointer}
-																				onclick={() =>
-																					onItemQuantityStep?.(
-																						pocket.key,
-																						item.id,
-																						1,
-																						quantityField.value
-																					)}>+</button
+																				onclick={() => {
+																					if (!itemBusy && !quantityAtMax)
+																						onItemQuantityStep?.(
+																							pocket.key,
+																							item.id,
+																							1,
+																							quantityField.value
+																						);
+																				}}>+</button
 																			>
 																			<button
 																				type="button"
@@ -999,9 +1047,11 @@
 																					item.id,
 																					'remove'
 																				)}
-																				disabled={Boolean(editingUnavailable) || itemBusy}
-																				onclick={() => openRemoveItem(pocket.key, item.id)}
-																				>Remove</button
+																				aria-disabled={itemBusy}
+																				disabled={Boolean(editingUnavailable)}
+																				onclick={() => {
+																					if (!itemBusy) openRemoveItem(pocket.key, item.id);
+																				}}>Remove</button
 																			>
 																			<DelayedSpinner
 																				active={itemBusy}
@@ -1216,7 +1266,8 @@
 	.money-row {
 		display: grid;
 		grid-template-columns:
-			var(--pksx-control-height, 32px) minmax(7ch, 1fr) var(--pksx-control-height, 32px)
+			var(--pksx-control-height, 32px)
+			minmax(0, calc(var(--money-ch, 7) * 1ch + 2.5rem)) var(--pksx-control-height, 32px)
 			auto;
 		align-items: center;
 		gap: var(--pksx-space-1, 4px);
@@ -1334,6 +1385,10 @@
 		min-width: 0;
 	}
 
+	.add-command input {
+		width: min(100%, calc(var(--quantity-ch, 3) * 1ch + 2.5rem));
+	}
+
 	.item-list {
 		display: grid;
 		gap: var(--pksx-space-1, 4px);
@@ -1372,7 +1427,9 @@
 	.remove-command {
 		display: grid;
 		grid-template-columns:
-			var(--pksx-control-height, 32px) minmax(5ch, 7ch) var(--pksx-control-height, 32px)
+			var(--pksx-control-height, 32px)
+			minmax(0, calc(var(--quantity-ch, 3) * 1ch + 2.5rem))
+			var(--pksx-control-height, 32px)
 			auto;
 		align-items: center;
 		gap: var(--pksx-space-1, 4px);
@@ -1427,13 +1484,15 @@
 		cursor: pointer;
 	}
 
-	button:hover:not(:disabled),
+	button:hover:not(:disabled):not([aria-disabled='true']),
 	button[aria-pressed='true'] {
 		border-color: var(--pksx-color-accent-primary, #b85838);
 		background: var(--pksx-color-accent-wash, rgba(184, 88, 56, 0.1));
 	}
 
 	button:disabled,
+	button[aria-disabled='true'],
+	input[aria-disabled='true'],
 	input:disabled,
 	select:disabled {
 		cursor: default;

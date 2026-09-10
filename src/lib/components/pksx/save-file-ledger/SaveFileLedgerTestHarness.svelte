@@ -13,6 +13,7 @@
 	let view = $state(untrack(() => initialView));
 	let command = $state<SaveFileLedgerCommand | null>(null);
 	let catalogues = $state(untrack(() => initialCatalogues));
+	let pending = $state(untrack(() => pendingTargets));
 	let ledger: { handleBack: () => boolean };
 
 	export function setView(next: SaveFileLedgerView) {
@@ -21,6 +22,10 @@
 
 	export function setCatalogues(next: Readonly<Record<string, SaveFileLedgerCatalogue>>) {
 		catalogues = next;
+	}
+
+	export function setPendingTargets(next: readonly string[]) {
+		pending = next;
 	}
 
 	export function handleBack() {
@@ -55,7 +60,7 @@
 	{view}
 	{command}
 	{catalogues}
-	{pendingTargets}
+	pendingTargets={pending}
 	onCommandChange={(next) => (command = next)}
 	onRemoveItem={removeItem}
 />
