@@ -93,11 +93,6 @@
 
 	beforeNavigate((navigation) => {
 		if (navigation.willUnload) return;
-		if (hasRouteOwnedConfirmation()) {
-			navigation.cancel();
-			dispatchControllerKey('Escape');
-			return;
-		}
 		if (summonedWorkflow.active) {
 			navigation.cancel();
 			dispatchControllerKey('Escape');
@@ -159,7 +154,7 @@
 	}
 
 	function openMainMenu() {
-		if (summonedWorkflow.active || appChrome.carryActive || hasRouteOwnedConfirmation()) return;
+		if (summonedWorkflow.active || appChrome.carryActive) return;
 		const launcherId =
 			rememberDestinationFocus() ?? ensureDestinationFocus(activeRoute) ?? 'main-menu-opener';
 		if (!summonedWorkflow.open('main-menu', { type: 'control', id: launcherId })) return;
@@ -279,9 +274,6 @@
 			return;
 		}
 
-		if (fromController && event.key === 'Escape' && hasRouteOwnedConfirmation()) {
-			return;
-		}
 		if (
 			fromController &&
 			event.key === 'Escape' &&
@@ -308,10 +300,6 @@
 	}
 
 	function handlePlatformBack(canGoBack: boolean) {
-		if (hasRouteOwnedConfirmation()) {
-			dispatchControllerKey('Escape');
-			return;
-		}
 		if (summonedWorkflow.active) {
 			dispatchControllerKey('Escape');
 			return;
@@ -497,13 +485,6 @@
 			target.getClientRects().length > 0 &&
 			getComputedStyle(target).display !== 'none' &&
 			getComputedStyle(target).visibility !== 'hidden'
-		);
-	}
-
-	function hasRouteOwnedConfirmation() {
-		return (
-			activeRoute === 'saves' &&
-			document.querySelector('[data-saves-confirmation] [role="alertdialog"]') !== null
 		);
 	}
 
@@ -714,10 +695,6 @@
 		box-shadow: var(--pksx-shadow-raised);
 		color: var(--pksx-color-accent-primary);
 		cursor: pointer;
-	}
-
-	:global(.app-shell:has([data-saves-confirmation] [role='alertdialog'])) .main-menu-opener {
-		display: none;
 	}
 
 	.main-menu-opener:hover,

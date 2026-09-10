@@ -4,11 +4,13 @@ import type { StoredSaveFile } from '$lib/pksx/saves';
 import { createCleanWorkspaceState } from '$lib/pksx/backup-workflow';
 import {
 	getCachedSavesSnapshot,
+	countSavePokemon,
 	invalidateActiveWorkspaceCache,
 	invalidateSavesCache,
 	isCachedSavesSnapshotSeeded,
 	seedSavesSnapshotFromActiveWorkspace,
-	setCachedActiveWorkspace
+	setCachedActiveWorkspace,
+	subscribeSavesSnapshot
 } from './saves-cache';
 
 const saveFile: StoredSaveFile = {
@@ -150,7 +152,7 @@ describe('Saves cache', () => {
 	});
 
 	it('seeds a Saves snapshot from the already-loaded active workspace', () => {
-		expect.assertions(8);
+		expect.assertions(6);
 
 		const activeWorkspace = createCleanWorkspaceState({
 			file: saveFile,
@@ -166,9 +168,52 @@ describe('Saves cache', () => {
 		expect(getCachedSavesSnapshot()).toBe(seeded);
 		expect(seeded?.activeSaveFileId).toBe(saveFile.id);
 		expect(seeded?.saveFiles).toEqual([saveFile]);
-		expect(seeded?.detailsBySaveFileId[saveFile.id]?.summary).toBe(summary);
-		expect(seeded?.detailsBySaveFileId[saveFile.id]?.partySlots).toEqual([partySlot]);
-		expect(seeded?.detailsBySaveFileId[saveFile.id]?.creatureCount).toBe(1);
+		expect(seeded?.detailsBySaveFileId[saveFile.id]).toEqual({ status: 'loading' });
+	});
+
+	it('replays loading state and later updates to a remounted Saves subscriber', () => {
+		const activeWorkspace = createCleanWorkspaceState({
+			file: saveFile,
+			bytes: new Uint8Array([1, 2, 3, 4]),
+			workspace
+		});
+		setCachedActiveWorkspace(activeWorkspace, 0);
+		seedSavesSnapshotFromActiveWorkspace([saveFile]);
+
+		const firstUpdates: unknown[] = [];
+		const secondUpdates: unknown[] = [];
+		const unsubscribeFirst = subscribeSavesSnapshot((snapshot) => firstUpdates.push(snapshot));
+		unsubscribeFirst();
+		const unsubscribeSecond = subscribeSavesSnapshot((snapshot) => secondUpdates.push(snapshot));
+
+		setCachedActiveWorkspace(activeWorkspace, 0);
+		unsubscribeSecond();
+
+		expect(firstUpdates).toHaveLength(1);
+		expect(secondUpdates).toHaveLength(2);
+		expect(secondUpdates.at(-1)).toBe(getCachedSavesSnapshot());
+	});
+
+	it('counts Party and occupied slots across every Box', async () => {
+		expect.assertions(1);
+
+		const count = await countSavePokemon(
+			{ ...summary, partyCount: 2, boxCount: 3 },
+			[boxSlot, { ...boxSlot, slot: 1, isEmpty: true }],
+			async (box) =>
+				box === 1
+					? { ok: true, value: [{ ...boxSlot, box: 1 }], error: null }
+					: {
+							ok: true,
+							error: null,
+							value: [
+								{ ...boxSlot, box: 2 },
+								{ ...boxSlot, box: 2, slot: 1 }
+							]
+						}
+		);
+
+		expect(count).toBe(6);
 	});
 
 	it('does not seed when no active workspace is cached', () => {

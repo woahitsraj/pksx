@@ -322,7 +322,7 @@ test('editable focus locks Height Band across pointer transfer and releases afte
 }) => {
 	await openSettings(page, 800, 700);
 	await page.goto('/saves');
-	await expect(page.getByText('Saves ready.')).toBeVisible();
+	await expect(page.getByRole('grid', { name: 'Saves collections' })).toBeFocused();
 	await page.getByLabel('Import Save File').setInputFiles(emeraldFixturePath);
 	await expect(page.getByText('011020251345.sav imported and made active.')).toBeVisible({
 		timeout: 30_000

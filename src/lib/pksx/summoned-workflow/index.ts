@@ -9,6 +9,8 @@ export type SummonedWorkflowKind =
 	| 'slot-menu'
 	| 'box-menu'
 	| 'main-menu'
+	| 'save-file-menu'
+	| 'save-file-delete'
 	| 'source-picker'
 	| 'clear-slot-confirmation'
 	| 'pokemon-creation'

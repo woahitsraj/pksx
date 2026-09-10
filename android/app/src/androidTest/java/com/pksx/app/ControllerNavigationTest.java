@@ -174,19 +174,27 @@ public class ControllerNavigationTest {
         awaitControllerSurface();
         runJavaScript("window.__pksxNativeHistoryStart = history.length");
         importEmeraldSave();
-        runJavaScript("document.querySelector('.save-card.active .danger-action').click()");
-        awaitJavaScript("document.querySelector('[role=alertdialog]') !== null");
+        runJavaScript("document.querySelector('.save-card.active .save-menu-control').click()");
+        awaitJavaScript("document.querySelector('[role=dialog][aria-label=\"Save File Menu\"]') !== null");
+        runJavaScript("document.querySelector('#save-file-menu-command-2').click()");
+        awaitJavaScript("document.querySelector('[role=dialog][aria-label^=\"Delete \"]') !== null");
         pressPlatformBack();
         awaitJavaScript(
             "location.pathname.endsWith('/saves')"
-                + " && document.querySelector('[role=alertdialog]') === null"
+                + " && document.querySelector('[role=dialog][aria-label^=\"Delete \"]') === null"
+                + " && document.querySelector('[role=dialog][aria-label=\"Save File Menu\"]') !== null"
         );
-        runJavaScript("document.querySelector('.save-card.active .danger-action').click()");
-        awaitJavaScript("document.querySelector('[role=alertdialog]') !== null");
+        runJavaScript("document.querySelector('#save-file-menu-command-2').click()");
+        awaitJavaScript("document.querySelector('[role=dialog][aria-label^=\"Delete \"]') !== null");
         pressGamepadKey(
             KeyEvent.KEYCODE_BUTTON_B,
             "location.pathname.endsWith('/saves')"
-                + " && document.querySelector('[role=alertdialog]') === null"
+                + " && document.querySelector('[role=dialog][aria-label^=\"Delete \"]') === null"
+                + " && document.querySelector('[role=dialog][aria-label=\"Save File Menu\"]') !== null"
+        );
+        pressGamepadKey(
+            KeyEvent.KEYCODE_BUTTON_B,
+            "document.querySelector('[role=dialog][aria-label=\"Save File Menu\"]') === null"
         );
         chooseMainMenu("Settings");
         awaitJavaScript("location.pathname.endsWith('/settings')");
@@ -456,14 +464,17 @@ public class ControllerNavigationTest {
         assertAllFocusableControlsHighlighted(".save-file-route");
 
         chooseMainMenu("Saves");
-        awaitJavaScript("location.pathname.endsWith('/saves')");
-        runJavaScript("document.querySelector('[data-saves-control]').focus()");
+        awaitJavaScript(
+            "location.pathname.endsWith('/saves')"
+                + " && document.querySelector('[data-destination-root=\"saves\"]')?.dataset.initialState === 'ready'"
+        );
+        runJavaScript("document.querySelector('[data-destination-focus=\"saves-grid\"]').focus()");
         pressGamepadKey(
             KeyEvent.KEYCODE_DPAD_DOWN,
-            "document.activeElement?.hasAttribute('data-saves-control')"
+            "document.activeElement?.dataset.destinationFocus === 'saves-grid'"
                 + " && getComputedStyle(document.activeElement).outlineStyle === 'solid'"
         );
-        assertAllFocusableControlsHighlighted(".saves-page");
+        assertAllFocusableControlsHighlighted(".saves-route");
     }
 
     @Test

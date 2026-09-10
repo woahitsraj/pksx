@@ -265,16 +265,16 @@ Source: [#201](https://github.com/woahitsraj/PKSX/issues/201), amended by [#210]
 
 Opening a Menu or Takeover suspends destination Focus Zones. A Menu owns one list. A Takeover owns its internal Focus Zones and starts from its initial target each time it opens.
 
-| Destination or Takeover | Initial focus                                                             |
-| ----------------------- | ------------------------------------------------------------------------- |
-| Boxes                   | Active pane, current Location, Slot 0                                     |
-| Saves                   | Active Save File, else first Save File, else Pokemon Storage, else Import |
-| Settings                | Theme control                                                             |
-| Trainer                 | First stop                                                                |
-| Bag                     | First stop                                                                |
-| Pokemon Editor          | First section                                                             |
-| Backup Browser          | Newest Backup                                                             |
-| Pokemon Creation        | First stop                                                                |
+| Destination or Takeover | Initial focus                                       |
+| ----------------------- | --------------------------------------------------- |
+| Boxes                   | Active pane, current Location, Slot 0               |
+| Saves                   | Active Save File, else first Save File, else Import |
+| Settings                | Theme control                                       |
+| Trainer                 | First stop                                          |
+| Bag                     | First stop                                          |
+| Pokemon Editor          | First section                                       |
+| Backup Browser          | Newest Backup                                       |
+| Pokemon Creation        | First stop                                          |
 
 Destinations remember their targets for the session and validate them with FOCUS-3 on return. Trainer and Bag retain independent memories. Takeovers have no memory across closures.
 

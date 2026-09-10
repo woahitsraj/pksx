@@ -74,13 +74,23 @@ async function pressController(page: Page, key: string) {
 	await controllerButton(page, key, false);
 }
 
+async function expectSavesFocus(page: Page, target: string | RegExp = 'saves-target-import') {
+	await expect(page.locator('[data-destination-root="saves"]')).toHaveAttribute(
+		'data-initial-state',
+		'ready'
+	);
+	const grid = page.getByRole('grid', { name: 'Saves collections' });
+	await expect(grid).toBeFocused();
+	await expect(grid).toHaveAttribute('aria-activedescendant', target);
+	return grid;
+}
+
 test('empty first run lands on Saves and exposes the amended selectable destinations', async ({
 	page
 }) => {
 	await resetEmptyStorage(page);
 
-	const importCard = page.getByRole('button', { name: /Import a Save File/ });
-	await expect(importCard).toBeFocused();
+	await expectSavesFocus(page);
 	const opener = page.getByRole('button', { name: 'Open Main Menu' });
 	await expect(opener).toHaveAttribute('tabindex', '-1');
 
@@ -106,13 +116,7 @@ test('empty first run lands on Saves and exposes the amended selectable destinat
 
 	await menu.getByRole('button', { name: /^Saves/ }).click();
 	await expect(menu).toBeHidden();
-	await expect(importCard).toBeFocused();
-	const storageControl = page.getByRole('button', { name: /Pokemon Storage App-owned/ });
-	await storageControl.focus();
-	menu = await openMainMenu(page);
-	await storageControl.evaluate((control) => control.remove());
-	await menu.getByRole('button', { name: /^Saves/ }).click();
-	await expect(importCard).toBeFocused();
+	await expectSavesFocus(page);
 
 	await choose(page, 'Boxes');
 	await expect(page).toHaveURL(/\/$/);
@@ -231,8 +235,7 @@ test('Trainer and Bag report the persisted active Save File while Pokemon Storag
 
 test('Start is fresh-press only and restores destination focus by identity', async ({ page }) => {
 	await resetEmptyStorage(page);
-	const importCard = page.getByRole('button', { name: /Import a Save File/ });
-	await importCard.focus();
+	const savesGrid = await expectSavesFocus(page);
 
 	await controllerButton(page, 'Menu', true);
 	await controllerButton(page, 'Menu', true);
@@ -240,7 +243,7 @@ test('Start is fresh-press only and restores destination focus by identity', asy
 	await controllerButton(page, 'Menu', false);
 	await controllerButton(page, 'Menu', true);
 	await expect(page.getByRole('dialog', { name: 'Main Menu' })).toBeHidden();
-	await expect(importCard).toBeFocused();
+	await expectSavesFocus(page);
 	await controllerButton(page, 'Menu', false);
 	await controllerButton(page, 'Menu', true);
 	await expect(page.getByRole('dialog', { name: 'Main Menu' })).toBeVisible();
@@ -278,12 +281,13 @@ test('Start is fresh-press only and restores destination focus by identity', asy
 	await expect(darkTheme).toBeFocused();
 
 	await choose(page, 'Saves');
-	await expect(importCard).toBeFocused();
+	await expectSavesFocus(page);
 	await choose(page, 'Settings');
 	await expect(page).toHaveURL(/\/settings$/);
 	await page.goBack();
 	await expect(page).toHaveURL(/\/saves$/);
-	await expect(importCard).toBeFocused();
+	await expect(savesGrid).toBeFocused();
+	await expect(savesGrid).toHaveAttribute('aria-activedescendant', 'saves-target-import');
 
 	await choose(page, 'Settings');
 	await pressController(page, 'Escape');
@@ -368,14 +372,14 @@ test('Saves restores an asynchronously loaded control by stable identity', async
 	});
 	await page.reload();
 	await expectDestinationReady(page, 'saves');
-	await expect(page.locator('.save-card.active .save-card-main')).toBeFocused();
-	const deleteSave = page.locator('.save-card.active .danger-action');
-	await deleteSave.focus();
-	const rememberedId = await deleteSave.getAttribute('id');
+	const grid = await expectSavesFocus(page, /saves-target-.+/);
+	const rememberedTarget = await grid.getAttribute('aria-activedescendant');
+	expect(rememberedTarget).toBeTruthy();
 
 	await choose(page, 'Settings');
 	await choose(page, 'Saves');
-	await expect(page.locator(`#${rememberedId}`)).toBeFocused();
+	await expect(grid).toBeFocused();
+	await expect(grid).toHaveAttribute('aria-activedescendant', rememberedTarget!);
 });
 
 test('Trainer and Bag keep independent semantic focus within their separate destinations', async ({
@@ -482,7 +486,7 @@ test('Trainer and Bag keep independent semantic focus within their separate dest
 	await expect(page).toHaveURL(/\/$/);
 });
 
-test('Saves confirmation owns shortcuts, controller Back, and browser history', async ({
+test('Saves deletion workflow owns shortcuts, controller Back, and browser history', async ({
 	page
 }) => {
 	await resetEmptyStorage(page);
@@ -491,31 +495,36 @@ test('Saves confirmation owns shortcuts, controller Back, and browser history', 
 		timeout: 15000
 	});
 
-	const deleteSave = page.locator('.save-card.active .danger-action');
-	await deleteSave.click();
-	let confirmation = page.getByRole('alertdialog', {
+	const activeCard = page.locator('.save-card.active');
+	await activeCard.getByRole('button', { name: /Open Save File Menu/ }).click();
+	let saveFileMenu = page.getByRole('dialog', { name: 'Save File Menu' });
+	await saveFileMenu.getByRole('button', { name: 'Delete from Saves' }).click();
+	let confirmation = page.getByRole('dialog', {
 		name: /Delete .*011020251345\.sav\?/
 	});
 	await expect(confirmation).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Open Main Menu' })).toBeHidden();
 	await page.keyboard.press('Control+k');
 	await pressController(page, 'Menu');
-	await page
-		.locator('.main-menu-opener')
-		.evaluate((opener) => (opener as HTMLButtonElement).click());
 	await expect(page.getByRole('dialog', { name: 'Main Menu' })).toBeHidden();
 	await expect(confirmation).toBeVisible();
 
 	await pressController(page, 'Escape');
 	await expect(confirmation).toBeHidden();
+	await expect(saveFileMenu).toBeVisible();
 	await expect(page).toHaveURL(/\/saves$/);
+	await pressController(page, 'Escape');
+	await expect(saveFileMenu).toBeHidden();
 
 	await choose(page, 'Settings');
 	await choose(page, 'Saves');
-	await deleteSave.click();
-	confirmation = page.getByRole('alertdialog', { name: /Delete .*011020251345\.sav\?/ });
+	await activeCard.getByRole('button', { name: /Open Save File Menu/ }).click();
+	saveFileMenu = page.getByRole('dialog', { name: 'Save File Menu' });
+	await saveFileMenu.getByRole('button', { name: 'Delete from Saves' }).click();
+	confirmation = page.getByRole('dialog', { name: /Delete .*011020251345\.sav\?/ });
 	await expect(confirmation).toBeVisible();
 	await page.evaluate(() => history.back());
 	await expect(confirmation).toBeHidden();
+	await expect(saveFileMenu).toBeVisible();
 	await expect(page).toHaveURL(/\/saves$/);
 });
