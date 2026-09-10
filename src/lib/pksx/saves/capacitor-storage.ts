@@ -1,6 +1,7 @@
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
 import { copyBytes } from './bytes';
 import { clonePokemonStorage } from './pokemon-storage';
+import { nextWorkspaceRevision } from './workspace-revision';
 import type {
 	BackupId,
 	BackupMetadata,
@@ -100,16 +101,33 @@ export class CapacitorSavesStorage implements SavesStorage {
 			if (!catalog.saves.some(({ id }) => id === input.saveFileId)) {
 				throw new Error(`Cannot persist workspace for unknown save file: ${input.saveFileId}`);
 			}
+			if (
+				input.expectedUpdatedAt !== undefined &&
+				(catalog.workspaces[input.saveFileId]?.updatedAt ?? null) !== input.expectedUpdatedAt
+			) {
+				throw new Error('The persisted Workspace changed before this write.');
+			}
 
 			const metadata: WorkspaceMetadata = {
 				saveFileId: input.saveFileId,
 				dirty: input.dirty,
 				automaticBackupCreated: input.automaticBackupCreated,
-				updatedAt: this.#now()
+				updatedAt: nextWorkspaceRevision(
+					catalog.workspaces[input.saveFileId]?.updatedAt,
+					this.#now()
+				)
 			};
-			await this.#fileStore.writeBytes(workspaceBytesPath(input.saveFileId), input.bytes);
+			const path = workspaceBytesPath(input.saveFileId);
+			const previousBytes = await this.#fileStore.readBytes(path);
+			await this.#fileStore.writeBytes(path, input.bytes);
 			catalog.workspaces[input.saveFileId] = metadata;
-			await this.#writeCatalog(catalog);
+			try {
+				await this.#writeCatalog(catalog);
+			} catch (error) {
+				if (previousBytes) await this.#fileStore.writeBytes(path, previousBytes);
+				else await this.#fileStore.delete(path);
+				throw error;
+			}
 			return { ...metadata, bytes: copyBytes(input.bytes) };
 		});
 	}
@@ -200,14 +218,17 @@ export class CapacitorSavesStorage implements SavesStorage {
 			}
 
 			const backup: BackupMetadata = {
-				id: this.#idFactory(),
+				id: input.id ?? this.#idFactory(),
 				saveFileId: input.saveFileId,
 				reason: input.reason,
 				byteLength: input.bytes.byteLength,
 				createdAt: this.#now()
 			};
 			await this.#fileStore.writeBytes(backupBytesPath(backup.id), input.bytes);
-			catalog.backups.push(backup);
+			catalog.backups = [
+				...catalog.backups.filter((candidate) => candidate.id !== backup.id),
+				backup
+			];
 			await this.#writeCatalog(catalog);
 			return { ...backup };
 		});

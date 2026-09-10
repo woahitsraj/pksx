@@ -3014,6 +3014,18 @@ test('controller input follows the keyboard navigation path', async ({ page }) =
 	await expect(page.locator('#box-0-slot-1')).toBeFocused();
 });
 
+test('exports the displayed Save File through the edit coordinator boundary', async ({ page }) => {
+	await importEmeraldThroughSaves(page);
+	await page.getByRole('button', { name: 'Open Box Menu for emerald-011020251345.sav' }).click();
+	const download = page.waitForEvent('download');
+	await page
+		.getByRole('dialog', { name: 'Box Menu' })
+		.getByRole('button', { name: 'Export', exact: true })
+		.click();
+
+	expect((await download).suggestedFilename()).toBe('emerald-011020251345.pksx.sav');
+});
+
 test('controller focus framework covers every interactive surface', async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 800 });
 	await openEmptySaves(page);

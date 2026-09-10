@@ -99,7 +99,125 @@ const rajSaveFixtureCases = [
 	}
 ] as const;
 
+const editorCapabilityFixtures = [...supportedFixtureCases, ...rajSaveFixtureCases];
+const expectedEditorGenerations: Record<(typeof editorCapabilityFixtures)[number]['name'], number> =
+	{
+		Emerald: 3,
+		Colosseum: 3,
+		X: 6,
+		Moon: 7,
+		'Sun/Moon demo': 7,
+		'Ultra Sun': 7,
+		'Ultra Moon': 7,
+		HeartGold: 4,
+		'Platinum EU': 4,
+		White: 5,
+		'White 2': 5,
+		'Pocket Monsters White 2 JP': 5,
+		Sword: 8,
+		"Let's Go Eevee": 7,
+		'Legends Arceus': 8,
+		Scarlet: 9
+	};
+const expectedEditorPockets: Record<(typeof editorCapabilityFixtures)[number]['name'], string[]> = {
+	Emerald: ['Items', 'KeyItems', 'Balls', 'TMHMs', 'Berries', 'PCItems'],
+	Colosseum: ['Items', 'KeyItems', 'Balls', 'TMHMs', 'Berries', 'Medicine'],
+	X: ['Items', 'KeyItems', 'TMHMs', 'Medicine', 'Berries'],
+	Moon: ['Items', 'Medicine', 'TMHMs', 'Berries', 'KeyItems', 'ZCrystals'],
+	'Sun/Moon demo': ['Items', 'Medicine', 'TMHMs', 'Berries', 'KeyItems', 'ZCrystals'],
+	'Ultra Sun': ['Items', 'Medicine', 'TMHMs', 'Berries', 'KeyItems', 'ZCrystals', 'BattleItems'],
+	'Ultra Moon': ['Items', 'Medicine', 'TMHMs', 'Berries', 'KeyItems', 'ZCrystals', 'BattleItems'],
+	HeartGold: [
+		'Items',
+		'KeyItems',
+		'TMHMs',
+		'MailItems',
+		'Medicine',
+		'Berries',
+		'Balls',
+		'BattleItems'
+	],
+	'Platinum EU': [
+		'Items',
+		'KeyItems',
+		'TMHMs',
+		'MailItems',
+		'Medicine',
+		'Berries',
+		'Balls',
+		'BattleItems'
+	],
+	White: ['Items', 'KeyItems', 'TMHMs', 'Medicine', 'Berries'],
+	'White 2': ['Items', 'KeyItems', 'TMHMs', 'Medicine', 'Berries'],
+	'Pocket Monsters White 2 JP': ['Items', 'KeyItems', 'TMHMs', 'Medicine', 'Berries'],
+	Sword: [
+		'Medicine',
+		'Balls',
+		'BattleItems',
+		'Berries',
+		'Items',
+		'TMHMs',
+		'Treasure',
+		'Candy',
+		'KeyItems'
+	],
+	"Let's Go Eevee": ['Medicine', 'TMHMs', 'Candy', 'ZCrystals', 'Balls', 'BattleItems', 'Items'],
+	'Legends Arceus': ['Items', 'KeyItems', 'PCItems', 'Treasure'],
+	Scarlet: [
+		'Medicine',
+		'Balls',
+		'BattleItems',
+		'Berries',
+		'Items',
+		'TMHMs',
+		'Treasure',
+		'Ingredients',
+		'KeyItems',
+		'Candy'
+	]
+};
+
 describe('PKHeX Engine browser runtime smoke', () => {
+	test.each(editorCapabilityFixtures)(
+		'records editor capabilities for the $name full Save File fixture',
+		async (fixture) => {
+			const [engine, fixtureResponse] = await Promise.all([
+				createPkhexEngine('/pkhex-engine'),
+				fetch(fixture.url)
+			]);
+			const fixtureBytes = new Uint8Array(await fixtureResponse.arrayBuffer());
+			const [loaded, catalogue] = await Promise.all([
+				engine.loadSaveWorkspace(fixtureBytes, fixture.fileName, 0),
+				engine.getSaveFileInventoryCatalogue(fixtureBytes, fixture.fileName)
+			]);
+			expect(loaded.ok, JSON.stringify(loaded.error)).toBe(true);
+			expect(catalogue.ok, JSON.stringify(catalogue.error)).toBe(true);
+			if (!loaded.ok || !loaded.value.saveFile || !catalogue.ok) {
+				throw new Error(`Expected ${fixture.name} editor capabilities.`);
+			}
+
+			const projection = loaded.value.saveFile;
+			expect({
+				generation: loaded.value.summary.generation,
+				trainerName: projection.trainerProfile.trainerNameSupported,
+				trainerGender: projection.trainerProfile.genderSupported,
+				money: projection.money.supported,
+				bag: projection.inventory.supported,
+				pockets: projection.inventory.pockets.map((pocket) => pocket.key),
+				catalogue: catalogue.value.supported,
+				cataloguePockets: catalogue.value.pockets.map((pocket) => pocket.key)
+			}).toEqual({
+				generation: expectedEditorGenerations[fixture.name],
+				trainerName: true,
+				trainerGender: true,
+				money: true,
+				bag: true,
+				pockets: expectedEditorPockets[fixture.name],
+				catalogue: true,
+				cataloguePockets: expectedEditorPockets[fixture.name]
+			});
+		}
+	);
 	test('parses the Emerald Save File fixture through the published browser-wasm bundle', async () => {
 		expect.assertions(17);
 

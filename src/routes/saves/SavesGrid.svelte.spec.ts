@@ -4,7 +4,12 @@ import type { EngineApi } from '$lib/engine';
 import SavesGrid from './SavesGrid.svelte';
 import { createSummonedWorkflowHost } from '$lib/pksx/summoned-workflow/host.svelte';
 import { createEmptyPokemonStorage, deleteIndexedDbSaves } from '$lib/pksx/saves';
-import { getSavesSnapshot, getSavesStorage, invalidateSavesCache } from '$lib/pksx/saves-cache';
+import {
+	getSaveFileEditCoordinator,
+	getSavesSnapshot,
+	getSavesStorage,
+	invalidateSavesCache
+} from '$lib/pksx/saves-cache';
 
 type LoadSaveResult = Awaited<ReturnType<EngineApi['loadSaveWorkspace']>>;
 
@@ -169,4 +174,29 @@ it('marks a Save File card busy only while its details are loading', async () =>
 	await expect.poll(() => card.getAttribute('aria-busy')).toBe('false');
 	expect(card.querySelector('[role="status"]')).toBeNull();
 	expect(card.textContent).toContain('CASS');
+});
+
+it('sends confirmed deletion through the Save File edit coordinator', async () => {
+	const storage = getSavesStorage();
+	const saveFile = await storage.importSave({
+		bytes: new Uint8Array([1]),
+		originalFileName: 'delete-me.sav'
+	});
+	const deleteSave = vi.spyOn(getSaveFileEditCoordinator(), 'deleteSave');
+	fakes.host = createSummonedWorkflowHost();
+	container = document.createElement('div');
+	document.body.append(container);
+	component = mount(SavesGrid, { target: container });
+	await expect.poll(() => container.querySelectorAll('.save-card').length).toBe(1);
+
+	container
+		.querySelector<HTMLButtonElement>('[aria-label="Open Save File Menu for delete-me.sav"]')!
+		.click();
+	await tick();
+	container.querySelector<HTMLButtonElement>('#save-file-menu-command-2')!.click();
+	await expect.poll(() => container.querySelector('#save-file-delete-command-1')).not.toBeNull();
+	container.querySelector<HTMLButtonElement>('#save-file-delete-command-1')!.click();
+
+	await expect.poll(() => deleteSave).toHaveBeenCalledWith(saveFile);
+	await expect.poll(() => storage.getSave(saveFile.id)).toBeNull();
 });

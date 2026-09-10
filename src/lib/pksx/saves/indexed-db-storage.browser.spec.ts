@@ -101,6 +101,81 @@ describe('IndexedDbSavesStorage', () => {
 		expect(bytesEqual(originalAgain ?? new Uint8Array(), originalBytes)).toBe(true);
 	});
 
+	it('reconciles a Backup written again with the same stable identity', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		await storage.createBackup({
+			id: 'stable-edit-backup',
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			reason: 'save-file-editing'
+		});
+		const reconciled = await storage.createBackup({
+			id: 'stable-edit-backup',
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([3]),
+			reason: 'save-file-editing'
+		});
+
+		expect(await storage.listBackups(saveFile.id)).toEqual([reconciled]);
+		expect(await storage.getBackupBytes(reconciled.id)).toEqual(new Uint8Array([3]));
+	});
+
+	it('assigns distinct Workspace revisions when the clock does not advance', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		const first = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+		const second = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+
+		expect(first.updatedAt).toBe('2026-05-16T12:00:00.000Z');
+		expect(second.updatedAt).toBe('2026-05-16T12:00:00.001Z');
+	});
+
+	it('rejects a Workspace write based on an obsolete persisted revision', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		const first = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+		const second = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([3]),
+			dirty: true,
+			automaticBackupCreated: true,
+			expectedUpdatedAt: first.updatedAt
+		});
+
+		await expect(
+			storage.putWorkspace({
+				saveFileId: saveFile.id,
+				bytes: new Uint8Array([4]),
+				dirty: true,
+				automaticBackupCreated: true,
+				expectedUpdatedAt: first.updatedAt
+			})
+		).rejects.toThrow('persisted Workspace changed');
+		expect(await storage.getWorkspace(saveFile.id)).toEqual(second);
+	});
+
 	it('clears persisted workspace bytes for a save artifact', async () => {
 		const saveFile = await storage.importSave({
 			bytes: new Uint8Array([1, 2, 3]),

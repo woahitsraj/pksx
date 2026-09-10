@@ -24,6 +24,7 @@
 		getCachedActiveWorkspace,
 		getCachedSavesSnapshot,
 		getPkhexEngine,
+		getSaveFileEditCoordinator,
 		getSavesSnapshot,
 		getSavesStorage,
 		invalidateActiveWorkspaceCache,
@@ -531,7 +532,7 @@
 			if (!(await storage.getSave(saveFile.id))) {
 				throw new Error('The selected Save File is no longer available.');
 			}
-			await storage.deleteSave(saveFile.id);
+			await getSaveFileEditCoordinator().deleteSave(saveFile);
 			invalidateSavesCache();
 			invalidateActiveWorkspaceCache(saveFile.id);
 			summonedWorkflow.closeAll();

@@ -1,5 +1,6 @@
 import { copyBytes } from './bytes';
 import { clonePokemonStorage } from './pokemon-storage';
+import { nextWorkspaceRevision } from './workspace-revision';
 import type {
 	BackupId,
 	BackupMetadata,
@@ -143,27 +144,35 @@ export class IndexedDbSavesStorage implements SavesStorage {
 			throw new Error(`Cannot persist workspace for unknown save file: ${input.saveFileId}`);
 		}
 
-		const workspace: StoredWorkspace = {
-			saveFileId: input.saveFileId,
-			bytes: copyBytes(input.bytes),
-			dirty: input.dirty,
-			automaticBackupCreated: input.automaticBackupCreated,
-			updatedAt: this.#now()
-		};
-
 		const database = await openSavesDatabase(this.#databaseName);
 		try {
 			const transaction = database.transaction(workspacesStore, 'readwrite');
-			transaction.objectStore(workspacesStore).put({
+			const store = transaction.objectStore(workspacesStore);
+			const previous = await requestToPromise<WorkspaceRecord | undefined>(
+				store.get(input.saveFileId)
+			);
+			if (
+				input.expectedUpdatedAt !== undefined &&
+				(previous?.updatedAt ?? null) !== input.expectedUpdatedAt
+			) {
+				throw new Error('The persisted Workspace changed before this write.');
+			}
+			const workspace: StoredWorkspace = {
+				saveFileId: input.saveFileId,
+				bytes: copyBytes(input.bytes),
+				dirty: input.dirty,
+				automaticBackupCreated: input.automaticBackupCreated,
+				updatedAt: nextWorkspaceRevision(previous?.updatedAt, this.#now())
+			};
+			store.put({
 				...workspace,
 				bytes: copyBytes(workspace.bytes)
 			} satisfies WorkspaceRecord);
 			await transactionDone(transaction);
+			return { ...workspace, bytes: copyBytes(workspace.bytes) };
 		} finally {
 			database.close();
 		}
-
-		return { ...workspace, bytes: copyBytes(workspace.bytes) };
 	}
 
 	async getWorkspace(saveFileId: SaveFileId): Promise<StoredWorkspace | null> {
@@ -318,7 +327,7 @@ export class IndexedDbSavesStorage implements SavesStorage {
 		}
 
 		const backup: BackupMetadata = {
-			id: this.#idFactory(),
+			id: input.id ?? this.#idFactory(),
 			saveFileId: input.saveFileId,
 			reason: input.reason,
 			byteLength: input.bytes.byteLength,

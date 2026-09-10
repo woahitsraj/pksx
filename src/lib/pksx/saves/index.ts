@@ -10,6 +10,7 @@ export type {
 	BackupReason,
 	CreateBackupInput,
 	ImportSaveInput,
+	PutWorkspaceInput,
 	SavesStorage,
 	PokemonStorageId,
 	SaveFileId,
@@ -17,5 +18,6 @@ export type {
 	StoredPokemonStorageBox,
 	StoredPokemonStoragePokemon,
 	StoredPokemonStorageSlot,
-	StoredSaveFile
+	StoredSaveFile,
+	StoredWorkspace
 } from './types';

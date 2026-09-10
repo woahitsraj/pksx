@@ -2,6 +2,7 @@ export type SaveFileId = string;
 export type BackupId = string;
 export type BackupReason =
 	| 'manual'
+	| 'save-file-editing'
 	| 'pokemon-movement'
 	| 'pokemon-editing'
 	| 'pokemon-creation'
@@ -95,6 +96,7 @@ export type ImportSaveInput = {
 };
 
 export type CreateBackupInput = {
+	id?: BackupId;
 	saveFileId: SaveFileId;
 	bytes: Uint8Array;
 	reason: BackupReason;
@@ -105,6 +107,7 @@ export type PutWorkspaceInput = {
 	bytes: Uint8Array;
 	dirty: boolean;
 	automaticBackupCreated: boolean;
+	expectedUpdatedAt?: string | null;
 };
 
 export type SavesStorage = {
