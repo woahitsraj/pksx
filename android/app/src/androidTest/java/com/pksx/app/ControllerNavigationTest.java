@@ -3,6 +3,7 @@ package com.pksx.app;
 import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeTrue;
 
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
 import android.graphics.Rect;
 import android.graphics.RectF;
@@ -29,6 +30,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.json.JSONArray;
+import org.json.JSONObject;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -41,6 +45,19 @@ public class ControllerNavigationTest {
     @Rule
     public ActivityScenarioRule<MainActivity> activityRule =
         new ActivityScenarioRule<>(MainActivity.class);
+
+    private NativeDisplayFixture defaultDisplayFixture;
+
+    @Before
+    public void setDefaultNativeViewport() throws Exception {
+        defaultDisplayFixture = new NativeDisplayFixture();
+        defaultDisplayFixture.setViewport(360, 640, 1, false);
+    }
+
+    @After
+    public void restoreNativeViewport() throws Exception {
+        if (defaultDisplayFixture != null) defaultDisplayFixture.close();
+    }
 
     @Test
     public void gamepadNavigatesAndHighlightsSlotActions() throws Exception {
@@ -245,23 +262,25 @@ public class ControllerNavigationTest {
 
     @Test
     public void smallWidescreenUsesDestinationLayoutWithoutPersistentChrome() throws Exception {
-        awaitControllerSurface();
-        awaitJavaScript(
-            "innerWidth <= 1024"
-                + " && innerWidth > innerHeight"
-                + " && document.querySelector('.top-bar,.mobile-tabbar') === null"
-                + " && document.querySelector('.main-menu-opener') !== null"
-                + " && document.querySelector('.box-sidebar') === null"
-                + " && (() => {"
-                + " const route = document.querySelector('.boxes-route')?.getBoundingClientRect();"
-                + " const pane = document.querySelector('.box-pane')?.getBoundingClientRect();"
-                + " const grid = document.querySelector('.location-grid')?.getBoundingClientRect();"
-                + " const rail = document.querySelector('.detail-rail')?.getBoundingClientRect();"
-                + " return route && pane && grid && rail && pane.width > 0 && grid.height > 0"
-                + " && grid.left >= pane.left && grid.right <= pane.right"
-                + " && rail.left >= route.left && rail.right <= route.right;"
-                + " })()"
-        );
+        try (NativeDisplayFixture fixture = new NativeDisplayFixture()) {
+            fixture.setViewport(360, 640, 1, false);
+            awaitControllerSurface();
+            awaitJavaScript(
+                "innerWidth === 640 && innerHeight === 312"
+                    + " && document.querySelector('.top-bar,.mobile-tabbar') === null"
+                    + " && document.querySelector('.main-menu-opener') !== null"
+                    + " && document.querySelector('.box-sidebar') === null"
+                    + " && (() => {"
+                    + " const route = document.querySelector('.boxes-route')?.getBoundingClientRect();"
+                    + " const pane = document.querySelector('.box-pane')?.getBoundingClientRect();"
+                    + " const grid = document.querySelector('.location-grid')?.getBoundingClientRect();"
+                    + " const rail = document.querySelector('.detail-rail')?.getBoundingClientRect();"
+                    + " return route && pane && grid && rail && pane.width > 0 && grid.height > 0"
+                    + " && grid.left >= pane.left && grid.right <= pane.right"
+                    + " && rail.left >= route.left && rail.right <= route.right;"
+                    + " })()"
+            );
+        }
     }
 
     @Test
@@ -547,6 +566,230 @@ public class ControllerNavigationTest {
     }
 
     @Test
+    public void nativeRotationPreservesBoxesCarryMenuAndTakeover() throws Throwable {
+        assumeTrue("Requires Android 11 display controls", Build.VERSION.SDK_INT >= Build.VERSION_CODES.R);
+        assertActivityDoesNotLockOrientation();
+        try (NativeDisplayFixture fixture = new NativeDisplayFixture()) {
+            fixture.setViewport(360, 640, 0, false);
+            awaitControllerSurface();
+            importEmeraldSave();
+            chooseMainMenu("Boxes");
+            awaitControllerSurface();
+            awaitJavaScript("document.querySelector('#box-0-slot-0')?.textContent.includes('ARON')");
+            runJavaScript("document.querySelector('#box-0-slot-0').focus()");
+            awaitBoxesState(1, "save-file", "box-0", "box-0-slot-0", null);
+            assertNativeSafeCanvas("single-pane portrait");
+
+            fixture.setViewport(360, 640, 1, false);
+            awaitBoxesState(1, "save-file", "box-0", "box-0-slot-0", null);
+            assertNativeSafeCanvas("single-pane landscape");
+            pressGamepadKey(KeyEvent.KEYCODE_DPAD_RIGHT, "document.activeElement?.id === 'box-0-slot-1'");
+            pressGamepadKey(KeyEvent.KEYCODE_DPAD_LEFT, "document.activeElement?.id === 'box-0-slot-0'");
+
+            fixture.setViewport(360, 640, 0, false);
+            pressGamepadKey(
+                KeyEvent.KEYCODE_BUTTON_X,
+                "document.querySelector('[role=dialog][aria-label=\"Box Menu\"]')"
+            );
+            runJavaScript("document.querySelector('#box-menu-command-3').click()");
+            awaitJavaScript(
+                "document.querySelector('[role=dialog][aria-label=\"Open another collection\"]')"
+            );
+            runJavaScript(
+                "[...document.querySelectorAll('[data-source-picker-control]')]"
+                    + ".find(control => control.textContent.includes('Pokemon Storage')).click()"
+            );
+            awaitJavaScript("document.querySelectorAll('.box-pane').length === 2");
+            runJavaScript(
+                "document.querySelector('[data-source-id=\"pokemon-storage\"] [id$=\"-slot-7\"]').click()"
+            );
+            awaitJavaScript(
+                "document.querySelector('.box-pane.active-pane')?.dataset.sourceId === 'pokemon-storage'"
+                    + " && document.activeElement?.id === 'box-0-slot-7'"
+            );
+            pressGamepadKey(
+                KeyEvent.KEYCODE_BUTTON_R1,
+                "document.querySelector('.box-pane.active-pane')?.dataset.location === 'box-1'"
+                    + " && document.activeElement?.id === 'box-1-slot-7'"
+            );
+            awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-7", null);
+
+            fixture.setViewport(360, 408, 0, false);
+            awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-7", null);
+            awaitJavaScript(
+                "(() => { const panes = [...document.querySelectorAll('.box-pane')]"
+                    + ".map(pane => pane.getBoundingClientRect());"
+                    + " return panes.length === 2 && panes[1].top >= panes[0].bottom - 1; })()"
+            );
+            assertNativeSafeCanvas("two-pane square");
+
+            fixture.setViewport(360, 640, 1, false);
+            awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-7", null);
+            awaitJavaScript(
+                "(() => { const panes = [...document.querySelectorAll('.box-pane')]"
+                    + ".map(pane => pane.getBoundingClientRect());"
+                    + " return panes.length === 2 && panes[1].left >= panes[0].right - 1; })()"
+            );
+            assertNativeSafeCanvas("two-pane landscape");
+
+            runJavaScript(
+                "document.querySelector('[data-pane-id=\"pane-active-save\"] [id$=\"-slot-0\"]').click()"
+            );
+            awaitJavaScript("document.activeElement?.id === 'box-0-slot-0'");
+            pressGamepadKey(
+                KeyEvent.KEYCODE_BUTTON_A,
+                "document.querySelector('[role=dialog][aria-label=\"Slot actions\"]')"
+            );
+            awaitJavaScript(
+                "[...document.querySelectorAll('.slot-command-row button')]"
+                    + ".some(button => button.textContent.trim() === 'Move')"
+            );
+            runJavaScript(
+                "[...document.querySelectorAll('.slot-command-row button')]"
+                    + ".find(button => button.textContent.trim() === 'Move').click()"
+            );
+            for (int step = 0; step < 6; step++) {
+                pressGamepadKey(KeyEvent.KEYCODE_DPAD_RIGHT, null);
+            }
+            awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-0", "move ARON");
+
+            fixture.setViewport(360, 408, 0, false);
+            awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-0", "move ARON");
+            fixture.setViewport(360, 640, 0, false);
+            awaitBoxesState(2, "pokemon-storage", "box-1", "box-1-slot-0", "move ARON");
+            assertNativeSafeCanvas("Carry portrait");
+            pressGamepadKey(
+                KeyEvent.KEYCODE_BUTTON_B,
+                "document.querySelector('.carry-at-focus') === null"
+                    + " && document.activeElement?.id === 'box-0-slot-0'"
+                    + " && document.querySelector('.box-pane.active-pane')?.dataset.sourceId"
+                    + " !== 'pokemon-storage'"
+            );
+
+            pressGamepadKey(
+                KeyEvent.KEYCODE_BUTTON_X,
+                "document.querySelector('[role=dialog][aria-label=\"Box Menu\"]')"
+                    + " && document.activeElement?.id === 'box-menu-command-0'"
+            );
+            fixture.setViewport(360, 640, 1, false);
+            awaitJavaScript(
+                "document.querySelectorAll('[role=dialog]').length === 1"
+                    + " && document.querySelector('[role=dialog][aria-label=\"Box Menu\"]')"
+                    + " && document.activeElement?.id === 'box-menu-command-0'"
+                    + " && document.querySelectorAll('.box-pane').length === 2"
+                    + " && document.querySelector('.box-pane.active-pane')?.dataset.location === 'box-0'"
+                    + " && document.querySelector('[data-source-id=\"pokemon-storage\"]')"
+                    + "?.dataset.location === 'box-1'"
+            );
+            assertNativeSafeCanvas("Box Menu landscape");
+            pressGamepadKey(
+                KeyEvent.KEYCODE_BUTTON_B,
+                "document.querySelector('[role=dialog][aria-label=\"Box Menu\"]') === null"
+                    + " && document.activeElement?.id === 'box-0-slot-0'"
+            );
+
+            pressGamepadKey(
+                KeyEvent.KEYCODE_BUTTON_A,
+                "document.querySelector('[role=dialog][aria-label=\"Slot actions\"]')"
+            );
+            awaitJavaScript("document.querySelector('#slot-action-0')?.textContent.trim() === 'Edit'");
+            pressGamepadKey(
+                KeyEvent.KEYCODE_BUTTON_A,
+                "document.querySelector('.pokemon-editor')"
+                    + " && document.activeElement?.id === 'pokemon-editor-section-species-form'"
+            );
+            runJavaScript("document.querySelector('#pokemon-editor-section-nickname').click()");
+            awaitJavaScript(
+                "document.querySelector('.pokemon-editor')?.dataset.editorSection === 'nickname'"
+                    + " && document.activeElement?.id === 'pokemon-editor-section-nickname'"
+                    + " && !document.body.textContent.includes('Quick Actions')"
+            );
+            fixture.setViewport(360, 408, 0, false);
+            awaitPokemonEditorState("pokemon-editor-section-nickname", null);
+            fixture.setViewport(360, 640, 0, false);
+            awaitPokemonEditorState("pokemon-editor-section-nickname", null);
+            assertNativeSafeCanvas("Pokemon Editor portrait");
+            pressGamepadKey(
+                KeyEvent.KEYCODE_BUTTON_B,
+                "document.querySelector('.pokemon-editor') === null"
+                    + " && document.querySelector('[role=dialog][aria-label=\"Slot actions\"]')"
+                    + " && document.activeElement?.id === 'slot-action-0'"
+            );
+        }
+    }
+
+    @Test
+    public void keyboardOpenRotationPreservesTrainerDraftAndTallBand() throws Throwable {
+        assumeTrue("Requires Android 11 display controls", Build.VERSION.SDK_INT >= Build.VERSION_CODES.R);
+        assertActivityDoesNotLockOrientation();
+        try (NativeDisplayFixture fixture = new NativeDisplayFixture()) {
+            fixture.setViewport(360, 640, 0, false);
+            awaitControllerSurface();
+            importEmeraldSave();
+            chooseMainMenu("Trainer");
+            awaitJavaScript(
+                "location.pathname.endsWith('/trainer')"
+                    + " && document.querySelector('[data-destination-root=\"trainer\"]')"
+                    + "?.dataset.initialState === 'ready'"
+                    + " && document.querySelector('[data-destination-focus=\"trainer-name\"]')"
+                    + " && innerWidth === 360 && innerHeight === 592"
+                    + " && getComputedStyle(document.querySelector('.app-shell'))"
+                    + ".getPropertyValue('--pksx-height-band').trim() === 'tall'"
+            );
+            focusAndShowIme("[data-destination-focus=\"trainer-name\"]");
+            awaitJavaScript(
+                "innerHeight < 560"
+                    + " && document.documentElement.dataset.pksxHeightBandLock === 'tall'"
+                    + " && getComputedStyle(document.querySelector('.app-shell'))"
+                    + ".getPropertyValue('--pksx-height-band').trim() === 'tall'"
+                    + " && document.activeElement?.dataset.destinationFocus === 'trainer-name'"
+            );
+            runJavaScript("document.activeElement.select()");
+            shellCommand("input text NATIVE");
+            awaitJavaScript(
+                "document.activeElement?.dataset.destinationFocus === 'trainer-name'"
+                    + " && document.activeElement?.value === 'NATIVE'"
+            );
+            Log.i("PKSXAcceptance", "IME portrait " + nativeAcceptanceState());
+
+            fixture.setViewport(360, 640, 1, true);
+            awaitJavaScript(
+                "location.pathname.endsWith('/trainer')"
+                    + " && innerWidth === 640 && innerHeight < 360"
+                    + " && document.activeElement?.dataset.destinationFocus === 'trainer-name'"
+                    + " && document.activeElement?.value === 'NATIVE'"
+                    + " && document.documentElement.dataset.pksxHeightBandLock === 'tall'"
+                    + " && getComputedStyle(document.querySelector('.app-shell'))"
+                    + ".getPropertyValue('--pksx-height-band').trim() === 'tall'"
+            );
+            assertFocusedTargetContained("keyboard-open Trainer landscape");
+            Log.i("PKSXAcceptance", "IME landscape " + nativeAcceptanceState());
+
+            runJavaScript("document.querySelector('button[aria-label=\"Open Main Menu\"]').focus()");
+            hideIme();
+            awaitImeHidden();
+            awaitJavaScript(
+                "document.documentElement.dataset.pksxHeightBandLock === undefined"
+                    + " && getComputedStyle(document.querySelector('.app-shell'))"
+                    + ".getPropertyValue('--pksx-height-band').trim() === 'short'"
+                    + " && document.querySelector('[data-destination-focus=\"trainer-name\"]')"
+                    + "?.value === 'NATIVE'"
+            );
+            fixture.setViewport(360, 640, 0, false);
+            awaitJavaScript(
+                "innerWidth === 360 && innerHeight === 592"
+                    + " && document.documentElement.dataset.pksxHeightBandLock === undefined"
+                    + " && getComputedStyle(document.querySelector('.app-shell'))"
+                    + ".getPropertyValue('--pksx-height-band').trim() === 'tall'"
+                    + " && location.pathname.endsWith('/trainer')"
+                    + " && document.querySelector('[data-destination-focus=\"trainer-name\"]')"
+                    + "?.value === 'NATIVE'"
+            );
+            assertNativeSafeCanvas("Trainer portrait after editing");
+        }
+    }
+
+    @Test
     public void editableFocusKeepsTallHeightBandWhileImeShrinksWebView() throws Throwable {
         assumeTrue("Requires Android 11 display controls", Build.VERSION.SDK_INT >= Build.VERSION_CODES.R);
         awaitImeHidden();
@@ -573,6 +816,7 @@ public class ControllerNavigationTest {
         Log.i("PKSXAcceptance", "IME fixture captured geometry " + originalGeometry);
         String fixedRotation = shellCommand("cmd window fixed-to-user-rotation");
         String densityState = shellCommand("wm density");
+        String originalDensityOverride = settingOverride(densityState, "Override density");
         String originalStylusHandwriting = shellCommand(
             "settings get secure stylus_handwriting_enabled"
         );
@@ -594,6 +838,7 @@ public class ControllerNavigationTest {
         Throwable primaryFailure = null;
         try {
             shellCommand("settings put secure stylus_handwriting_enabled 0");
+            shellCommand("wm density 160");
             shellCommand("wm size 540x720");
             userRotation("lock 0");
             awaitDisplayRotation(0);
@@ -671,13 +916,15 @@ public class ControllerNavigationTest {
                             awaitSettledViewport(originalAngle, originalWindowBounds);
                         } finally {
                             userRotation(originalRotationMode);
+                            awaitShellState(
+                                "cmd window user-rotation",
+                                originalRotationMode,
+                                "rotation mode"
+                            );
                         }
                         awaitDisplayRotation(originalAngle);
                         awaitImeHidden();
                         JSONArray restoredViewport = awaitSettledViewport(originalAngle, originalWindowBounds);
-                        if (!originalRotationMode.equals(userRotation(""))) {
-                            fail("Android rotation mode was not restored");
-                        }
                         String restoredSizeState = shellCommand("wm size");
                         boolean sizeRestored = originalSizeOverride == null
                             ? !restoredSizeState.contains("Override size:")
@@ -707,6 +954,19 @@ public class ControllerNavigationTest {
                 );
             }
             try {
+                shellCommand(
+                    "wm density "
+                        + (originalDensityOverride == null ? "reset" : originalDensityOverride)
+                );
+            } catch (Throwable failure) {
+                AssertionError densityFailure = new AssertionError(
+                    "IME fixture density cleanup failed",
+                    failure
+                );
+                if (cleanupFailure == null) cleanupFailure = densityFailure;
+                else cleanupFailure.addSuppressed(densityFailure);
+            }
+            try {
                 restoreSecureSetting("stylus_handwriting_enabled", originalStylusHandwriting);
             } catch (Throwable failure) {
                 AssertionError settingFailure = new AssertionError(
@@ -723,17 +983,375 @@ public class ControllerNavigationTest {
         }
     }
 
+    private void assertActivityDoesNotLockOrientation() {
+        AtomicReference<Integer> requestedOrientation = new AtomicReference<>();
+        AtomicReference<Integer> manifestOrientation = new AtomicReference<>();
+        activityRule.getScenario().onActivity(activity -> {
+            requestedOrientation.set(activity.getRequestedOrientation());
+            try {
+                manifestOrientation.set(
+                    activity
+                        .getPackageManager()
+                        .getActivityInfo(activity.getComponentName(), 0)
+                        .screenOrientation
+                );
+            } catch (android.content.pm.PackageManager.NameNotFoundException failure) {
+                throw new AssertionError(failure);
+            }
+        });
+        if (
+            requestedOrientation.get() != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                || manifestOrientation.get() != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        ) {
+            fail(
+                "The shipping activity locks orientation: requested="
+                    + requestedOrientation.get()
+                    + ", manifest="
+                    + manifestOrientation.get()
+            );
+        }
+    }
+
+    private void awaitBoxesState(
+        int paneCount,
+        String activeSource,
+        String activeLocation,
+        String activeElementId,
+        String carryLabel
+    ) throws Exception {
+        String sourceExpression = "save-file".equals(activeSource)
+            ? "active?.dataset.sourceId !== 'pokemon-storage'"
+            : "active?.dataset.sourceId === '" + activeSource + "'";
+        String carryExpression = carryLabel == null
+            ? "carry === null"
+            : "carry?.getAttribute('aria-label')?.toLowerCase() === '" + carryLabel.toLowerCase(Locale.US) + "'";
+        awaitJavaScript(
+            "(() => { const panes = [...document.querySelectorAll('.box-pane')];"
+                + " const active = document.querySelector('.box-pane.active-pane');"
+                + " const carry = document.querySelector('.carry-at-focus');"
+                + " return location.pathname === '/' && panes.length === "
+                + paneCount
+                + " && new Set(panes.map(pane => pane.dataset.paneId)).size === panes.length"
+                + " && panes[0]?.dataset.paneId === 'pane-active-save'"
+                + " && panes[0]?.dataset.location === 'box-0'"
+                + (paneCount == 2
+                    ? " && panes[1]?.dataset.sourceId === 'pokemon-storage'"
+                    + " && panes[1]?.dataset.location === 'box-1'"
+                    : "")
+                + " && "
+                + sourceExpression
+                + " && active?.dataset.location === '"
+                + activeLocation
+                + "' && document.activeElement?.id === '"
+                + activeElementId
+                + "' && "
+                + carryExpression
+                + "; })()"
+        );
+    }
+
+    private void awaitPokemonEditorState(String activeElementId, String inputValue) throws Exception {
+        awaitJavaScript(
+            "(() => { const editor = document.querySelector('.pokemon-editor');"
+                + " const panes = [...document.querySelectorAll('.box-pane')];"
+                + " return location.pathname === '/' && document.querySelectorAll('[role=dialog]').length === 1"
+                + " && editor?.dataset.editorSection === 'nickname'"
+                + " && panes.length === 2 && panes[0]?.dataset.location === 'box-0'"
+                + " && panes[1]?.dataset.sourceId === 'pokemon-storage'"
+                + " && panes[1]?.dataset.location === 'box-1'"
+                + " && document.activeElement?.id === '"
+                + activeElementId
+                + "'"
+                + (inputValue == null
+                    ? ""
+                    : " && document.querySelector('#pokemon-editor-nickname')?.value === '"
+                    + inputValue
+                    + "'")
+                + " && !document.body.textContent.includes('Quick Actions'); })()"
+        );
+    }
+
+    private void focusAndShowIme(String selector) throws Exception {
+        activityRule
+            .getScenario()
+            .onActivity(activity -> activity.getBridge().getWebView().requestFocus());
+        runJavaScript(
+            "(() => { const input = document.querySelector('"
+                + selector
+                + "'); input.focus(); input.click(); return document.activeElement === input; })()"
+        );
+        activityRule
+            .getScenario()
+            .onActivity(activity -> {
+                WebView webView = activity.getBridge().getWebView();
+                ((InputMethodManager) activity.getSystemService(MainActivity.INPUT_METHOD_SERVICE))
+                    .showSoftInput(webView, InputMethodManager.SHOW_IMPLICIT);
+            });
+        awaitImeVisible();
+    }
+
+    private void assertFocusedTargetContained(String label) throws Exception {
+        String contained = runJavaScript(
+            "(() => { const target = document.activeElement; const viewport = visualViewport;"
+                + " if (!(target instanceof HTMLElement) || !viewport) return false;"
+                + " const rect = target.getBoundingClientRect();"
+                + " return rect.left >= viewport.offsetLeft - 1 && rect.top >= viewport.offsetTop - 1"
+                + " && rect.right <= viewport.offsetLeft + viewport.width + 1"
+                + " && rect.bottom <= viewport.offsetTop + viewport.height + 1; })()"
+        );
+        if (!"true".equals(contained)) {
+            fail(label + " focused target is obscured: " + nativeAcceptanceState());
+        }
+    }
+
+    private void assertNativeSafeCanvas(String label) throws Exception {
+        JSONObject geometry = new JSONObject(
+            runJavaScript(
+                "(() => { const dialogs = [...document.querySelectorAll('[role=dialog]')]"
+                    + ".filter(node => node.getClientRects().length > 0);"
+                    + " const surface = dialogs.at(-1) ?? document.querySelector('[data-destination-root]');"
+                    + " const target = document.activeElement;"
+                    + " const scrollport = target?.closest('.location-grid,.edge-menu-panel,.editor-rail,'"
+                    + " + '.editor-content,[data-testid$=\"-scrollport\"]') ?? surface;"
+                    + " const rect = node => { const value = node?.getBoundingClientRect();"
+                    + " return value ? [value.left,value.top,value.right,value.bottom] : null; };"
+                    + " const root = getComputedStyle(document.documentElement);"
+                    + " return {innerWidth,innerHeight,safe:["
+                    + " '--pksx-safe-area-top','--pksx-safe-area-right',"
+                    + " '--pksx-safe-area-bottom','--pksx-safe-area-left'"
+                    + " ].map(name => parseFloat(root.getPropertyValue(name))),"
+                    + " surface:rect(surface),target:rect(target),scrollport:rect(scrollport)}; })()"
+            )
+        );
+        JSONArray safe = geometry.getJSONArray("safe");
+        for (int index = 0; index < safe.length(); index++) {
+            if (!Double.isFinite(safe.getDouble(index)) || safe.getDouble(index) < 0) {
+                fail(label + " has invalid CSS safe-area aliases: " + geometry);
+            }
+        }
+
+        AtomicReference<String> evidence = new AtomicReference<>();
+        AtomicReference<Boolean> contained = new AtomicReference<>(false);
+        activityRule.getScenario().onActivity(activity -> {
+            WebView webView = activity.getBridge().getWebView();
+            android.view.View decor = activity.getWindow().getDecorView();
+            WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(decor);
+            int[] webViewOrigin = new int[2];
+            int[] decorOrigin = new int[2];
+            webView.getLocationOnScreen(webViewOrigin);
+            decor.getLocationOnScreen(decorOrigin);
+            Rect decorBounds = new Rect(
+                decorOrigin[0],
+                decorOrigin[1],
+                decorOrigin[0] + decor.getWidth(),
+                decorOrigin[1] + decor.getHeight()
+            );
+            Rect webViewBounds = new Rect(
+                webViewOrigin[0],
+                webViewOrigin[1],
+                webViewOrigin[0] + webView.getWidth(),
+                webViewOrigin[1] + webView.getHeight()
+            );
+            Insets bars = insets == null
+                ? Insets.NONE
+                : insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout()
+                );
+            Rect safeBounds = new Rect(
+                decorBounds.left + bars.left,
+                decorBounds.top + bars.top,
+                decorBounds.right - bars.right,
+                decorBounds.bottom - bars.bottom
+            );
+            double scaleX = webView.getWidth() / geometry.optDouble("innerWidth", 0);
+            double scaleY = webView.getHeight() / geometry.optDouble("innerHeight", 0);
+            RectF surface = screenBounds(
+                webViewOrigin,
+                scaleX,
+                scaleY,
+                jsonBounds(geometry.optJSONArray("surface"))
+            );
+            RectF target = screenBounds(
+                webViewOrigin,
+                scaleX,
+                scaleY,
+                jsonBounds(geometry.optJSONArray("target"))
+            );
+            double[] scrollportBounds = jsonBounds(geometry.optJSONArray("scrollport"));
+            RectF scrollport = screenBounds(webViewOrigin, scaleX, scaleY, scrollportBounds);
+            contained.set(
+                webViewBounds.contains(safeBounds)
+                    && contains(safeBounds, surface)
+                    && contains(scrollport, target)
+            );
+            evidence.set(
+                "decor=" + decorBounds + " webView=" + webViewBounds + " bars=" + bars
+                    + " safe=" + safeBounds + " surface=" + surface + " target=" + target
+                    + " scrollport=" + scrollport + " css=" + geometry
+            );
+        });
+        Log.i("PKSXAcceptance", label + " " + evidence.get());
+        if (!contained.get()) fail(label + " Safe Canvas containment failed: " + evidence.get());
+    }
+
+    private double[] jsonBounds(JSONArray bounds) {
+        if (bounds == null || bounds.length() != 4) return new double[] { 0, 0, 0, 0 };
+        return new double[] {
+            bounds.optDouble(0),
+            bounds.optDouble(1),
+            bounds.optDouble(2),
+            bounds.optDouble(3)
+        };
+    }
+
+    private final class NativeDisplayFixture implements AutoCloseable {
+        private final String originalSizeOverride;
+        private final String originalDensityOverride;
+        private final String originalFixedRotation;
+        private final String originalRotationMode;
+        private final String originalStylusHandwriting;
+        private final int originalAngle;
+        private final Rect originalWindowBounds;
+        private final String originalGeometry;
+
+        NativeDisplayFixture() throws Exception {
+            awaitImeHidden();
+            originalSizeOverride = settingOverride(shellCommand("wm size"), "Override size");
+            originalDensityOverride = settingOverride(shellCommand("wm density"), "Override density");
+            originalFixedRotation = shellCommand("cmd window fixed-to-user-rotation");
+            originalRotationMode = userRotation("");
+            if (!originalRotationMode.matches("free|lock [0-3]")) {
+                fail("Unexpected Android user rotation state: " + originalRotationMode);
+            }
+            originalStylusHandwriting = shellCommand(
+                "settings get secure stylus_handwriting_enabled"
+            );
+            originalAngle = displayRotation();
+            originalWindowBounds = windowBounds();
+            originalGeometry = nativeWindowGeometry();
+            Log.i("PKSXAcceptance", "Native fixture captured " + originalGeometry);
+            shellCommand("settings put secure stylus_handwriting_enabled 0");
+        }
+
+        void setViewport(int naturalWidth, int naturalHeight, int rotation, boolean imeVisible)
+            throws Exception {
+            shellCommand("cmd window fixed-to-user-rotation enabled");
+            shellCommand("wm density 160");
+            shellCommand("wm size " + naturalWidth + "x" + naturalHeight);
+            userRotation("lock " + rotation);
+            awaitDisplayRotation(rotation);
+            if (imeVisible) awaitImeVisible();
+            else awaitImeHidden();
+            int width = rotation % 2 == 0 ? naturalWidth : naturalHeight;
+            int height = rotation % 2 == 0 ? naturalHeight : naturalWidth;
+            Rect expectedBounds = new Rect(0, 0, width, height);
+            awaitWindowBounds(expectedBounds);
+            JSONArray viewport = awaitSettledViewport(rotation, expectedBounds, imeVisible);
+            if (viewport.getInt(0) != width || viewport.getInt(1) != webViewHeight()) {
+                fail(
+                    "Unexpected CSS viewport at " + width + "x" + height + ": " + viewport
+                        + ", " + nativeWindowGeometry()
+                );
+            }
+            Log.i(
+                "PKSXAcceptance",
+                "Native viewport " + width + "x" + height + " ime=" + imeVisible + " "
+                    + nativeAcceptanceState()
+            );
+        }
+
+        @Override
+        public void close() throws Exception {
+            runJavaScript("document.activeElement?.blur()");
+            hideIme();
+            awaitImeHidden();
+            shellCommand("wm size " + (originalSizeOverride == null ? "reset" : originalSizeOverride));
+            shellCommand(
+                "wm density " + (originalDensityOverride == null ? "reset" : originalDensityOverride)
+            );
+            shellCommand("cmd window fixed-to-user-rotation enabled");
+            userRotation("lock " + originalAngle);
+            awaitDisplayRotation(originalAngle);
+            awaitWindowBounds(originalWindowBounds);
+            shellCommand("cmd window fixed-to-user-rotation " + originalFixedRotation);
+            userRotation(originalRotationMode);
+            restoreSecureSetting("stylus_handwriting_enabled", originalStylusHandwriting);
+            awaitShellState("cmd window user-rotation", originalRotationMode, "rotation mode");
+            awaitShellState(
+                "cmd window fixed-to-user-rotation",
+                originalFixedRotation,
+                "fixed-rotation policy"
+            );
+            Log.i(
+                "PKSXAcceptance",
+                "Native fixture restored captured=" + originalGeometry + " current="
+                    + nativeWindowGeometry()
+            );
+        }
+    }
+
+    private String settingOverride(String state, String label) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+            .compile("(?m)^" + label + ": ([^\\s]+)\\s*$")
+            .matcher(state);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private void awaitShellState(String command, String expected, String label) throws Exception {
+        long deadline = SystemClock.uptimeMillis() + TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS);
+        String actual = null;
+        while (SystemClock.uptimeMillis() < deadline) {
+            actual = shellCommand(command);
+            if (expected.equals(actual)) return;
+            SystemClock.sleep(50);
+        }
+        fail(
+            "Android " + label + " was not restored: expected=" + expected + ", actual="
+                + actual + ", " + nativeWindowGeometry()
+        );
+    }
+
+    private void awaitWindowBounds(Rect expected) throws Exception {
+        long deadline = SystemClock.uptimeMillis() + TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS);
+        Rect actual = null;
+        while (SystemClock.uptimeMillis() < deadline) {
+            actual = windowBounds();
+            if (expected.equals(actual)) return;
+            SystemClock.sleep(50);
+        }
+        fail(
+            "Timed out waiting for Android window " + expected + ", actual=" + actual + ", "
+                + nativeWindowGeometry()
+        );
+    }
+
+    private int webViewHeight() {
+        AtomicReference<Integer> height = new AtomicReference<>();
+        activityRule.getScenario().onActivity(
+            activity -> height.set(activity.getBridge().getWebView().getHeight())
+        );
+        return height.get();
+    }
+
     private JSONArray awaitSettledViewport(int expectedRotation, Rect expectedWindowBounds) throws Exception {
+        return awaitSettledViewport(expectedRotation, expectedWindowBounds, false);
+    }
+
+    private JSONArray awaitSettledViewport(
+        int expectedRotation,
+        Rect expectedWindowBounds,
+        boolean imeVisible
+    ) throws Exception {
         long deadline = SystemClock.uptimeMillis() + TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS);
         String lastState = "no observation";
         while (SystemClock.uptimeMillis() < deadline) {
-            int[] firstNative = readyNativeViewport(expectedWindowBounds);
+            int[] firstNative = readyNativeViewport(expectedWindowBounds, imeVisible);
             JSONArray firstCss = firstNative == null ? null : viewportMetrics();
-            int[] firstAfter = readyNativeViewport(expectedWindowBounds);
+            int[] firstAfter = readyNativeViewport(expectedWindowBounds, imeVisible);
             if (!awaitNextVisualState(deadline)) break;
-            int[] secondNative = readyNativeViewport(expectedWindowBounds);
+            int[] secondNative = readyNativeViewport(expectedWindowBounds, imeVisible);
             JSONArray secondCss = secondNative == null ? null : viewportMetrics();
-            int[] secondAfter = readyNativeViewport(expectedWindowBounds);
+            int[] secondAfter = readyNativeViewport(expectedWindowBounds, imeVisible);
 
             lastState =
                 "native="
@@ -811,7 +1429,7 @@ public class ControllerNavigationTest {
         return bounds.get();
     }
 
-    private int[] readyNativeViewport(Rect expectedWindowBounds) {
+    private int[] readyNativeViewport(Rect expectedWindowBounds, boolean imeVisible) {
         AtomicReference<int[]> viewport = new AtomicReference<>();
         activityRule
             .getScenario()
@@ -831,7 +1449,7 @@ public class ControllerNavigationTest {
                             && !webView.isLayoutRequested()
                             && !parent.isLayoutRequested()
                             && insets != null
-                            && !insets.isVisible(WindowInsetsCompat.Type.ime())
+                            && insets.isVisible(WindowInsetsCompat.Type.ime()) == imeVisible
                     ) {
                         int[] origin = new int[2];
                         decor.getLocationOnScreen(origin);
@@ -846,7 +1464,10 @@ public class ControllerNavigationTest {
                         Rect safeBounds = new Rect(decorBounds.left + bars.left,
                             decorBounds.top + bars.top, decorBounds.right - bars.right,
                             decorBounds.bottom - bars.bottom);
-                        if (!decorBounds.contains(webViewBounds) || !webViewBounds.contains(safeBounds)) return;
+                        if (
+                            !decorBounds.contains(webViewBounds)
+                                || (!imeVisible && !webViewBounds.contains(safeBounds))
+                        ) return;
                         viewport.set(
                             new int[] {
                                 webView.getDisplay().getRotation(),
@@ -1048,6 +1669,13 @@ public class ControllerNavigationTest {
         inner.bottom <= outer.bottom + 1;
     }
 
+    private boolean contains(RectF outer, RectF inner) {
+        return inner.left >= outer.left - 1 &&
+        inner.top >= outer.top - 1 &&
+        inner.right <= outer.right + 1 &&
+        inner.bottom <= outer.bottom + 1;
+    }
+
     private void pressGamepadKey(int keyCode, String expectedState) throws Exception {
         long downTime = SystemClock.uptimeMillis();
         activityRule.getScenario().onActivity(activity -> {
@@ -1192,6 +1820,34 @@ public class ControllerNavigationTest {
         event.recycle();
     }
 
+    private String nativeAcceptanceState() throws Exception {
+        return runJavaScript(
+            "(() => { const panes = [...document.querySelectorAll('.box-pane')].map(pane => ({"
+                + " id:pane.dataset.paneId,source:pane.dataset.sourceId,location:pane.dataset.location,"
+                + " active:pane.classList.contains('active-pane')}));"
+                + " const dialogs = [...document.querySelectorAll('[role=dialog]')]"
+                + ".filter(node => node.getClientRects().length > 0);"
+                + " const active = document.activeElement; const root = getComputedStyle(document.documentElement);"
+                + " return {path:location.pathname,innerWidth,innerHeight,"
+                + " visualViewport:visualViewport ? {width:visualViewport.width,height:visualViewport.height,"
+                + " offsetLeft:visualViewport.offsetLeft,offsetTop:visualViewport.offsetTop} : null,"
+                + " activeId:active?.id ?? null,activeFocus:active?.dataset.destinationFocus ?? null,"
+                + " activeValue:'value' in (active ?? {}) ? active.value : null,panes,"
+                + " controllerEvents:window.__pksxTestControllerEvents ?? null,"
+                + " appVersion:document.querySelector('[data-testid=\"app-version\"]')?.textContent ?? null,"
+                + " appPlatform:document.querySelector('[data-testid=\"app-platform\"]')?.textContent ?? null,"
+                + " settingsDocument:window.__pksxSettingsDocument ?? null,"
+                + " carry:document.querySelector('.carry-at-focus')?.getAttribute('aria-label') ?? null,"
+                + " dialog:dialogs.at(-1)?.getAttribute('aria-label')"
+                + " ?? dialogs.at(-1)?.querySelector('h1,h2')?.textContent?.trim() ?? null,"
+                + " editorSection:document.querySelector('.pokemon-editor')?.dataset.editorSection ?? null,"
+                + " heightBand:root.getPropertyValue('--pksx-height-band').trim(),"
+                + " heightBandLock:document.documentElement.dataset.pksxHeightBandLock ?? null,"
+                + " safe:['top','right','bottom','left'].map(side =>"
+                + " root.getPropertyValue('--pksx-safe-area-' + side).trim())}; })()"
+        );
+    }
+
     private void awaitJavaScript(String expression) throws Exception {
         awaitJavaScript(expression, TIMEOUT_SECONDS);
     }
@@ -1206,20 +1862,7 @@ public class ControllerNavigationTest {
             SystemClock.sleep(50);
         }
 
-        String state =
-            runJavaScript(
-                "(() => { const mobile = document.querySelector('.mobile-tabbar');"
-                    + " const sidebar = document.querySelector('.box-sidebar');"
-                    + " return JSON.stringify({activeId: document.activeElement?.id,"
-                    + " controllerEvents: window.__pksxTestControllerEvents,"
-                    + " innerWidth, innerHeight,"
-                    + " appVersion: document.querySelector('[data-testid=\"app-version\"]')?.textContent,"
-                    + " appPlatform: document.querySelector('[data-testid=\"app-platform\"]')?.textContent,"
-                    + " settingsDocument: window.__pksxSettingsDocument ?? null,"
-                    + " path: location.pathname,"
-                    + " mobileDisplay: mobile ? getComputedStyle(mobile).display : null,"
-                    + " sidebarDisplay: sidebar ? getComputedStyle(sidebar).display : null}); })()"
-            );
+        String state = nativeAcceptanceState();
         fail(
             "Timed out waiting for JavaScript: "
                 + expression
@@ -1227,6 +1870,8 @@ public class ControllerNavigationTest {
                 + result
                 + ", state: "
                 + state
+                + ", native: "
+                + nativeWindowGeometry()
         );
     }
 

@@ -254,11 +254,6 @@ jobs:
           emulator-options: >-
             -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
-            adb shell cmd window fixed-to-user-rotation enabled
-            adb shell cmd window user-rotation lock 1
-            sleep 1
-            adb shell wm size 540x960
-            adb shell wm density 160
             ./gradlew :app:connectedDebugAndroidTest --no-daemon
 
   android-bootstrap-bundle:

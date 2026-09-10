@@ -15,18 +15,22 @@ fi
 
 cleanup() {
 	if $started_emulator; then
-		"$adb_bin" emu kill >/dev/null 2>&1 || true
-	else
-		"$adb_bin" shell wm size reset >/dev/null 2>&1 || true
-		"$adb_bin" shell wm density reset >/dev/null 2>&1 || true
-		"$adb_bin" shell cmd window fixed-to-user-rotation default >/dev/null 2>&1 || true
-		"$adb_bin" shell cmd window user-rotation free >/dev/null 2>&1 || true
+		"$adb_bin" -s "$serial" emu kill >/dev/null 2>&1 || true
 	fi
 	[[ -z "$emulator_log" ]] || rm -f "$emulator_log"
 }
 trap cleanup EXIT
 
-serial="$("$adb_bin" devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')"
+serial="${ANDROID_SERIAL:-}"
+if [[ -n "$serial" ]] && ! "$adb_bin" devices | awk -v serial="$serial" \
+	'$1 == serial && $2 == "device" { found = 1 } END { exit !found }'; then
+	echo "ANDROID_SERIAL '$serial' is not a connected Android device." >&2
+	exit 1
+fi
+
+if [[ -z "$serial" ]]; then
+	serial="$("$adb_bin" devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')"
+fi
 if [[ -z "$serial" ]]; then
 	if ! "$emulator_bin" -list-avds | grep -Fxq "$avd_name"; then
 		echo "Missing AVD '$avd_name'. Follow docs/testing/android.md to create it." >&2
@@ -57,12 +61,7 @@ if [[ -z "$serial" ]]; then
 fi
 
 export ANDROID_SERIAL="$serial"
-"$adb_bin" shell cmd window fixed-to-user-rotation enabled
-"$adb_bin" shell cmd window user-rotation lock 1
-sleep 1
-"$adb_bin" shell wm size 540x960
-"$adb_bin" shell wm density 160
-"$adb_bin" shell pm clear com.pksx.app >/dev/null 2>&1 || true
+"$adb_bin" -s "$serial" shell pm clear com.pksx.app >/dev/null 2>&1 || true
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_root/android"

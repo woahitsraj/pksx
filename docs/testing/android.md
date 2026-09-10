@@ -48,12 +48,20 @@ Build a debug APK:
 pnpm android:build
 ```
 
-Run the controller and small-widescreen acceptance tests:
+Run the controller, software-keyboard, and rotation acceptance tests:
 
 ```sh
 pnpm test:android
 ```
 
-The test command starts `pksx-api-36` headlessly when no emulator is running, configures
-it to 960 by 540, runs the instrumentation suite, and shuts it down. CI runs the same
-instrumentation suite on an API 36 x86_64 emulator.
+The test command starts `pksx-api-36` headlessly when no emulator is running, runs the
+instrumentation suite, and shuts down only the emulator it started. Set `ANDROID_SERIAL`
+to target a specific connected device. The native fixture captures and restores the target's
+display size, density, rotation policy, angle, and handwriting setting.
+
+The suite verifies the 360 by 640 portrait and 640 by 360 landscape endpoints at density 160.
+It opens the real Android software keyboard, checks the Tall Height Band lock while the WebView
+shrinks below 560 CSS pixels, and rotates Boxes, Carry, Menus, the Pokemon Editor, and active
+Trainer editing. CI runs the same state and geometry assertions on an API 36 Pixel 2 x86_64
+emulator. Failures report the destination, pane and Location identities, Controller Focus, Carry,
+open workflow, Height Band, viewport, WebView, insets, and relevant rectangles.
