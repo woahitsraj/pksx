@@ -62,24 +62,42 @@ async function pressController(page: Page, key: string) {
 async function installWorkspaceResponseHold(page: Page) {
 	await page.addInitScript(() => {
 		type TestWindow = typeof window & {
-			__pksxWorkspaceResponsesToHold?: number;
+			__pksxWorkspaceRequestsToHold?: number;
 			__pksxHeldWorkspaceResponses?: number;
 			__pksxResponseMethodToHold?: string;
 			__pksxReleaseWorkspaceResponses?: () => void;
 		};
 		const testWindow = window as TestWindow;
 		const NativeWorker = window.Worker;
+		const heldRequestIds = new Set<string>();
 		const releases: Array<() => void> = [];
-		testWindow.__pksxWorkspaceResponsesToHold = 0;
+		testWindow.__pksxWorkspaceRequestsToHold = 0;
 		testWindow.__pksxHeldWorkspaceResponses = 0;
 		testWindow.__pksxResponseMethodToHold = 'loadSaveWorkspace';
 		testWindow.__pksxReleaseWorkspaceResponses = () => {
+			heldRequestIds.clear();
 			for (const release of releases.splice(0)) release();
 		};
 
 		window.Worker = new Proxy(NativeWorker, {
 			construct(Target, args: ConstructorParameters<typeof Worker>) {
 				const worker = new Target(...args);
+				const postMessage = worker.postMessage.bind(worker);
+				worker.postMessage = new Proxy(postMessage, {
+					apply(target, thisArg, args) {
+						const request = args[0] as { id?: string; method?: string } | null;
+						const remaining = testWindow.__pksxWorkspaceRequestsToHold ?? 0;
+						if (
+							request?.id &&
+							request.method === (testWindow.__pksxResponseMethodToHold ?? 'loadSaveWorkspace') &&
+							remaining !== 0
+						) {
+							if (remaining > 0) testWindow.__pksxWorkspaceRequestsToHold = remaining - 1;
+							heldRequestIds.add(request.id);
+						}
+						return Reflect.apply(target, thisArg, args);
+					}
+				}) as typeof worker.postMessage;
 				const addEventListener = worker.addEventListener.bind(worker);
 				worker.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject) => {
 					if (type !== 'message') {
@@ -87,20 +105,15 @@ async function installWorkspaceResponseHold(page: Page) {
 						return;
 					}
 					addEventListener(type, (event: Event) => {
-						const message = (event as MessageEvent).data as { method?: string } | null;
-						const remaining = testWindow.__pksxWorkspaceResponsesToHold ?? 0;
+						const message = (event as MessageEvent).data as { id?: string } | null;
 						const invoke = () => {
 							if (typeof listener === 'function') listener.call(worker, event);
 							else listener.handleEvent(event);
 						};
-						if (
-							message?.method !== (testWindow.__pksxResponseMethodToHold ?? 'loadSaveWorkspace') ||
-							remaining === 0
-						) {
+						if (!message?.id || !heldRequestIds.delete(message.id)) {
 							invoke();
 							return;
 						}
-						if (remaining > 0) testWindow.__pksxWorkspaceResponsesToHold = remaining - 1;
 						testWindow.__pksxHeldWorkspaceResponses =
 							(testWindow.__pksxHeldWorkspaceResponses ?? 0) + 1;
 						releases.push(invoke);
@@ -116,10 +129,10 @@ async function holdWorkspaceResponses(page: Page, count = -1, method = 'loadSave
 	await page.evaluate(
 		({ responses, responseMethod }) => {
 			const testWindow = window as typeof window & {
-				__pksxWorkspaceResponsesToHold?: number;
+				__pksxWorkspaceRequestsToHold?: number;
 				__pksxResponseMethodToHold?: string;
 			};
-			testWindow.__pksxWorkspaceResponsesToHold = responses;
+			testWindow.__pksxWorkspaceRequestsToHold = responses;
 			testWindow.__pksxResponseMethodToHold = responseMethod;
 		},
 		{ responses: count, responseMethod: method }
@@ -141,11 +154,11 @@ async function waitForHeldWorkspaceResponses(page: Page, count = 1) {
 async function releaseWorkspaceResponses(page: Page) {
 	await page.evaluate(() => {
 		const testWindow = window as typeof window & {
-			__pksxWorkspaceResponsesToHold?: number;
+			__pksxWorkspaceRequestsToHold?: number;
 			__pksxResponseMethodToHold?: string;
 			__pksxReleaseWorkspaceResponses?: () => void;
 		};
-		testWindow.__pksxWorkspaceResponsesToHold = 0;
+		testWindow.__pksxWorkspaceRequestsToHold = 0;
 		testWindow.__pksxResponseMethodToHold = 'loadSaveWorkspace';
 		testWindow.__pksxReleaseWorkspaceResponses?.();
 	});
@@ -153,6 +166,77 @@ async function releaseWorkspaceResponses(page: Page) {
 
 test.afterEach(async ({ page }) => {
 	if (!page.isClosed()) await releaseWorkspaceResponses(page);
+});
+
+test('workspace response hold targets requests started after it is armed', async ({ page }) => {
+	await installWorkspaceResponseHold(page);
+	await page.goto('/');
+	await page.evaluate(() => {
+		const worker = new Worker(
+			URL.createObjectURL(
+				new Blob(
+					[
+						`const pending = [];
+						onmessage = ({ data }) => data.type === 'request'
+							? pending.push(data)
+							: pending.splice(0).forEach((response) => postMessage(response));`
+					],
+					{ type: 'text/javascript' }
+				)
+			)
+		);
+		const testWindow = window as typeof window & {
+			__pksxHoldProbe?: { worker: Worker; responses: string[] };
+		};
+		testWindow.__pksxHoldProbe = { worker, responses: [] };
+		worker.addEventListener('message', (event) => {
+			testWindow.__pksxHoldProbe?.responses.push((event.data as { id: string }).id);
+		});
+	});
+	const post = (message: { type: string; id?: string; method?: string }) =>
+		page.evaluate((value) => {
+			(
+				window as typeof window & {
+					__pksxHoldProbe?: { worker: Worker };
+				}
+			).__pksxHoldProbe?.worker.postMessage(value);
+		}, message);
+	const responses = () =>
+		page.evaluate(
+			() =>
+				(
+					window as typeof window & {
+						__pksxHoldProbe?: { responses: string[] };
+					}
+				).__pksxHoldProbe?.responses
+		);
+
+	await post({ type: 'request', id: 'pre-arm', method: 'loadSaveWorkspace' });
+	await holdWorkspaceResponses(page, 1);
+	await post({ type: 'release' });
+	await expect.poll(responses).toEqual(['pre-arm']);
+
+	await post({
+		type: 'request',
+		id: 'post-arm',
+		method: 'loadSaveWorkspace'
+	});
+	await post({ type: 'release' });
+	await waitForHeldWorkspaceResponses(page);
+	await expect.poll(responses).toEqual(['pre-arm']);
+
+	await releaseWorkspaceResponses(page);
+	await expect.poll(responses).toEqual(['pre-arm', 'post-arm']);
+
+	await holdWorkspaceResponses(page, 1);
+	await post({
+		type: 'request',
+		id: 'released-before-response',
+		method: 'loadSaveWorkspace'
+	});
+	await releaseWorkspaceResponses(page);
+	await post({ type: 'release' });
+	await expect.poll(responses).toEqual(['pre-arm', 'post-arm', 'released-before-response']);
 });
 
 async function choosePokemonEditorSection(page: Page, section: string) {
