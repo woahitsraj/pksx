@@ -1,4 +1,5 @@
 export { bytesEqual, copyBytes } from './bytes';
+export { WorkspaceRevisionConflictError } from './workspace-revision';
 export { CapacitorSavesStorage } from './capacitor-storage';
 export { deleteIndexedDbSaves, IndexedDbSavesStorage } from './indexed-db-storage';
 export { createEmptyPokemonStorage } from './pokemon-storage';

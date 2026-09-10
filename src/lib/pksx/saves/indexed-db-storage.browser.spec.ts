@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bytesEqual } from './bytes';
 import { deleteIndexedDbSaves, IndexedDbSavesStorage } from './indexed-db-storage';
 import { createEmptyPokemonStorage } from './pokemon-storage';
+import { WorkspaceRevisionConflictError } from './workspace-revision';
 
 describe('IndexedDbSavesStorage', () => {
 	let databaseName: string;
@@ -172,7 +173,7 @@ describe('IndexedDbSavesStorage', () => {
 				automaticBackupCreated: true,
 				expectedUpdatedAt: first.updatedAt
 			})
-		).rejects.toThrow('persisted Workspace changed');
+		).rejects.toBeInstanceOf(WorkspaceRevisionConflictError);
 		expect(await storage.getWorkspace(saveFile.id)).toEqual(second);
 	});
 

@@ -1,6 +1,6 @@
 import { copyBytes } from './bytes';
 import { clonePokemonStorage } from './pokemon-storage';
-import { nextWorkspaceRevision } from './workspace-revision';
+import { nextWorkspaceRevision, WorkspaceRevisionConflictError } from './workspace-revision';
 import type {
 	BackupId,
 	BackupMetadata,
@@ -155,7 +155,7 @@ export class IndexedDbSavesStorage implements SavesStorage {
 				input.expectedUpdatedAt !== undefined &&
 				(previous?.updatedAt ?? null) !== input.expectedUpdatedAt
 			) {
-				throw new Error('The persisted Workspace changed before this write.');
+				throw new WorkspaceRevisionConflictError();
 			}
 			const workspace: StoredWorkspace = {
 				saveFileId: input.saveFileId,

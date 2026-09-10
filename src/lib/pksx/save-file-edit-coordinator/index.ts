@@ -17,7 +17,8 @@ import {
 	type SaveFileId,
 	type SavesStorage,
 	type StoredSaveFile,
-	type StoredWorkspace
+	type StoredWorkspace,
+	WorkspaceRevisionConflictError
 } from '$lib/pksx/saves';
 
 export type SaveFileEditOrigin = {
@@ -299,12 +300,16 @@ export class SaveFileEditCoordinator {
 		}
 		if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
 		if (operationIsNoop(latest, request.operation)) {
+			if (!this.resultIsCurrent(record)) return this.staleResult(record.origin, latest);
 			return { ok: true, status: 'noop', origin: record.origin, workspace: latest };
 		}
 
 		try {
 			latest = await this.ensureAutomaticBackup(record, latest);
 		} catch (error) {
+			if (error instanceof StaleWorkspaceRecoveryError) {
+				return this.recoveryFailure(record.origin, error);
+			}
 			if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
 			if (error instanceof StaleWorkspaceError) {
 				return this.staleResult(record.origin, latest);
@@ -313,94 +318,177 @@ export class SaveFileEditCoordinator {
 		}
 		if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
 
-		let mutation;
-		try {
-			mutation = await this.engine.applySaveFileEditOperation(
-				latest.bytes,
-				latest.file.originalFileName ?? undefined,
-				request.operation,
-				record.activeBox
-			);
-		} catch (error) {
-			if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
-			return {
-				ok: false,
-				status: 'failed',
-				origin: record.origin,
-				code: 'engine-unavailable',
-				message: errorMessage(error),
-				workspace: latest
-			};
-		}
-		if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
-		if (!mutation.ok) {
-			return {
-				ok: false,
-				status:
-					mutation.error.code === 'invalid-save-file-edit' ||
-					mutation.error.code === 'unsupported-save-file-edit'
-						? 'rejected'
-						: 'failed',
-				origin: record.origin,
-				code: mutation.error.code,
-				message: mutation.error.message,
-				workspace: latest
-			};
-		}
+		return this.applyAgainstLatest(record, request, generation, latest);
+	}
 
-		let persistedBeforeResult;
-		try {
-			persistedBeforeResult = await this.options.storage.getWorkspace(record.file.id);
-		} catch (error) {
-			if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
-			return this.failedResult(record, generation, 'workspace-persistence-failed', error, latest);
-		}
-		if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
-		if (
-			!persistedBeforeResult ||
-			persistedBeforeResult.updatedAt !== record.storedRevision ||
-			!bytesEqual(persistedBeforeResult.bytes, latest.bytes)
-		) {
-			return this.staleResult(record.origin, await this.loadLatest(record));
-		}
-
-		const next: WorkspaceState = {
-			...latest,
-			bytes: copyBytes(mutation.value.bytes),
-			workspace: mutation.value.workspace,
-			dirty: latest.dirty || mutation.value.mutated,
-			restoredFromBackup: null
-		};
-		let stored: StoredWorkspace;
-		try {
-			stored = await this.options.storage.putWorkspace({
-				saveFileId: next.file.id,
-				bytes: next.bytes,
-				dirty: next.dirty,
-				automaticBackupCreated: next.automaticBackupCreated,
-				expectedUpdatedAt: record.storedRevision
-			});
-		} catch (error) {
-			if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
-			let restored = latest;
+	private async applyAgainstLatest(
+		record: OriginRecord,
+		request: SaveFileEditRequest,
+		generation: number,
+		initial: WorkspaceState
+	): Promise<SaveFileEditResult> {
+		let latest = initial;
+		for (;;) {
+			let mutation;
 			try {
-				restored = await this.loadLatest(record);
-			} catch {
-				// Keep the last state known to have persisted when storage cannot be read back.
+				mutation = await this.engine.applySaveFileEditOperation(
+					latest.bytes,
+					latest.file.originalFileName ?? undefined,
+					request.operation,
+					record.activeBox
+				);
+			} catch (error) {
+				if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
+				return {
+					ok: false,
+					status: 'failed',
+					origin: record.origin,
+					code: 'engine-unavailable',
+					message: errorMessage(error),
+					workspace: latest
+				};
 			}
-			return this.failedResult(record, generation, 'workspace-persistence-failed', error, restored);
+			if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
+			if (!mutation.ok) {
+				return {
+					ok: false,
+					status:
+						mutation.error.code === 'invalid-save-file-edit' ||
+						mutation.error.code === 'unsupported-save-file-edit'
+							? 'rejected'
+							: 'failed',
+					origin: record.origin,
+					code: mutation.error.code,
+					message: mutation.error.message,
+					workspace: latest
+				};
+			}
+
+			let persistedBeforeResult;
+			try {
+				persistedBeforeResult = await this.options.storage.getWorkspace(record.file.id);
+			} catch (error) {
+				if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
+				return this.failedResult(record, generation, 'workspace-persistence-failed', error, latest);
+			}
+			if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
+			if (
+				!persistedBeforeResult ||
+				persistedBeforeResult.updatedAt !== record.storedRevision ||
+				!bytesEqual(persistedBeforeResult.bytes, latest.bytes)
+			) {
+				const reloaded = await this.reloadAfterConcurrentWrite(record, generation, request, latest);
+				if ('result' in reloaded) return reloaded.result;
+				latest = reloaded.workspace;
+				continue;
+			}
+
+			const next: WorkspaceState = {
+				...latest,
+				bytes: copyBytes(mutation.value.bytes),
+				workspace: mutation.value.workspace,
+				dirty: latest.dirty || mutation.value.mutated,
+				restoredFromBackup: null
+			};
+			let stored: StoredWorkspace;
+			try {
+				stored = await this.options.storage.putWorkspace({
+					saveFileId: next.file.id,
+					bytes: next.bytes,
+					dirty: next.dirty,
+					automaticBackupCreated: next.automaticBackupCreated,
+					expectedUpdatedAt: record.storedRevision
+				});
+			} catch (error) {
+				if (!this.currentRecord(record.origin)) return this.staleResult(record.origin, latest);
+				if (error instanceof WorkspaceRevisionConflictError) {
+					const reloaded = await this.reloadAfterConcurrentWrite(
+						record,
+						generation,
+						request,
+						latest
+					);
+					if ('result' in reloaded) return reloaded.result;
+					latest = reloaded.workspace;
+					continue;
+				}
+				let restored = latest;
+				try {
+					restored = await this.loadLatest(record);
+				} catch {
+					// Keep the last state known to have persisted when storage cannot be read back.
+				}
+				return this.failedResult(
+					record,
+					generation,
+					'workspace-persistence-failed',
+					error,
+					restored
+				);
+			}
+			if (!this.currentRecord(record.origin)) {
+				try {
+					await this.restoreCurrentWorkspace(record.file.id, stored.updatedAt);
+				} catch (error) {
+					return this.recoveryFailure(record.origin, error);
+				}
+				return this.staleResult(record.origin, latest);
+			}
+
+			record.latest = copyWorkspace(next);
+			record.persistedRevision = stored.updatedAt;
+			record.storedRevision = stored.updatedAt;
+			if (!this.resultIsCurrent(record)) return this.staleResult(record.origin, next);
+			this.options.publish?.(copyWorkspace(next), record.activeBox);
+			return {
+				ok: true,
+				status: 'committed',
+				origin: record.origin,
+				workspace: copyWorkspace(next)
+			};
+		}
+	}
+
+	private async reloadAfterConcurrentWrite(
+		record: OriginRecord,
+		generation: number,
+		request: SaveFileEditRequest,
+		fallback: WorkspaceState
+	): Promise<{ workspace: WorkspaceState } | { result: SaveFileEditResult }> {
+		let latest: WorkspaceState;
+		try {
+			latest = await this.loadLatest(record);
+		} catch (error) {
+			if (!this.currentRecord(record.origin)) {
+				return { result: this.staleResult(record.origin, fallback) };
+			}
+			return {
+				result: this.failedResult(
+					record,
+					generation,
+					'workspace-persistence-failed',
+					error,
+					fallback
+				)
+			};
 		}
 		if (!this.currentRecord(record.origin)) {
-			await this.restoreCurrentWorkspace(record.file.id, stored.updatedAt);
-			return this.staleResult(record.origin, latest);
+			return { result: this.staleResult(record.origin, latest) };
 		}
-
-		record.latest = copyWorkspace(next);
-		record.persistedRevision = stored.updatedAt;
-		record.storedRevision = stored.updatedAt;
-		if (!this.resultIsCurrent(record)) return this.staleResult(record.origin, next);
-		this.options.publish?.(copyWorkspace(next), record.activeBox);
-		return { ok: true, status: 'committed', origin: record.origin, workspace: copyWorkspace(next) };
+		if (operationIsNoop(latest, request.operation)) {
+			if (!this.resultIsCurrent(record)) {
+				return { result: this.staleResult(record.origin, latest) };
+			}
+			return {
+				result: {
+					ok: true,
+					status: 'noop',
+					origin: record.origin,
+					workspace: copyWorkspace(latest)
+				}
+			};
+		}
+		return { workspace: latest };
 	}
 
 	private async ensureAutomaticBackup(record: OriginRecord, workspace: WorkspaceState) {
@@ -496,9 +584,21 @@ export class SaveFileEditCoordinator {
 			});
 			current.persistedRevision = restored.updatedAt;
 			current.storedRevision = restored.updatedAt;
-		} catch {
-			// A newer Workspace revision won the race, so it must remain persisted.
+		} catch (error) {
+			if (error instanceof WorkspaceRevisionConflictError) return;
+			throw new StaleWorkspaceRecoveryError(error);
 		}
+	}
+
+	private recoveryFailure(origin: SaveFileEditOrigin, error: unknown): SaveFileEditResult {
+		const cause = error instanceof StaleWorkspaceRecoveryError ? error.cause : error;
+		return {
+			ok: false,
+			status: 'failed',
+			origin,
+			code: 'workspace-persistence-failed',
+			message: `The current Workspace could not be restored after a stale write. ${errorMessage(cause)}`
+		};
 	}
 
 	private failedResult(
@@ -579,6 +679,12 @@ export class SaveFileEditCoordinator {
 }
 
 class StaleWorkspaceError extends Error {}
+
+class StaleWorkspaceRecoveryError extends Error {
+	constructor(readonly cause?: unknown) {
+		super('The current Workspace could not be restored after a stale write.');
+	}
+}
 
 export function stableAutomaticBackupId(workspace: WorkspaceState, persistedRevision: string) {
 	const owner = hashString(

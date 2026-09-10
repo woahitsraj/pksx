@@ -1,7 +1,7 @@
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
 import { copyBytes } from './bytes';
 import { clonePokemonStorage } from './pokemon-storage';
-import { nextWorkspaceRevision } from './workspace-revision';
+import { nextWorkspaceRevision, WorkspaceRevisionConflictError } from './workspace-revision';
 import type {
 	BackupId,
 	BackupMetadata,
@@ -105,7 +105,7 @@ export class CapacitorSavesStorage implements SavesStorage {
 				input.expectedUpdatedAt !== undefined &&
 				(catalog.workspaces[input.saveFileId]?.updatedAt ?? null) !== input.expectedUpdatedAt
 			) {
-				throw new Error('The persisted Workspace changed before this write.');
+				throw new WorkspaceRevisionConflictError();
 			}
 
 			const metadata: WorkspaceMetadata = {

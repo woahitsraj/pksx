@@ -1061,9 +1061,11 @@ test('Box Menu exports and backs up the captured secondary Save File Workspace',
 
 	await page.keyboard.press('x');
 	await menu.getByRole('button', { name: 'Save a backup' }).click();
-	await expect(page.locator('.toast-success')).toContainText(
-		'Backup saved for emerald-011020251345.sav.'
-	);
+	await expect(
+		page.locator('.toast-success').filter({
+			hasText: 'Backup saved for emerald-011020251345.sav.'
+		})
+	).toBeVisible();
 	const backups = (await backupRecords(page)).filter(({ reason }) => reason === 'manual');
 	expect(backups).toHaveLength(1);
 	expect(backups[0]).toMatchObject({

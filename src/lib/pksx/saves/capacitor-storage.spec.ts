@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { bytesEqual } from './bytes';
 import { CapacitorSavesStorage, type NativeFileStore } from './capacitor-storage';
+import { WorkspaceRevisionConflictError } from './workspace-revision';
 
 describe('CapacitorSavesStorage', () => {
 	let files: Map<string, string | Uint8Array>;
@@ -152,7 +153,7 @@ describe('CapacitorSavesStorage', () => {
 				automaticBackupCreated: true,
 				expectedUpdatedAt: first.updatedAt
 			})
-		).rejects.toThrow('persisted Workspace changed');
+		).rejects.toBeInstanceOf(WorkspaceRevisionConflictError);
 		expect(await storage.getWorkspace(saveFile.id)).toEqual(second);
 	});
 
