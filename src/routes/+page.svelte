@@ -17,9 +17,9 @@
 		BOX_COLUMNS,
 		BOX_ROWS,
 		BOX_SLOT_COUNT,
+		crossPaneSharedEdge,
 		createInitialNavigationState,
 		focusBoxSlot,
-		focusPaneBoundarySlot,
 		focusPaneControl,
 		focusPartySlot,
 		getBoxSlotPosition,
@@ -57,7 +57,6 @@
 		createSourcePickerCards,
 		destinationStateForEvaluation,
 		evaluateDestination,
-		refreshSaveFilePaneWorkspaces,
 		focusSurvivingPaneAfterClose,
 		getStoragePokemon,
 		putStoragePokemon,
@@ -476,8 +475,8 @@
 	let nextToastId = 1;
 	let engine: EngineApi | null = null;
 	let workspaceLoadRequest = 0;
-	let workspacePublicationRequest = 0;
 	let paneSwitchRequest = 0;
+	let installingActiveBoxProjection = false;
 	let destroyed = false;
 	const paneWorkspaceRequests: Record<string, number> = {};
 	let paneWorkspaceLoadingRequests = $state<Record<string, number>>({});
@@ -823,44 +822,65 @@
 	}
 
 	function tryNavigateBetweenPanes(action: NavigationAction): boolean {
-		if ((action !== 'left' && action !== 'right') || navigation.focus.zone !== 'box') {
+		if (
+			(action !== 'left' && action !== 'right' && action !== 'up' && action !== 'down') ||
+			!isSlotFocus(navigation.focus) ||
+			workbenchPanes.length !== 2
+		) {
 			return false;
 		}
 
-		const position = getBoxSlotPosition(navigation.focus.slot);
-		const atPaneEdge =
-			(action === 'left' && position.column === 0) ||
-			(action === 'right' && position.column === BOX_COLUMNS - 1);
-		if (!atPaneEdge || workbenchPanes.length <= 1) {
-			return false;
-		}
-
-		const currentIndex = workbenchPanes.findIndex((pane) => pane.id === activePaneId);
-		const nextIndex =
-			action === 'left'
-				? Math.max(0, currentIndex - 1)
-				: Math.min(workbenchPanes.length - 1, currentIndex + 1);
-		const nextPane = workbenchPanes[nextIndex];
-		if (!nextPane || nextPane.id === activePaneId) {
-			return false;
-		}
+		const paneElements = Array.from(document.querySelectorAll<HTMLElement>('.box-pane'));
+		if (paneElements.length !== 2) return false;
+		const paneGeometry = workbenchPanes.map((pane, index) => {
+			const bounds = paneElements[index]?.getBoundingClientRect();
+			return bounds
+				? {
+						id: pane.id,
+						location: pane.focus.zone,
+						bounds: {
+							top: bounds.top,
+							right: bounds.right,
+							bottom: bounds.bottom,
+							left: bounds.left
+						}
+					}
+				: null;
+		});
+		if (!paneGeometry[0] || !paneGeometry[1]) return false;
+		const crossing = crossPaneSharedEdge({
+			panes: [paneGeometry[0], paneGeometry[1]],
+			activePaneId,
+			direction: action,
+			focus: navigation.focus
+		});
+		if (!crossing) return false;
+		const nextPane = workbenchPanes.find((pane) => pane.id === crossing.paneId);
+		if (!nextPane) return false;
 
 		activatePane(nextPane);
-		const boundaryFocus = focusPaneBoundarySlot(navigation.focus.slot, action);
 		navigation = {
 			...navigation,
 			activeBox: nextPane.activeBox,
 			boxCount: Math.max(1, nextPane.boxCount),
-			focus: boundaryFocus,
-			locationFocus: boundaryFocus
+			focus: crossing.focus,
+			locationFocus: crossing.focus
 		};
-		workbenchPanes = setPaneFocus(workbenchPanes, nextPane.id, boundaryFocus);
+		workbenchPanes = setPaneFocus(workbenchPanes, nextPane.id, crossing.focus);
 		return true;
 	}
 
 	async function focusActiveControl() {
 		await tick();
 		document.getElementById(focusIdForNavigation(navigation.focus))?.focus();
+	}
+
+	async function keepFocusedSlotVisible() {
+		if (destinationInputSuspended || !isSlotFocus(navigation.focus)) return;
+		await tick();
+		document
+			.getElementById(focusIdForNavigation(navigation.focus))
+			?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 	}
 
 	function focusIdForNavigation(focus: ControllerFocus) {
@@ -1759,14 +1779,7 @@
 			}
 
 			if (loadedSave?.file.id === nextState.file.id) loadedSave = nextState;
-			const refreshedSavePanes = refreshSaveFilePaneWorkspaces(
-				workbenchPanes,
-				savePaneWorkspaces,
-				nextState,
-				operationBox
-			);
-			workbenchPanes = refreshedSavePanes.panes;
-			savePaneWorkspaces = refreshedSavePanes.workspaces;
+			installMutatedSaveProjection(nextState, operationBox);
 			if (loadedSave?.file.id === nextState.file.id) {
 				setCachedActiveWorkspace(nextState, operationBox);
 			}
@@ -1968,14 +1981,7 @@
 				loadedSave = nextState;
 				setCachedActiveWorkspace(nextState, operationBox);
 			}
-			const refreshedSavePanes = refreshSaveFilePaneWorkspaces(
-				workbenchPanes,
-				savePaneWorkspaces,
-				nextState,
-				operationBox
-			);
-			workbenchPanes = refreshedSavePanes.panes;
-			savePaneWorkspaces = refreshedSavePanes.workspaces;
+			installMutatedSaveProjection(nextState, operationBox);
 			invalidateSavesCache();
 			pendingSlotOperation = null;
 			carryState = null;
@@ -2312,11 +2318,7 @@
 		});
 		const hadActiveSavePane = workbenchPanes.some((pane) => pane.id === activeSavePaneId);
 		const rightPanes = hadActiveSavePane
-			? workbenchPanes.filter(
-					(pane) =>
-						pane.id !== activeSavePaneId &&
-						!(pane.source.type === 'save-file' && pane.source.id === save.file.id)
-				)
+			? workbenchPanes.filter((pane) => pane.id !== activeSavePaneId).slice(0, 1)
 			: [];
 
 		workbenchPanes = [fixedPane, ...rightPanes];
@@ -2370,15 +2372,21 @@
 
 		const id = `pane-${type}-${Date.now()}-${workbenchPanes.length}`;
 		const source = boxSourceForSelection(type, saveFileId);
+		const sourceBoxCount =
+			type === 'pokemon-storage'
+				? pokemonStorageBoxCount
+				: loadedSave?.file.id === source.id
+					? loadedSave.workspace.summary.boxCount
+					: 1;
 		workbenchPanes = addBoxPane(workbenchPanes, source, {
 			id,
-			boxCount: type === 'pokemon-storage' ? pokemonStorageBoxCount : boxCount
+			boxCount: sourceBoxCount
 		});
 		const openedPane = workbenchPanes.find((pane) => pane.id === id);
 		activePaneId = id;
 		navigation = {
 			...navigation,
-			boxCount: Math.max(1, type === 'pokemon-storage' ? pokemonStorageBoxCount : boxCount),
+			boxCount: Math.max(1, openedPane?.boxCount ?? sourceBoxCount),
 			activeBox: openedPane?.activeBox ?? 0,
 			focus: openedPane?.focus ?? focusBoxSlot(0),
 			locationFocus: openedPane?.focus ?? focusBoxSlot(0)
@@ -2565,7 +2573,11 @@
 	}
 
 	function paneHasParty(pane: BoxPaneState | undefined): boolean {
-		return pane?.source.type === 'save-file' && saveWorkspaceForPane(pane) !== null;
+		if (pane?.source.type !== 'save-file') return false;
+		return (
+			savePaneWorkspaces[pane.id]?.state.file.id === pane.source.id ||
+			saveWorkspaceForPane(pane) !== null
+		);
 	}
 
 	function panePartySlots(pane: BoxPaneState | undefined): SlotView[] {
@@ -2579,13 +2591,21 @@
 		if (!pane || pane.source.type !== 'save-file') {
 			return null;
 		}
+		if (paneWorkspaceLoadingRequests[pane.id] !== undefined) {
+			return null;
+		}
 
 		const cached = savePaneWorkspaces[pane.id];
 		if (cached?.state.file.id === pane.source.id) {
 			return cached;
 		}
 
-		if (loadedSave && pane.source.id === loadedSave.file.id && pane.id === activePaneId) {
+		if (
+			loadedSave &&
+			pane.source.id === loadedSave.file.id &&
+			pane.id === activePaneId &&
+			getCachedActiveWorkspaceBox() === pane.activeBox
+		) {
 			return { state: loadedSave, loadedBox: activePaneBox };
 		}
 
@@ -2921,14 +2941,7 @@
 			invalidateSavesCache();
 		}
 
-		const refreshed = refreshSaveFilePaneWorkspaces(
-			workbenchPanes,
-			savePaneWorkspaces,
-			nextState,
-			target.activeBox
-		);
-		workbenchPanes = refreshed.panes;
-		savePaneWorkspaces = refreshed.workspaces;
+		installMutatedSaveProjection(nextState, target.activeBox);
 	}
 
 	async function persistStoredPokemonAction(
@@ -3079,14 +3092,7 @@
 
 			if (loadedSave?.file.id === nextState.file.id) loadedSave = nextState;
 			const destinationBox = destinationPane?.activeBox ?? activePaneBox;
-			const refreshedSavePanes = refreshSaveFilePaneWorkspaces(
-				workbenchPanes,
-				savePaneWorkspaces,
-				nextState,
-				destinationBox
-			);
-			workbenchPanes = refreshedSavePanes.panes;
-			savePaneWorkspaces = refreshedSavePanes.workspaces;
+			installMutatedSaveProjection(nextState, destinationBox);
 			if (loadedSave?.file.id === nextState.file.id) {
 				setCachedActiveWorkspace(nextState, destinationBox);
 			}
@@ -3445,14 +3451,7 @@
 		const editorPane = workbenchPanes.find((pane) => pane.id === pokemonEditorPaneId);
 		const editorBox = editorPane?.activeBox ?? activePaneBox;
 		if (loadedSave?.file.id === nextState.file.id) loadedSave = nextState;
-		const refreshed = refreshSaveFilePaneWorkspaces(
-			workbenchPanes,
-			savePaneWorkspaces,
-			nextState,
-			editorBox
-		);
-		workbenchPanes = refreshed.panes;
-		savePaneWorkspaces = refreshed.workspaces;
+		installMutatedSaveProjection(nextState, editorBox);
 		if (loadedSave?.file.id === nextState.file.id) {
 			setCachedActiveWorkspace(nextState, editorBox);
 		}
@@ -3523,6 +3522,7 @@
 			const adoptAsActiveSave = state ? consumeActiveSaveAdoption(state.file.id) : false;
 			loadedSave = state;
 			if (!state) return;
+			if (installingActiveBoxProjection) return;
 			if (initialStateReady && adoptAsActiveSave) {
 				installActiveSavePane(state, getCachedActiveWorkspaceBox());
 				queueMicrotask(focusActiveControl);
@@ -3530,9 +3530,17 @@
 			}
 			void refreshPublishedSavePanes(state);
 		});
+		const boxesRoute = document.querySelector('.boxes-route');
+		const resizeObserver = boxesRoute
+			? new ResizeObserver(() => queueMicrotask(keepFocusedSlotVisible))
+			: null;
+		if (boxesRoute) resizeObserver?.observe(boxesRoute);
 		engine = getPkhexEngine();
 		void restoreInitialState();
-		return unsubscribe;
+		return () => {
+			resizeObserver?.disconnect();
+			unsubscribe();
+		};
 	});
 
 	onDestroy(() => {
@@ -3540,39 +3548,60 @@
 		if (summonedWorkflow.active?.kind !== 'backup-browser') summonedWorkflow.closeAll();
 	});
 
-	async function refreshPublishedSavePanes(state: WorkspaceState) {
-		const request = ++workspacePublicationRequest;
-		const publishedBox = getCachedActiveWorkspaceBox();
+	function installMutatedSaveProjection(state: WorkspaceState, publishedBox: number) {
+		void refreshPublishedSavePanes(state, publishedBox);
+	}
+
+	function installActiveBoxProjection(state: WorkspaceState, box: number) {
+		installingActiveBoxProjection = true;
+		try {
+			setCachedActiveWorkspace(state, box);
+		} finally {
+			installingActiveBoxProjection = false;
+		}
+	}
+
+	async function refreshPublishedSavePanes(
+		state: WorkspaceState,
+		publishedBox = getCachedActiveWorkspaceBox()
+	) {
 		const panes = workbenchPanes.filter(
 			(pane) => pane.source.type === 'save-file' && pane.source.id === state.file.id
 		);
-		const projections: Record<string, SavePaneWorkspace> = {};
 
 		await Promise.all(
 			panes.map(async (pane) => {
+				const needsLoad = pane.activeBox !== publishedBox;
+				const request = beginPaneWorkspaceRequest(pane.id, needsLoad);
 				if (pane.activeBox === publishedBox) {
-					projections[pane.id] = { state, loadedBox: publishedBox };
+					installPaneWorkspace(pane.id, state.file.id, publishedBox, state, request);
 					return;
 				}
-				const paneState = await loadWorkspaceStateForSaveFile(state.file.id, pane.activeBox);
-				if (paneState) {
-					projections[pane.id] = { state: paneState, loadedBox: pane.activeBox };
+
+				try {
+					const paneState = await loadWorkspaceStateForSaveFile(state.file.id, pane.activeBox);
+					if (paneState) {
+						installPaneWorkspace(pane.id, state.file.id, pane.activeBox, paneState, request);
+					}
+				} catch (error) {
+					const currentPane = workbenchPanes.find((candidate) => candidate.id === pane.id);
+					if (
+						paneWorkspaceRequests[pane.id] === request &&
+						currentPane?.source.type === 'save-file' &&
+						currentPane.source.id === state.file.id &&
+						currentPane.activeBox === pane.activeBox
+					) {
+						const remaining = { ...savePaneWorkspaces };
+						delete remaining[pane.id];
+						savePaneWorkspaces = remaining;
+						showToast('error', getErrorMessage(error));
+						statusMessage = 'Could not refresh that Save File pane.';
+					}
+				} finally {
+					finishPaneWorkspaceRequest(pane.id, request);
 				}
 			})
 		);
-		if (request !== workspacePublicationRequest) return;
-
-		const refreshed = refreshSaveFilePaneWorkspaces(
-			workbenchPanes,
-			savePaneWorkspaces,
-			state,
-			(pane) => {
-				const projection = projections[pane.id];
-				return projection?.loadedBox === pane.activeBox ? projection : null;
-			}
-		);
-		workbenchPanes = refreshed.panes;
-		savePaneWorkspaces = refreshed.workspaces;
 	}
 
 	async function restoreInitialState() {
@@ -3647,6 +3676,7 @@
 
 	async function loadWorkspaceForSave(save: WorkspaceState, box: number, paneId = activePaneId) {
 		const request = (workspaceLoadRequest += 1);
+		const paneRequest = beginPaneWorkspaceRequest(paneId, true);
 		busy = true;
 		importError = null;
 
@@ -3657,30 +3687,33 @@
 				box
 			);
 			if (
-				request === workspaceLoadRequest &&
-				activePaneId === paneId &&
+				paneWorkspaceRequests[paneId] === paneRequest &&
 				workbenchPanes.some(
 					(pane) =>
 						pane.id === paneId &&
 						pane.source.type === 'save-file' &&
 						pane.source.id === save.file.id &&
 						pane.activeBox === box
-				) &&
-				loadedSave?.file.id === save.file.id
+				)
 			) {
-				loadedSave = { ...save, workspace };
-				savePaneWorkspaces = {
-					...savePaneWorkspaces,
-					[paneId]: { state: loadedSave, loadedBox: box }
-				};
-				setCachedActiveWorkspace(loadedSave, box);
+				const state = { ...save, workspace };
+				installPaneWorkspace(paneId, save.file.id, box, state, paneRequest);
+				if (
+					request === workspaceLoadRequest &&
+					activePaneId === paneId &&
+					loadedSave?.file.id === save.file.id
+				) {
+					loadedSave = state;
+					installActiveBoxProjection(state, box);
+				}
 			}
 		} catch (error) {
-			if (request === workspaceLoadRequest) {
+			if (request === workspaceLoadRequest && paneWorkspaceRequests[paneId] === paneRequest) {
 				importError = getErrorMessage(error);
 				showToast('error', importError);
 			}
 		} finally {
+			finishPaneWorkspaceRequest(paneId, paneRequest);
 			if (request === workspaceLoadRequest) {
 				busy = false;
 			}
@@ -3692,19 +3725,15 @@
 		if (!pane || pane.source.type !== 'save-file' || !pane.source.id) {
 			return;
 		}
+		const sourceId = pane.source.id;
 
 		if (loadedSave && pane.source.id === loadedSave.file.id && pane.id === activePaneId) {
 			await loadWorkspaceForSave(loadedSave, box, paneId);
 			return;
 		}
-
-		const request = (paneWorkspaceRequests[paneId] ?? 0) + 1;
-		paneWorkspaceRequests[paneId] = request;
-		const sourceId = pane.source.id;
-		paneWorkspaceLoadingRequests = { ...paneWorkspaceLoadingRequests, [paneId]: request };
-
+		const request = beginPaneWorkspaceRequest(paneId, true);
 		try {
-			const state = await loadWorkspaceStateForSaveFile(pane.source.id, box);
+			const state = await loadWorkspaceStateForSaveFile(sourceId, box);
 			if (!state) {
 				return;
 			}
@@ -3718,23 +3747,7 @@
 				return;
 			}
 
-			savePaneWorkspaces = {
-				...savePaneWorkspaces,
-				[paneId]: { state, loadedBox: box }
-			};
-			workbenchPanes = workbenchPanes.map((candidate) =>
-				candidate.id === paneId && candidate.source.type === 'save-file'
-					? {
-							...candidate,
-							boxCount: state.workspace.summary.boxCount,
-							source: {
-								...candidate.source,
-								label: state.file.originalFileName ?? candidate.source.label,
-								dirty: state.dirty
-							}
-						}
-					: candidate
-			);
+			installPaneWorkspace(paneId, sourceId, box, state, request);
 		} catch (error) {
 			const currentPane = workbenchPanes.find((candidate) => candidate.id === paneId);
 			if (
@@ -3747,12 +3760,72 @@
 				statusMessage = 'Could not load that Save File pane.';
 			}
 		} finally {
-			if (paneWorkspaceLoadingRequests[paneId] === request) {
-				const remaining = { ...paneWorkspaceLoadingRequests };
-				delete remaining[paneId];
-				paneWorkspaceLoadingRequests = remaining;
-			}
+			finishPaneWorkspaceRequest(paneId, request);
 		}
+	}
+
+	function beginPaneWorkspaceRequest(paneId: string, loading: boolean) {
+		const request = (paneWorkspaceRequests[paneId] ?? 0) + 1;
+		paneWorkspaceRequests[paneId] = request;
+		if (loading) {
+			paneWorkspaceLoadingRequests = { ...paneWorkspaceLoadingRequests, [paneId]: request };
+		} else if (paneWorkspaceLoadingRequests[paneId] !== undefined) {
+			const remainingRequests = { ...paneWorkspaceLoadingRequests };
+			delete remainingRequests[paneId];
+			paneWorkspaceLoadingRequests = remainingRequests;
+		}
+		return request;
+	}
+
+	function finishPaneWorkspaceRequest(paneId: string, request: number) {
+		if (paneWorkspaceLoadingRequests[paneId] !== request) return;
+		const remaining = { ...paneWorkspaceLoadingRequests };
+		delete remaining[paneId];
+		paneWorkspaceLoadingRequests = remaining;
+	}
+
+	function installPaneWorkspace(
+		paneId: string,
+		sourceId: string,
+		box: number,
+		state: WorkspaceState,
+		request: number
+	) {
+		const pane = workbenchPanes.find((candidate) => candidate.id === paneId);
+		if (
+			destroyed ||
+			paneWorkspaceRequests[paneId] !== request ||
+			pane?.source.type !== 'save-file' ||
+			pane.source.id !== sourceId ||
+			pane.activeBox !== box
+		) {
+			return false;
+		}
+
+		const boxCount = Math.max(1, state.workspace.summary.boxCount);
+		const activeBox = Math.min(box, boxCount - 1);
+		savePaneWorkspaces = {
+			...savePaneWorkspaces,
+			[paneId]: { state, loadedBox: activeBox }
+		};
+		workbenchPanes = workbenchPanes.map((candidate) =>
+			candidate.id === paneId && candidate.source.type === 'save-file'
+				? {
+						...candidate,
+						activeBox,
+						boxCount,
+						source: {
+							...candidate.source,
+							label: state.file.originalFileName ?? candidate.source.label,
+							dirty: state.dirty
+						}
+					}
+				: candidate
+		);
+		if (activePaneId === paneId) {
+			navigation = { ...navigation, activeBox, boxCount };
+		}
+		return true;
 	}
 
 	async function loadWorkspaceStateForSaveFile(
@@ -3954,7 +4027,11 @@
 	data-active-save-file-id={loadedSave?.file.id ?? ''}
 	inert={destinationInputSuspended}
 >
-	<section class="storage-workspace pksx-density" aria-label="Party and box storage">
+	<section
+		class="storage-workspace pksx-density"
+		class:two-pane={workbenchPanes.length === 2}
+		aria-label="Party and box storage"
+	>
 		<div
 			class="box-pane-strip"
 			class:single-pane={workbenchPanes.length === 1}
@@ -3973,6 +4050,9 @@
 				{@const paneRows = paneParty ? PARTY_ROWS : BOX_ROWS}
 				<section
 					class={['box-pane', paneActive && 'active-pane']}
+					data-pane-id={pane.id}
+					data-source-id={pane.source.id}
+					data-location={paneParty ? 'party' : `box-${paneBox}`}
 					aria-label={`${pane.source.label}, ${paneParty ? 'Party' : boxNameFor(paneBox)}`}
 					aria-busy={paneBusy ? 'true' : undefined}
 				>
@@ -4139,18 +4219,38 @@
 			{/each}
 		</div>
 
-		<DetailRail
-			{focusedSlot}
-			focusZone={activeSlotFocus?.zone ?? null}
-			focusSlot={activeSlotFocus?.slot ?? null}
-			slotHueStyle={slotStyle(focusedSlot, activePaneBox)}
-			spriteUrl={spriteUrlFor(focusedSlot)}
-			{saveSummary}
-			activeBoxName={boxNameFor(summonedSlotBox ?? focusedSlotPane?.activeBox ?? activePaneBox)}
-			positionLabel={carryState
-				? `${activeSlotPositionLabel} · ${carryState.mode === 'move' ? 'Drop' : 'Copy'} target`
-				: activeSlotPositionLabel}
-		/>
+		<div class="shared-detail" aria-label="Shared Slot summary">
+			{#if workbenchPanes.length === 2}
+				<div class="transfer-controls" aria-label="Transfer controls">
+					<button
+						type="button"
+						tabindex="-1"
+						disabled={focusedSlot.kind !== 'pokemon' || pendingSlotOperation !== null}
+						onpointerdown={(event) => event.preventDefault()}
+						onclick={() => beginPendingSlotOperation('move')}>Move</button
+					>
+					<button
+						type="button"
+						tabindex="-1"
+						disabled={focusedSlot.kind !== 'pokemon' || pendingSlotOperation !== null}
+						onpointerdown={(event) => event.preventDefault()}
+						onclick={() => beginPendingSlotOperation('copy')}>Copy</button
+					>
+				</div>
+			{/if}
+			<DetailRail
+				{focusedSlot}
+				focusZone={activeSlotFocus?.zone ?? null}
+				focusSlot={activeSlotFocus?.slot ?? null}
+				slotHueStyle={slotStyle(focusedSlot, activePaneBox)}
+				spriteUrl={spriteUrlFor(focusedSlot)}
+				{saveSummary}
+				activeBoxName={boxNameFor(summonedSlotBox ?? focusedSlotPane?.activeBox ?? activePaneBox)}
+				positionLabel={carryState
+					? `${activeSlotPositionLabel} · ${carryState.mode === 'move' ? 'Drop' : 'Copy'} target`
+					: activeSlotPositionLabel}
+			/>
+		</div>
 	</section>
 </section>
 
@@ -4361,6 +4461,9 @@
 		min-width: 0;
 		min-height: 0;
 		display: grid;
+		grid-template-areas:
+			'panes'
+			'rail';
 		grid-template-columns: minmax(0, 1fr);
 		grid-template-rows: minmax(334px, 1fr) minmax(150px, 260px);
 		align-items: stretch;
@@ -4369,7 +4472,17 @@
 		overflow: auto;
 	}
 
+	.storage-workspace.two-pane {
+		--two-pane-detail-size: clamp(56px, calc(20cqw - 68px), 260px);
+		grid-template-areas:
+			'leading'
+			'trailing';
+		grid-template-rows: repeat(2, minmax(0, 1fr));
+		margin-inline: auto;
+	}
+
 	.box-pane-strip {
+		grid-area: panes;
 		min-width: 0;
 		min-height: 0;
 		display: flex;
@@ -4377,6 +4490,18 @@
 		gap: var(--pksx-space-1);
 		overflow: auto hidden;
 		scroll-snap-type: x proximity;
+	}
+
+	.two-pane .box-pane-strip {
+		display: contents;
+	}
+
+	.two-pane .box-pane:first-child {
+		grid-area: leading;
+	}
+
+	.two-pane .box-pane:last-child {
+		grid-area: trailing;
 	}
 
 	.box-pane-strip.single-pane {
@@ -4405,6 +4530,15 @@
 	.single-pane .box-pane {
 		flex-basis: min(800px, 100%);
 		max-width: 800px;
+	}
+
+	.two-pane .box-pane {
+		max-width: 640px;
+		justify-self: center;
+	}
+
+	.two-pane .location-grid {
+		align-content: start;
 	}
 
 	.box-pane:not(.active-pane) {
@@ -4509,8 +4643,8 @@
 		display: grid;
 		grid-template-columns: repeat(6, var(--slot-size));
 		grid-template-rows: repeat(5, var(--slot-size));
-		align-content: center;
-		justify-content: center;
+		align-content: safe center;
+		justify-content: safe center;
 		gap: var(--pksx-border-width);
 		padding: 0;
 		overflow: auto;
@@ -4552,22 +4686,95 @@
 		z-index: 2;
 	}
 
-	.storage-workspace :global(.detail-rail) {
+	.shared-detail {
+		grid-area: rail;
 		width: 100%;
 		max-width: 260px;
 		height: 100%;
+		min-width: 0;
+		min-height: 0;
+		display: grid;
+		grid-template-rows: auto minmax(0, 1fr);
+		gap: var(--pksx-space-1);
 		justify-self: center;
+		overflow: hidden;
+	}
+
+	.two-pane .shared-detail {
+		display: none;
+		max-width: 260px;
+	}
+
+	.two-pane .shared-detail :global(.detail-heading h2) {
+		font-size: var(--pksx-type-title);
+	}
+
+	.transfer-controls {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: var(--pksx-space-1);
+	}
+
+	.transfer-controls button {
+		min-width: 0;
+		height: var(--pksx-control-height);
+		padding: 0 var(--pksx-space-2);
+		border-radius: var(--pksx-radius-medium);
+		background: var(--rust);
+		color: var(--paper-hi);
+		font: 800 var(--pksx-type-label) / 1 var(--pksx-font-sans);
+	}
+
+	.transfer-controls button:disabled {
+		opacity: 0.45;
+	}
+
+	.shared-detail :global(.detail-rail) {
+		width: 100%;
+		height: 100%;
 		overflow: auto;
 	}
 
 	@container boxes-route (orientation: landscape) {
 		.storage-workspace {
+			grid-template-areas: 'panes rail';
 			grid-template-columns: minmax(360px, 800px) minmax(150px, 260px);
 			grid-template-rows: minmax(0, 1fr);
 		}
 
-		.storage-workspace :global(.detail-rail) {
+		.storage-workspace.two-pane {
+			width: 100%;
+			max-width: calc(1280px + 260px + var(--pksx-space-1) * 2);
+			grid-template-areas: 'leading rail trailing';
+			grid-template-columns: minmax(0, 640px) var(--two-pane-detail-size) minmax(0, 640px);
+			grid-template-rows: minmax(0, 1fr);
+		}
+
+		.two-pane .box-pane:last-child .pane-header {
+			padding-right: calc(var(--pksx-control-height) + var(--pksx-space-2));
+		}
+
+		.two-pane .location-grid {
+			align-content: safe center;
+		}
+
+		.shared-detail {
 			max-width: 260px;
+		}
+
+		.two-pane .shared-detail {
+			display: grid;
+		}
+	}
+
+	@container boxes-route (orientation: landscape) and (max-width: 1250px) {
+		.storage-workspace.two-pane {
+			grid-template-areas: 'leading trailing';
+			grid-template-columns: repeat(2, minmax(0, 640px));
+		}
+
+		.two-pane .shared-detail {
+			display: none;
 		}
 	}
 

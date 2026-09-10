@@ -137,11 +137,8 @@ describe('storage workbench panes', () => {
 		});
 
 		const added = addBoxPane(switched, storageSource, { id: 'pane-storage-2' });
-		expect(added).toHaveLength(3);
-		expect(closeBoxPane(added, 'pane-save').map((pane) => pane.id)).toEqual([
-			'pane-storage',
-			'pane-storage-2'
-		]);
+		expect(added).toHaveLength(2);
+		expect(closeBoxPane(added, 'pane-save').map((pane) => pane.id)).toEqual(['pane-storage']);
 	});
 
 	it('keeps the final pane open when close is requested', () => {
@@ -394,6 +391,25 @@ describe('storage workbench carry contract', () => {
 		expect(result.consequence).toBe(
 			'Choose an empty Save File Slot before moving from Pokemon Storage.'
 		);
+	});
+
+	it('treats duplicate panes at the same underlying Slot as the Carry source', () => {
+		const sourcePane = createBoxPane('pane-a', saveSource, { boxCount: 14 });
+		const duplicatePane = createBoxPane('pane-b', saveSource, { boxCount: 14 });
+		const carry = createCarryState({
+			pane: sourcePane,
+			slot: aron,
+			source: slotRef(sourcePane.id, 0)
+		})!;
+
+		const result = evaluateDestination({
+			carry,
+			destinationPane: duplicatePane,
+			destination: slotRef(duplicatePane.id, 0),
+			destinationSlot: aron
+		});
+
+		expect(result).toMatchObject({ valid: true, state: 'source', mutations: [] });
 	});
 });
 

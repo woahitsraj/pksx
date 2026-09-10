@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	applyNavigationAction,
+	crossPaneSharedEdge,
 	createInitialNavigationState,
 	focusBoxSlot,
 	focusPaneBoundarySlot,
@@ -119,6 +120,86 @@ describe('box navigation', () => {
 		const state = { ...createInitialNavigationState(3), focus: focusBoxSlot(12) };
 
 		expect(applyNavigationAction(state, 'search')).toEqual(state);
+	});
+
+	it('crosses the rendered shared edge and clamps rows into Party', () => {
+		const panes: Parameters<typeof crossPaneSharedEdge>[0]['panes'] = [
+			{
+				id: 'leading',
+				location: 'box' as const,
+				bounds: { top: 0, right: 300, bottom: 300, left: 0 }
+			},
+			{
+				id: 'trailing',
+				location: 'party' as const,
+				bounds: { top: 0, right: 640, bottom: 300, left: 340 }
+			}
+		];
+
+		expect(
+			crossPaneSharedEdge({
+				panes,
+				activePaneId: 'leading',
+				direction: 'right',
+				focus: focusBoxSlot(29)
+			})
+		).toEqual({ paneId: 'trailing', focus: focusPartySlot(3) });
+		expect(
+			crossPaneSharedEdge({
+				panes,
+				activePaneId: 'trailing',
+				direction: 'left',
+				focus: focusPartySlot(3)
+			})
+		).toEqual({ paneId: 'leading', focus: focusBoxSlot(11) });
+		expect(
+			crossPaneSharedEdge({
+				panes,
+				activePaneId: 'leading',
+				direction: 'right',
+				focus: focusBoxSlot(28)
+			})
+		).toBeNull();
+	});
+
+	it('crosses a stacked shared edge and clamps columns into Party', () => {
+		const panes: Parameters<typeof crossPaneSharedEdge>[0]['panes'] = [
+			{
+				id: 'upper',
+				location: 'box' as const,
+				bounds: { top: 0, right: 300, bottom: 220, left: 0 }
+			},
+			{
+				id: 'lower',
+				location: 'party' as const,
+				bounds: { top: 260, right: 300, bottom: 480, left: 0 }
+			}
+		];
+
+		expect(
+			crossPaneSharedEdge({
+				panes,
+				activePaneId: 'upper',
+				direction: 'down',
+				focus: focusBoxSlot(29)
+			})
+		).toEqual({ paneId: 'lower', focus: focusPartySlot(2) });
+		expect(
+			crossPaneSharedEdge({
+				panes,
+				activePaneId: 'lower',
+				direction: 'up',
+				focus: focusPartySlot(1)
+			})
+		).toEqual({ paneId: 'upper', focus: focusBoxSlot(25) });
+		expect(
+			crossPaneSharedEdge({
+				panes,
+				activePaneId: 'upper',
+				direction: 'down',
+				focus: focusBoxSlot(23)
+			})
+		).toBeNull();
 	});
 
 	it('selects a specific Box without changing the current coordinate', () => {

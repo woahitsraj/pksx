@@ -39,6 +39,12 @@ export type NavigationOptions = {
 	carryActive?: boolean;
 };
 
+export type PaneFocusGeometry = {
+	id: string;
+	location: SlotFocus['zone'];
+	bounds: { top: number; right: number; bottom: number; left: number };
+};
+
 type ResolvedNavigationOptions = Required<NavigationOptions>;
 type NavigationCommand = Exclude<NavigationAction, 'up' | 'down' | 'left' | 'right' | 'confirm'>;
 
@@ -181,6 +187,63 @@ export function focusPaneBoundarySlot(slot: number, direction: 'left' | 'right')
 	return focusBoxSlot(row * BOX_COLUMNS + column);
 }
 
+export function crossPaneSharedEdge(input: {
+	panes: [PaneFocusGeometry, PaneFocusGeometry];
+	activePaneId: string;
+	direction: 'up' | 'down' | 'left' | 'right';
+	focus: SlotFocus;
+}): { paneId: string; focus: SlotFocus } | null {
+	const source = input.panes.find((pane) => pane.id === input.activePaneId);
+	const destination = input.panes.find((pane) => pane.id !== input.activePaneId);
+	if (!source || !destination) return null;
+
+	const sourceCenter = {
+		x: (source.bounds.left + source.bounds.right) / 2,
+		y: (source.bounds.top + source.bounds.bottom) / 2
+	};
+	const destinationCenter = {
+		x: (destination.bounds.left + destination.bounds.right) / 2,
+		y: (destination.bounds.top + destination.bounds.bottom) / 2
+	};
+	const sideBySide =
+		Math.abs(destinationCenter.x - sourceCenter.x) > Math.abs(destinationCenter.y - sourceCenter.y);
+	const sourcePosition = getSlotPositionForFocus(input.focus);
+	const sourceSize = getLocationSize(input.focus.zone);
+	const destinationSize = getLocationSize(destination.location);
+
+	if (sideBySide) {
+		const destinationIsRight = destinationCenter.x > sourceCenter.x;
+		const crosses =
+			(destinationIsRight &&
+				input.direction === 'right' &&
+				sourcePosition.column === sourceSize.columns - 1) ||
+			(!destinationIsRight && input.direction === 'left' && sourcePosition.column === 0);
+		if (!crosses) return null;
+
+		const row = Math.min(sourcePosition.row, destinationSize.rows - 1);
+		const column = destinationIsRight ? 0 : destinationSize.columns - 1;
+		return {
+			paneId: destination.id,
+			focus: focusForLocation(destination.location, row * destinationSize.columns + column)
+		};
+	}
+
+	const destinationIsBelow = destinationCenter.y > sourceCenter.y;
+	const crosses =
+		(destinationIsBelow &&
+			input.direction === 'down' &&
+			sourcePosition.row === sourceSize.rows - 1) ||
+		(!destinationIsBelow && input.direction === 'up' && sourcePosition.row === 0);
+	if (!crosses) return null;
+
+	const row = destinationIsBelow ? 0 : destinationSize.rows - 1;
+	const column = Math.min(sourcePosition.column, destinationSize.columns - 1);
+	return {
+		paneId: destination.id,
+		focus: focusForLocation(destination.location, row * destinationSize.columns + column)
+	};
+}
+
 export function focusPaneControl(index: number, paneControlCount = 1): ControllerFocus {
 	return { zone: 'paneControls', index: clamp(index, 0, Math.max(1, paneControlCount) - 1) };
 }
@@ -244,6 +307,18 @@ function getSlotPosition(slot: number, columns: number, count: number) {
 		row: Math.floor(clampedSlot / columns),
 		column: clampedSlot % columns
 	};
+}
+
+function getSlotPositionForFocus(focus: SlotFocus) {
+	return focus.zone === 'party'
+		? getSlotPosition(focus.slot, PARTY_COLUMNS, PARTY_SLOT_COUNT)
+		: getSlotPosition(focus.slot, BOX_COLUMNS, BOX_SLOT_COUNT);
+}
+
+function getLocationSize(zone: SlotFocus['zone']) {
+	return zone === 'party'
+		? { columns: PARTY_COLUMNS, rows: PARTY_ROWS }
+		: { columns: BOX_COLUMNS, rows: BOX_ROWS };
 }
 
 function focusForLocation(zone: SlotFocus['zone'], slot: number): SlotFocus {

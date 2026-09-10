@@ -56,6 +56,89 @@ async function pressController(page: Page, key: string) {
 	}, key);
 }
 
+async function installWorkspaceResponseHold(page: Page) {
+	await page.addInitScript(() => {
+		type TestWindow = typeof window & {
+			__pksxWorkspaceResponsesToHold?: number;
+			__pksxHeldWorkspaceResponses?: number;
+			__pksxReleaseWorkspaceResponses?: () => void;
+		};
+		const testWindow = window as TestWindow;
+		const NativeWorker = window.Worker;
+		const releases: Array<() => void> = [];
+		testWindow.__pksxWorkspaceResponsesToHold = 0;
+		testWindow.__pksxHeldWorkspaceResponses = 0;
+		testWindow.__pksxReleaseWorkspaceResponses = () => {
+			for (const release of releases.splice(0)) release();
+		};
+
+		window.Worker = new Proxy(NativeWorker, {
+			construct(Target, args: ConstructorParameters<typeof Worker>) {
+				const worker = new Target(...args);
+				const addEventListener = worker.addEventListener.bind(worker);
+				worker.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject) => {
+					if (type !== 'message') {
+						addEventListener(type, listener);
+						return;
+					}
+					addEventListener(type, (event: Event) => {
+						const message = (event as MessageEvent).data as { method?: string } | null;
+						const remaining = testWindow.__pksxWorkspaceResponsesToHold ?? 0;
+						const invoke = () => {
+							if (typeof listener === 'function') listener.call(worker, event);
+							else listener.handleEvent(event);
+						};
+						if (message?.method !== 'loadSaveWorkspace' || remaining === 0) {
+							invoke();
+							return;
+						}
+						if (remaining > 0) testWindow.__pksxWorkspaceResponsesToHold = remaining - 1;
+						testWindow.__pksxHeldWorkspaceResponses =
+							(testWindow.__pksxHeldWorkspaceResponses ?? 0) + 1;
+						releases.push(invoke);
+					});
+				}) as typeof worker.addEventListener;
+				return worker;
+			}
+		}) as typeof Worker;
+	});
+}
+
+async function holdWorkspaceResponses(page: Page, count = -1) {
+	await page.evaluate((responses) => {
+		(
+			window as typeof window & { __pksxWorkspaceResponsesToHold?: number }
+		).__pksxWorkspaceResponsesToHold = responses;
+	}, count);
+}
+
+async function waitForHeldWorkspaceResponses(page: Page, count = 1) {
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(window as typeof window & { __pksxHeldWorkspaceResponses?: number })
+						.__pksxHeldWorkspaceResponses ?? 0
+			)
+		)
+		.toBeGreaterThanOrEqual(count);
+}
+
+async function releaseWorkspaceResponses(page: Page) {
+	await page.evaluate(() => {
+		const testWindow = window as typeof window & {
+			__pksxWorkspaceResponsesToHold?: number;
+			__pksxReleaseWorkspaceResponses?: () => void;
+		};
+		testWindow.__pksxWorkspaceResponsesToHold = 0;
+		testWindow.__pksxReleaseWorkspaceResponses?.();
+	});
+}
+
+test.afterEach(async ({ page }) => {
+	if (!page.isClosed()) await releaseWorkspaceResponses(page);
+});
+
 async function chooseMainMenu(
 	page: Page,
 	label: 'Boxes' | 'Trainer' | 'Bag' | 'Saves' | 'Settings' | 'Backup Browser'
@@ -822,7 +905,7 @@ test('Box Menu exports and backs up the captured secondary Save File Workspace',
 	await page.keyboard.press('Escape');
 	await page.locator('#box-0-slot-2').click();
 	await page.keyboard.press('Enter');
-	await page.getByRole('button', { name: 'Move' }).click();
+	await secondarySlotMenu.getByRole('button', { name: 'Move' }).click();
 	await page.locator('#box-0-slot-3').click();
 	await expect(page.getByRole('alert')).toContainText(
 		'Moving Pokemon between Save Files needs engine transfer support.'
@@ -1019,6 +1102,475 @@ test('Box Menu allows duplicate Save File panes and keeps Open another collectio
 	await expect(page.locator('.box-pane')).toHaveCount(2);
 });
 
+test('duplicate Save panes order workspace loads with mutation publication', async ({ page }) => {
+	await page.setViewportSize({ width: 1800, height: 900 });
+	await installWorkspaceResponseHold(page);
+	await openEmptySaves(page);
+	await importEmeraldThroughSaves(page);
+	await page.locator('#box-grid').focus();
+	await page.keyboard.press('x');
+	await page
+		.getByRole('dialog', { name: 'Box Menu' })
+		.getByRole('button', { name: 'Open another' })
+		.click();
+	await page
+		.getByRole('dialog', { name: 'Open another collection' })
+		.getByRole('button', { name: /011020251345\.sav/ })
+		.click();
+
+	const panes = page.locator('.box-pane');
+	const firstPane = panes.nth(0);
+	const duplicatePane = panes.nth(1);
+	await expect(duplicatePane).not.toHaveAttribute('aria-busy', 'true');
+	await holdWorkspaceResponses(page, 1);
+	await duplicatePane.getByRole('button', { name: 'Next Location' }).click();
+	await waitForHeldWorkspaceResponses(page);
+	await expect(duplicatePane).toHaveAttribute('aria-busy', 'true');
+
+	await firstPane.locator('[id$="box-0-slot-0"]').click();
+	await page.getByLabel('Transfer controls').getByRole('button', { name: 'Copy' }).click();
+	await pressController(page, 'PageDown');
+	await expect(firstPane.getByRole('heading', { name: 'Box 02' })).toBeVisible({ timeout: 15000 });
+	await expect(firstPane).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
+	await firstPane.locator('[id$="box-1-slot-0"]').click();
+	await expect(firstPane.locator('[id$="box-1-slot-0"]')).toContainText('ARON', {
+		timeout: 15000
+	});
+	await expect(duplicatePane.locator('[id$="box-1-slot-0"]')).toContainText('ARON');
+
+	await releaseWorkspaceResponses(page);
+	await expect(duplicatePane).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
+	await expect(duplicatePane.locator('[id$="box-1-slot-0"]')).toContainText('ARON');
+	await duplicatePane.getByRole('button', { name: 'Previous Location' }).click();
+	await expect(duplicatePane.getByRole('heading', { name: 'Box 01' })).toBeVisible({
+		timeout: 15000
+	});
+	await expect(duplicatePane).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
+	await holdWorkspaceResponses(page, 1);
+	await duplicatePane.getByRole('button', { name: 'Next Location' }).click();
+	await waitForHeldWorkspaceResponses(page, 2);
+	await firstPane.locator('[id$="box-1-slot-0"]').click();
+	await releaseWorkspaceResponses(page);
+	await expect(duplicatePane).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
+	await expect(duplicatePane.locator('[id$="box-1-slot-0"]')).toContainText('ARON');
+
+	await firstPane.getByRole('button', { name: 'Previous Location' }).click();
+	await expect(firstPane.getByRole('heading', { name: 'Box 01' })).toBeVisible({ timeout: 15000 });
+	await expect(firstPane).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
+	await firstPane.locator('[id$="box-0-slot-0"]').click();
+	await page.getByLabel('Transfer controls').getByRole('button', { name: 'Copy' }).click();
+	await holdWorkspaceResponses(page);
+	await firstPane.locator('[id$="box-0-slot-2"]').click();
+	await waitForHeldWorkspaceResponses(page, 3);
+	await expect(duplicatePane).toHaveAttribute('aria-busy', 'true');
+	await expect(duplicatePane.locator('[id$="box-1-slot-0"]')).toContainText('Empty');
+	await duplicatePane.locator('[id$="box-1-slot-0"]').click();
+	await expect(
+		page.getByLabel('Transfer controls').getByRole('button', { name: 'Move' })
+	).toBeDisabled();
+
+	await releaseWorkspaceResponses(page);
+	await expect(duplicatePane).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
+	await expect(duplicatePane.locator('[id$="box-1-slot-0"]')).toContainText('ARON');
+
+	await duplicatePane.locator('[id$="box-1-slot-0"]').click();
+	await page.getByLabel('Transfer controls').getByRole('button', { name: 'Move' }).click();
+	await firstPane.locator('[id$="box-0-slot-3"]').click();
+	await expect(firstPane.locator('[id$="box-0-slot-3"]')).toContainText('ARON', {
+		timeout: 15000
+	});
+	await expect(duplicatePane.locator('[id$="box-1-slot-0"]')).toContainText('Empty', {
+		timeout: 15000
+	});
+});
+
+test('an unopened Save source cannot page beyond its unknown Box range', async ({ page }) => {
+	await installWorkspaceResponseHold(page);
+	await openEmptySaves(page);
+	await importEmeraldThroughSaves(page);
+	await importScarletThroughSaves(page);
+	await page.locator('#box-grid').focus();
+	await page.keyboard.press('x');
+	await page
+		.getByRole('dialog', { name: 'Box Menu' })
+		.getByRole('button', { name: 'Open another' })
+		.click();
+	await holdWorkspaceResponses(page);
+	await page
+		.getByRole('dialog', { name: 'Open another collection' })
+		.getByRole('button', { name: /011020251345\.sav/ })
+		.click();
+
+	const openedPane = page.locator('.box-pane.active-pane');
+	await waitForHeldWorkspaceResponses(page);
+	await expect(openedPane).toHaveAttribute('aria-busy', 'true');
+	for (let index = 0; index < 15; index += 1) {
+		await openedPane.getByRole('button', { name: 'Next Location' }).click();
+	}
+	await expect(openedPane).toHaveAttribute('data-location', 'box-0');
+	await expect(openedPane.getByRole('heading', { name: 'Box 01' })).toBeVisible();
+
+	await releaseWorkspaceResponses(page);
+	await expect(openedPane).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
+	await openedPane.getByRole('button', { name: 'Previous Location' }).click();
+	await expect(openedPane).toHaveAttribute('data-location', 'party');
+	await openedPane.getByRole('button', { name: 'Next Location' }).click();
+	for (let index = 0; index < 13; index += 1) {
+		await openedPane.getByRole('button', { name: 'Next Location' }).click();
+	}
+	await expect(openedPane.getByRole('heading', { name: 'Box 14' })).toBeVisible({ timeout: 15000 });
+	await expect(openedPane).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
+	await openedPane.getByRole('button', { name: 'Next Location' }).click();
+	await expect(openedPane).toHaveAttribute('data-location', 'party');
+});
+
+test('two Box Panes keep physical focus and Carry through rotation, mutation, and close', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 1280, height: 720 });
+	await openEmptySaves(page);
+	await importEmeraldThroughSaves(page);
+	await page.locator('#box-grid').focus();
+	await page.keyboard.press('x');
+	await page
+		.getByRole('dialog', { name: 'Box Menu' })
+		.getByRole('button', { name: 'Open another' })
+		.click();
+	await page
+		.getByRole('dialog', { name: 'Open another collection' })
+		.getByRole('button', { name: /011020251345\.sav/ })
+		.click();
+
+	const panes = page.locator('.box-pane');
+	await expect(panes).toHaveCount(2);
+	const paneIds = await panes.evaluateAll((elements) =>
+		elements.map((pane) => pane.dataset.paneId)
+	);
+	expect(new Set(paneIds).size).toBe(2);
+	const sourceId = await panes.first().getAttribute('data-source-id');
+	expect(sourceId).not.toBeNull();
+	expect(
+		await panes.evaluateAll((elements) => elements.map((pane) => pane.dataset.sourceId))
+	).toEqual([sourceId, sourceId]);
+	await panes.nth(1).getByRole('button', { name: 'Next Location' }).click();
+	await expect(panes.nth(1)).toHaveAttribute('data-location', 'box-1');
+	await expect(panes.nth(1).getByRole('heading', { name: 'Box 02' })).toBeVisible();
+	await expect(panes.nth(1)).not.toHaveAttribute('aria-busy', 'true', { timeout: 15000 });
+	await expect(panes.nth(0)).toHaveAttribute('data-location', 'box-0');
+	await expect(panes.nth(0).getByRole('heading', { name: 'Box 01' })).toBeVisible();
+	await expect(panes.nth(0).locator('[id$="box-0-slot-0"]')).toContainText('ARON');
+
+	await panes.nth(0).locator('[id$="box-0-slot-0"]').click();
+	await expect(panes.nth(0)).toHaveClass(/active-pane/);
+	await panes.nth(0).getByRole('button', { name: 'Previous Location' }).click();
+	await expect(panes.nth(0)).toHaveAttribute('data-location', 'party');
+	await expect(panes.nth(0).locator('[id$="party-slot-0"]')).toContainText('1-UP');
+	await expect(panes.nth(1)).toHaveAttribute('data-location', 'box-1');
+	await expect(panes.nth(1).locator('[id$="box-1-slot-0"]')).toHaveAccessibleName(/Empty/);
+
+	await panes.nth(0).getByRole('button', { name: 'Next Location' }).click();
+	await expect(panes.nth(0)).toHaveAttribute('data-location', 'box-0');
+	await panes.nth(1).locator('[id$="box-1-slot-0"]').click();
+	await expect(panes.nth(1)).toHaveClass(/active-pane/);
+	await panes.nth(1).getByRole('button', { name: 'Previous Location' }).click();
+	await expect(panes.nth(1)).toHaveAttribute('data-location', 'box-0');
+	await expect(panes.nth(1).locator('[id$="box-0-slot-0"]')).toContainText('ARON');
+	await expect(panes.nth(0)).toHaveAttribute('data-location', 'box-0');
+	await expect(panes.nth(0).locator('[id$="box-0-slot-0"]')).toContainText('ARON');
+	await expect(page.locator('.shared-detail .detail-rail')).toHaveCount(1);
+	const transferControls = page.getByLabel('Transfer controls');
+	await expect(page.locator('.shared-detail')).toBeHidden();
+	await page.setViewportSize({ width: 1800, height: 900 });
+	await expect(transferControls.getByRole('button')).toHaveCount(2);
+	await expect(transferControls).toBeVisible();
+	await expect(page.locator('.shared-detail .detail-heading h2')).toHaveText('ARON');
+	await expect(transferControls.getByRole('button').first()).toHaveAttribute('tabindex', '-1');
+	const sideBySide = await panes.evaluateAll((elements) =>
+		elements.map((pane) => {
+			const rect = pane.getBoundingClientRect();
+			return { top: rect.top, left: rect.left, width: rect.width };
+		})
+	);
+	expect(Math.abs(sideBySide[0].top - sideBySide[1].top)).toBeLessThan(2);
+	expect(sideBySide[0].left).toBeLessThan(sideBySide[1].left);
+	expect(Math.max(...sideBySide.map(({ width }) => width))).toBeLessThanOrEqual(640);
+	await expect
+		.poll(() =>
+			page.locator('.shared-detail').evaluate((rail) => rail.getBoundingClientRect().width)
+		)
+		.toBeLessThanOrEqual(260);
+	for (const height of [360, 480]) {
+		await page.setViewportSize({ width: 640, height });
+		const sideInset = height === 360 ? 12 : 0;
+		await setSafeArea(page, { top: 12, right: sideInset, bottom: 12, left: sideInset });
+		await expect(page.locator('.shared-detail')).toBeHidden();
+		await expect(transferControls).toBeHidden();
+	}
+	await page.setViewportSize({ width: 1800, height: 900 });
+	await setSafeArea(page, { top: 0, right: 0, bottom: 0, left: 0 });
+
+	await panes.nth(1).getByRole('button', { name: 'Previous Location' }).click();
+	await expect(panes.nth(1)).toHaveAttribute('data-location', 'party');
+	await panes.nth(0).locator('[id$="box-0-slot-29"]').click();
+	await page.keyboard.press('ArrowRight');
+	await expect(page.locator('#party-slot-3')).toBeFocused();
+	await expect(panes.nth(1)).toHaveClass(/active-pane/);
+
+	await page.keyboard.press('PageDown');
+	await expect(panes.nth(1)).toHaveAttribute('data-location', 'box-0');
+	await expect(panes.nth(0)).toHaveAttribute('data-location', 'box-0');
+	await page.locator('#box-0-slot-0').focus();
+	await page.getByLabel('Transfer controls').getByRole('button', { name: 'Move' }).click();
+	await expect(page.locator('#box-0-slot-0')).toBeFocused();
+	await expect(page.locator('.carry-at-focus')).toHaveAttribute('aria-label', 'move ARON');
+	await page.keyboard.press('ArrowLeft');
+	await expect(page.locator('#box-0-slot-5')).toBeFocused();
+
+	for (const viewport of [
+		{ width: 1800, height: 900 },
+		{ width: 640, height: 360 },
+		{ width: 640, height: 480 },
+		{ width: 640, height: 640 },
+		{ width: 393, height: 852 }
+	]) {
+		await page.setViewportSize(viewport);
+		await setSafeArea(
+			page,
+			viewport.width === 640 && viewport.height === 360
+				? { top: 12, right: 12, bottom: 12, left: 12 }
+				: viewport.width === 640 && viewport.height === 480
+					? { top: 12, right: 0, bottom: 12, left: 0 }
+					: { top: 0, right: 0, bottom: 0, left: 0 }
+		);
+		await expect(panes).toHaveCount(2);
+		expect(
+			await panes.evaluateAll((elements) => elements.map((pane) => pane.dataset.paneId))
+		).toEqual(paneIds);
+		expect(
+			await panes.evaluateAll((elements) => elements.map((pane) => pane.dataset.sourceId))
+		).toEqual([sourceId, sourceId]);
+		expect(
+			await panes.evaluateAll((elements) => elements.map((pane) => pane.dataset.location))
+		).toEqual(['box-0', 'box-0']);
+		await expect(page.locator('#box-0-slot-5')).toBeFocused();
+		await expect(page.locator('.carry-at-focus')).toHaveAttribute('aria-label', 'move ARON');
+		await expect
+			.poll(() =>
+				page.locator('#box-0-slot-5').evaluate((slot) => {
+					const slotBounds = slot.getBoundingClientRect();
+					const gridBounds = slot.closest('.location-grid')?.getBoundingClientRect();
+					return Boolean(
+						gridBounds &&
+						slotBounds.top >= gridBounds.top - 1 &&
+						slotBounds.right <= gridBounds.right + 1 &&
+						slotBounds.bottom <= gridBounds.bottom + 1 &&
+						slotBounds.left >= gridBounds.left - 1
+					);
+				})
+			)
+			.toBe(true);
+		const minimumSlot = await panes
+			.locator('.slot')
+			.first()
+			.evaluate((slot) => slot.getBoundingClientRect().width);
+		expect(minimumSlot).toBeGreaterThanOrEqual(44);
+
+		if (viewport.width === 640 && viewport.height <= 480) {
+			const compact = await page.evaluate(() => {
+				const bounds = (selector: string) =>
+					document.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
+				return {
+					paneWidths: Array.from(document.querySelectorAll<HTMLElement>('.box-pane')).map(
+						(pane) => pane.getBoundingClientRect().width
+					),
+					railWidth: bounds('.shared-detail').width,
+					gridWidths: Array.from(document.querySelectorAll<HTMLElement>('.location-grid')).map(
+						(grid) => ({ client: grid.clientWidth, scroll: grid.scrollWidth })
+					)
+				};
+			});
+			expect(compact.railWidth).toBe(0);
+			expect(Math.min(...compact.paneWidths)).toBeGreaterThanOrEqual(275);
+			expect(compact.gridWidths.every(({ client, scroll }) => client >= scroll)).toBe(true);
+			await expect(page.locator('.shared-detail')).toBeHidden();
+			await expect(transferControls).toBeHidden();
+		}
+
+		if (viewport.width === 1800) {
+			const large = await page.evaluate(() => {
+				const route = document.querySelector<HTMLElement>('.boxes-route')!.getBoundingClientRect();
+				const workspace = document
+					.querySelector<HTMLElement>('.storage-workspace')!
+					.getBoundingClientRect();
+				const paneWidths = Array.from(document.querySelectorAll<HTMLElement>('.box-pane')).map(
+					(pane) => pane.getBoundingClientRect().width
+				);
+				const railWidth = document
+					.querySelector<HTMLElement>('.shared-detail')!
+					.getBoundingClientRect().width;
+				return {
+					workspaceWidth: workspace.width,
+					leftGap: workspace.left - route.left,
+					rightGap: route.right - workspace.right,
+					paneWidths,
+					railWidth
+				};
+			});
+			expect(large.workspaceWidth).toBeLessThanOrEqual(1552);
+			expect(Math.abs(large.leftGap - large.rightGap)).toBeLessThan(2);
+			expect(Math.max(...large.paneWidths)).toBeLessThanOrEqual(640);
+			expect(large.railWidth).toBeLessThanOrEqual(260);
+		}
+
+		if (viewport.width === viewport.height) {
+			await expect(page.locator('.shared-detail')).toBeHidden();
+		}
+
+		if (viewport.width < viewport.height) {
+			await expect(page.locator('.shared-detail')).toBeHidden();
+			await expect(transferControls).toBeHidden();
+		}
+	}
+
+	const stacked = await panes.evaluateAll((elements) =>
+		elements.map((pane) => {
+			const rect = pane.getBoundingClientRect();
+			return { top: rect.top, left: rect.left };
+		})
+	);
+	expect(stacked[0].top).toBeLessThan(stacked[1].top);
+	for (let step = 0; step < 4; step += 1) await page.keyboard.press('ArrowDown');
+	await expect(page.locator('#box-0-slot-29')).toBeFocused();
+	await page.keyboard.press('ArrowDown');
+	await expect(page.locator('#box-0-slot-5')).toBeFocused();
+	await expect(panes.nth(1)).toHaveClass(/active-pane/);
+	await page.keyboard.press('Escape');
+	await expect(page.locator('#box-0-slot-0')).toBeFocused();
+	await expect(page.locator('.carry-at-focus')).toHaveCount(0);
+	await expect(page.locator('.shared-detail')).toBeHidden();
+
+	await page.keyboard.press('Enter');
+	await page
+		.getByRole('dialog', { name: 'Slot actions' })
+		.getByRole('button', { name: 'Copy' })
+		.click();
+	await panes.nth(0).locator('[id$="box-0-slot-2"]').click();
+	await expect(panes.nth(0).locator('[id$="box-0-slot-2"]')).toContainText('ARON', {
+		timeout: 15000
+	});
+	await expect(panes.nth(1).locator('[id$="box-0-slot-2"]')).toContainText('ARON', {
+		timeout: 15000
+	});
+
+	await panes.nth(0).getByRole('button', { name: 'Previous Location' }).click();
+	await expect(panes.nth(0)).toHaveAttribute('data-location', 'party');
+	await panes.nth(1).locator('[id$="box-0-slot-29"]').click();
+	await page.keyboard.press('x');
+	await page
+		.getByRole('dialog', { name: 'Box Menu' })
+		.getByRole('button', { name: 'Close' })
+		.click();
+	await expect(panes).toHaveCount(1);
+	await expect(panes.first()).toHaveAttribute('data-location', 'party');
+	await expect(page.locator('#party-slot-5')).toBeFocused();
+	await page.setViewportSize({ width: 1280, height: 720 });
+	await expect(panes).toHaveCount(1);
+});
+
+test('Pokemon Storage opens as an independent second pane and persists copied Pokemon', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 1800, height: 900 });
+	await openEmptySaves(page);
+	await importEmeraldThroughSaves(page);
+	await page.locator('#box-grid').focus();
+	await page.keyboard.press('x');
+	await page
+		.getByRole('dialog', { name: 'Box Menu' })
+		.getByRole('button', { name: 'Open another collection', exact: true })
+		.click();
+	await page
+		.getByRole('dialog', { name: 'Open another collection' })
+		.getByRole('button', { name: /Pokemon Storage/ })
+		.click();
+
+	const panes = page.locator('.box-pane');
+	const savePane = panes.nth(0);
+	const storagePane = panes.nth(1);
+	await expect(panes).toHaveCount(2);
+	const paneIds = await panes.evaluateAll((elements) =>
+		elements.map((pane) => pane.dataset.paneId)
+	);
+	expect(new Set(paneIds).size).toBe(2);
+	expect(
+		await panes.evaluateAll((elements) => elements.map((pane) => pane.dataset.sourceId))
+	).toEqual([expect.not.stringMatching(/^pokemon-storage$/), 'pokemon-storage']);
+
+	await storagePane.getByRole('button', { name: 'Next Location' }).click();
+	await expect(storagePane).toHaveAttribute('data-location', 'box-1');
+	await storagePane.locator('[id$="box-1-slot-8"]').click();
+	await expect(page.locator('#box-1-slot-8')).toBeFocused();
+
+	await savePane.locator('[id$="box-0-slot-0"]').click();
+	await expect(savePane).toHaveClass(/active-pane/);
+	await expect(storagePane).toHaveAttribute('data-location', 'box-1');
+	await page.getByLabel('Transfer controls').getByRole('button', { name: 'Copy' }).click();
+	for (let step = 0; step < 6; step += 1) await page.keyboard.press('ArrowRight');
+	await expect(storagePane).toHaveClass(/active-pane/);
+	await expect(page.locator('#box-1-slot-0')).toBeFocused();
+	await expect(page.locator('.carry-at-focus')).toHaveAttribute('aria-label', 'copy ARON');
+
+	for (const viewport of [
+		{ width: 640, height: 640 },
+		{ width: 393, height: 852 }
+	]) {
+		await page.setViewportSize(viewport);
+		await expect(panes).toHaveCount(2);
+		expect(
+			await panes.evaluateAll((elements) => elements.map((pane) => pane.dataset.paneId))
+		).toEqual(paneIds);
+		expect(
+			await panes.evaluateAll((elements) => elements.map((pane) => pane.dataset.sourceId))
+		).toEqual([expect.not.stringMatching(/^pokemon-storage$/), 'pokemon-storage']);
+		expect(
+			await panes.evaluateAll((elements) => elements.map((pane) => pane.dataset.location))
+		).toEqual(['box-0', 'box-1']);
+		await expect(page.locator('#box-1-slot-0')).toBeFocused();
+		await expect(page.locator('.carry-at-focus')).toHaveAttribute('aria-label', 'copy ARON');
+		const stacked = await panes.evaluateAll((elements) =>
+			elements.map((pane) => pane.getBoundingClientRect().top)
+		);
+		expect(stacked[0]).toBeLessThan(stacked[1]);
+	}
+
+	await page.keyboard.press('Enter');
+	await expect(storagePane.locator('[id$="box-1-slot-0"]')).toContainText('ARON', {
+		timeout: 15000
+	});
+	await savePane.getByRole('button', { name: 'Previous Location' }).click();
+	await expect(savePane).toHaveAttribute('data-location', 'party');
+	await storagePane.locator('[id$="box-1-slot-0"]').click();
+	await expect(storagePane).toHaveAttribute('data-location', 'box-1');
+	await expect(page.locator('#box-1-slot-0')).toBeFocused();
+	await page.keyboard.press('x');
+	await page
+		.getByRole('dialog', { name: 'Box Menu' })
+		.getByRole('button', { name: 'Close' })
+		.click();
+	await expect(panes).toHaveCount(1);
+	await expect(panes.first()).toHaveAttribute('data-location', 'party');
+	await expect(page.locator('#party-slot-0')).toBeFocused();
+
+	await page.setViewportSize({ width: 1800, height: 900 });
+	await page.goto('/?source=pokemon-storage');
+	await expect(
+		page.getByRole('button', { name: 'Open Box Menu for Pokemon Storage' })
+	).toBeVisible();
+	await page.getByRole('button', { name: 'Next Location' }).click();
+	await expect(page.getByRole('heading', { name: 'Box 02' })).toBeVisible();
+	await expect(page.locator('#box-1-slot-0')).toContainText('ARON');
+});
+
 test('Box Menu and related picker Cancel restore focus at both viewport floors', async ({
 	page
 }) => {
@@ -1070,7 +1622,8 @@ test('Carry suppresses the Box Menu and Y only toggles Move and Copy', async ({ 
 	expect(sourceSpriteUrl).not.toBeNull();
 	await page.locator('#box-grid').focus();
 	await page.keyboard.press('Enter');
-	await page.getByRole('button', { name: 'Move' }).click();
+	const slotMenu = page.getByRole('dialog', { name: 'Slot actions' });
+	await slotMenu.getByRole('button', { name: 'Move' }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await expect(page.locator('#box-0-slot-0')).toHaveAccessibleName(
 		'Box Slot 1, row 1, column 1: ARON, Lv. 11. Carry Move ARON'
@@ -1136,7 +1689,7 @@ test('Carry suppresses the Box Menu and Y only toggles Move and Copy', async ({ 
 	await expect(page.locator('#box-0-slot-0')).toContainText('ARON', { timeout: 15000 });
 	await expect(page.locator('.carry-at-focus')).toHaveCount(0);
 	await page.keyboard.press('Enter');
-	await page.getByRole('button', { name: 'Move' }).click();
+	await slotMenu.getByRole('button', { name: 'Move' }).click();
 	await pressController(page, 'PageUp');
 	await expect(page.getByRole('heading', { name: 'Party' })).toBeVisible();
 	await expect(page.locator('#party-slot-0')).toBeFocused();

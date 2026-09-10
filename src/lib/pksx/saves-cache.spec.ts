@@ -4,6 +4,8 @@ import type { StoredSaveFile } from '$lib/pksx/saves';
 import { createCleanWorkspaceState } from '$lib/pksx/backup-workflow';
 import {
 	getCachedSavesSnapshot,
+	getCachedActiveWorkspaceBox,
+	getActiveWorkspaceService,
 	countSavePokemon,
 	invalidateActiveWorkspaceCache,
 	invalidateSavesCache,
@@ -192,6 +194,30 @@ describe('Saves cache', () => {
 		expect(firstUpdates).toHaveLength(1);
 		expect(secondUpdates).toHaveLength(2);
 		expect(secondUpdates.at(-1)).toBe(getCachedSavesSnapshot());
+	});
+
+	it('publishes an active workspace projection with its Box number', () => {
+		const boxTwoWorkspace = createCleanWorkspaceState({
+			file: saveFile,
+			bytes: new Uint8Array([1, 2, 3, 4]),
+			workspace: {
+				...workspace,
+				boxSlots: [{ ...boxSlot, box: 1, nickname: 'MAKUHITA' }]
+			}
+		});
+		const observed: Array<{ box: number; nickname: string }> = [];
+		const unsubscribe = getActiveWorkspaceService().subscribe((state) => {
+			if (!state) return;
+			observed.push({
+				box: getCachedActiveWorkspaceBox(),
+				nickname: state.workspace.boxSlots[0]?.nickname ?? ''
+			});
+		});
+
+		setCachedActiveWorkspace(boxTwoWorkspace, 1);
+		unsubscribe();
+
+		expect(observed.at(-1)).toEqual({ box: 1, nickname: 'MAKUHITA' });
 	});
 
 	it('counts Party and occupied slots across every Box', async () => {

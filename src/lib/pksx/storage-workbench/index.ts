@@ -140,6 +140,8 @@ export function addBoxPane(
 	source: BoxSourceRef,
 	options: { id: string; boxCount?: number } = { id: crypto.randomUUID() }
 ): BoxPaneState[] {
+	if (panes.length >= 2) return panes;
+
 	return [
 		...panes,
 		createBoxPane(options.id, source, {
@@ -396,7 +398,12 @@ export function evaluateDestination(input: {
 	destinationSlot: SlotView | null;
 }): DestinationEvaluation {
 	const { carry, destinationPane, destination, destinationSlot } = input;
-	const sameSource = isSameWorkbenchSlotRef(carry.source, destination);
+	const sameSource = isSameUnderlyingSlot(
+		carry.sourceOwner,
+		carry.source,
+		destinationPane.source,
+		destination
+	);
 
 	if (sameSource) {
 		return {
@@ -572,9 +579,15 @@ function invalidDestination(label: string, reason: string): DestinationEvaluatio
 	};
 }
 
-function isSameWorkbenchSlotRef(left: WorkbenchSlotRef, right: WorkbenchSlotRef): boolean {
+function isSameUnderlyingSlot(
+	leftOwner: BoxSourceRef,
+	left: WorkbenchSlotRef,
+	rightOwner: BoxSourceRef,
+	right: WorkbenchSlotRef
+): boolean {
 	return (
-		left.paneId === right.paneId &&
+		leftOwner.type === rightOwner.type &&
+		leftOwner.id === rightOwner.id &&
 		left.zone === right.zone &&
 		left.box === right.box &&
 		left.slot === right.slot

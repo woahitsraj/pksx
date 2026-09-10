@@ -187,8 +187,8 @@ export function setCachedActiveWorkspace(
 	options: { adoptAsActiveSave?: boolean } = {}
 ) {
 	pendingActiveSaveAdoption = workspace && options.adoptAsActiveSave ? workspace.file.id : null;
-	getActiveWorkspaceService().set(workspace, box);
 	activeWorkspaceBox = box;
+	getActiveWorkspaceService().set(workspace, box);
 	if (!workspace) return;
 	detailsCache.delete(workspace.file.id);
 	const detailGeneration = supersedeSaveCardDetails(workspace.file.id);
