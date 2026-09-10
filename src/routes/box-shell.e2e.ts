@@ -128,14 +128,202 @@ async function seedPokemonStorageBoxes(page: Page, boxCount: number) {
 	);
 }
 
+async function seedOccupiedPokemonStorageSlot(page: Page) {
+	await seedPokemonStorageBoxes(page, 3);
+	await page.evaluate(
+		() =>
+			new Promise<void>((resolve, reject) => {
+				const open = indexedDB.open('pksx-saves');
+				open.onerror = () => reject(open.error ?? new Error('Could not open Saves.'));
+				open.onsuccess = () => {
+					const database = open.result;
+					const transaction = database.transaction('pokemonStorage', 'readwrite');
+					const store = transaction.objectStore('pokemonStorage');
+					const read = store.get('pokemon-storage');
+					read.onerror = () => reject(read.error ?? new Error('Could not read Pokemon Storage.'));
+					read.onsuccess = () => {
+						const storage = read.result;
+						storage.boxes[0].slots[0].pokemon = {
+							label: 'STORAGE ARON',
+							detail: 'Lv. 11',
+							level: 11,
+							experience: 1331,
+							speciesId: 304,
+							form: 0,
+							isEgg: false,
+							spriteIdentity: {
+								speciesId: 304,
+								form: 0,
+								isEgg: false,
+								isShiny: false,
+								displaySex: 'default'
+							},
+							origin: {
+								entryMode: 'imported',
+								originSaveFileName: null,
+								originGame: null,
+								originalTrainer: null,
+								trainerId: null,
+								enteredAt: '2026-09-08T12:00:00.000Z'
+							}
+						};
+						store.put(storage);
+					};
+					transaction.onerror = () =>
+						reject(transaction.error ?? new Error('Could not seed Pokemon Storage.'));
+					transaction.oncomplete = () => {
+						database.close();
+						resolve();
+					};
+				};
+			})
+	);
+}
+
+async function backupCount(page: Page) {
+	return page.evaluate(
+		() =>
+			new Promise<number>((resolve, reject) => {
+				const open = indexedDB.open('pksx-saves');
+				open.onerror = () => reject(open.error ?? new Error('Could not open Saves.'));
+				open.onsuccess = () => {
+					const database = open.result;
+					const transaction = database.transaction('backups', 'readonly');
+					const request = transaction.objectStore('backups').count();
+					request.onerror = () => reject(request.error ?? new Error('Could not count Backups.'));
+					request.onsuccess = () => resolve(request.result);
+					transaction.oncomplete = () => database.close();
+				};
+			})
+	);
+}
+
+type SafeArea = { top: number; right: number; bottom: number; left: number };
+
+async function setSafeArea(page: Page, insets: SafeArea) {
+	await page.evaluate(({ top, right, bottom, left }) => {
+		const root = document.documentElement;
+		root.style.setProperty('--safe-area-inset-top', `${top}px`);
+		root.style.setProperty('--safe-area-inset-right', `${right}px`);
+		root.style.setProperty('--safe-area-inset-bottom', `${bottom}px`);
+		root.style.setProperty('--safe-area-inset-left', `${left}px`);
+	}, insets);
+}
+
+async function shellExtents(page: Page) {
+	return page.evaluate(() => {
+		const shell = document.querySelector('.app-shell');
+		return {
+			bodyHeight: document.body.scrollHeight,
+			bodyWidth: document.body.scrollWidth,
+			htmlHeight: document.documentElement.scrollHeight,
+			htmlWidth: document.documentElement.scrollWidth,
+			shellHeight: shell?.scrollHeight ?? 0,
+			shellWidth: shell?.scrollWidth ?? 0
+		};
+	});
+}
+
+async function edgeSurfaceBounds(page: Page) {
+	return page.locator('.edge-menu-layer').evaluate((layer) => {
+		const panel = layer.querySelector('[role="dialog"]');
+		const layerRect = layer.getBoundingClientRect();
+		const panelRect = panel?.getBoundingClientRect();
+		return {
+			layer: {
+				top: layerRect.top,
+				right: layerRect.right,
+				bottom: layerRect.bottom,
+				left: layerRect.left,
+				width: layerRect.width,
+				height: layerRect.height
+			},
+			panel: panelRect
+				? {
+						top: panelRect.top,
+						right: panelRect.right,
+						bottom: panelRect.bottom,
+						left: panelRect.left,
+						width: panelRect.width,
+						height: panelRect.height
+					}
+				: null
+		};
+	});
+}
+
+function expectSafeCanvas(
+	bounds: Awaited<ReturnType<typeof edgeSurfaceBounds>>,
+	viewport: { width: number; height: number },
+	insets: SafeArea
+) {
+	expect(bounds.layer).toEqual({
+		top: insets.top,
+		right: viewport.width - insets.right,
+		bottom: viewport.height - insets.bottom,
+		left: insets.left,
+		width: viewport.width - insets.left - insets.right,
+		height: viewport.height - insets.top - insets.bottom
+	});
+	expect(bounds.panel?.width ?? 0).toBeGreaterThan(0);
+	expect(bounds.panel?.height ?? 0).toBeGreaterThan(0);
+}
+
+async function expectLastSlotCommandVisible(page: Page) {
+	const lastCommand = page.locator('#slot-action-7');
+	await lastCommand.focus();
+	await expect(lastCommand).toBeFocused();
+	expect(
+		await lastCommand.evaluate((command) => {
+			const rowRect = command.parentElement?.getBoundingClientRect();
+			const panelRect = command.closest('[role="dialog"]')?.getBoundingClientRect();
+			const reason = document.getElementById(command.getAttribute('aria-describedby') ?? '');
+			const reasonRect = reason?.getBoundingClientRect();
+			return (
+				rowRect !== undefined &&
+				panelRect !== undefined &&
+				reasonRect !== undefined &&
+				rowRect.top >= panelRect.top &&
+				rowRect.right <= panelRect.right &&
+				rowRect.bottom <= panelRect.bottom &&
+				rowRect.left >= panelRect.left &&
+				reason?.contains(
+					document.elementFromPoint(
+						reasonRect.left + reasonRect.width / 2,
+						reasonRect.top + reasonRect.height / 2
+					)
+				)
+			);
+		})
+	).toBe(true);
+}
+
+async function expectSmallSlotCommandControls(page: Page) {
+	const metrics = await page.getByRole('dialog', { name: 'Slot actions' }).evaluate((dialog) => ({
+		token: parseFloat(getComputedStyle(dialog).getPropertyValue('--pksx-small-control-height')),
+		heights: Array.from(
+			dialog.querySelectorAll('.slot-command-row button'),
+			(button) => button.getBoundingClientRect().height
+		)
+	}));
+	expect(metrics.token).toBeGreaterThan(0);
+	for (const height of metrics.heights) {
+		expect(height).toBeGreaterThan(0);
+		expect(height).toBeGreaterThanOrEqual(metrics.token - 0.5);
+		expect(height).toBeLessThanOrEqual(metrics.token + 0.5);
+	}
+}
+
 async function moveFirstEmeraldBoxSlotToThirdSlot(page: Page) {
 	await page.locator('#box-grid').focus();
 	await page.keyboard.press('Enter');
 	await page.keyboard.press('ArrowDown');
 	await page.keyboard.press('Enter');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await page.keyboard.press('ArrowRight');
 	await page.keyboard.press('ArrowRight');
 	await page.keyboard.press('Enter');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
 
 	await expect(page.locator('#box-0-slot-0')).toContainText('Empty', { timeout: 15000 });
 	await expect(page.locator('#box-0-slot-2')).toContainText('ARON');
@@ -266,7 +454,24 @@ test('confirm opens slot actions and back restores the grid focus', async ({ pag
 
 	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toBeVisible();
 	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toContainText('Box 1, slot 2');
-	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toContainText('Slot Action');
+	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toContainText('Slot Menu');
+	await expect(page.locator('.slot-command-row strong')).toHaveText([
+		'Create Pokemon',
+		'Move',
+		'Copy',
+		'Export',
+		'Legality Check'
+	]);
+	await expect(page.getByRole('button', { name: 'Move' })).toHaveAttribute(
+		'aria-describedby',
+		'slot-action-1-reason'
+	);
+	await expect(page.locator('#slot-action-1-reason')).toHaveText('Move needs an occupied Slot.');
+	await expect(page.getByRole('button', { name: 'Copy' })).toHaveAttribute(
+		'aria-describedby',
+		'slot-action-2-reason'
+	);
+	await expect(page.locator('#slot-action-2-reason')).toHaveText('Copy needs an occupied Slot.');
 	await expect(
 		page.getByRole('button', {
 			name: 'Create Pokemon'
@@ -276,6 +481,17 @@ test('confirm opens slot actions and back restores the grid focus', async ({ pag
 	await expect(page.getByRole('alert')).toHaveCount(0);
 
 	await expect(page.locator('#slot-action-0')).toBeFocused();
+	await expect(page.locator('.chrome-inert-owner')).toHaveCount(2);
+	expect(
+		await page
+			.locator('.chrome-inert-owner')
+			.evaluateAll((owners) => owners.every((owner) => owner.hasAttribute('inert')))
+	).toBe(true);
+	const focusedAfterChromeAttempt = await page.locator('#top-control-0').evaluate((control) => {
+		(control as HTMLElement).focus();
+		return document.activeElement?.id;
+	});
+	expect(focusedAfterChromeAttempt).toBe('slot-action-0');
 	await page.keyboard.press('ArrowDown');
 	await expect(page.locator('#slot-action-1')).toBeFocused();
 	for (const key of ['ArrowDown', 'ArrowDown', 'ArrowDown']) {
@@ -315,6 +531,21 @@ test('occupied slot actions expose Edit and Close dismisses', async ({ page }) =
 	const dialog = page.getByRole('dialog', { name: 'Slot actions' });
 	await expect(dialog).toBeVisible();
 	await expect(dialog).toContainText('Edit');
+	await expect(dialog.locator('.slot-command-row strong')).toHaveText([
+		'Edit',
+		'Move',
+		'Copy',
+		'Clear Slot',
+		'Export',
+		'Legality Check',
+		'Pokemon Actions',
+		'Create Pokemon'
+	]);
+	await expect(dialog.getByRole('button', { name: 'Export' })).toHaveAttribute(
+		'aria-describedby',
+		'slot-action-4-reason'
+	);
+	await expect(page.locator('#slot-action-4-reason')).toHaveText('Export is not available yet.');
 	await expect(page.getByRole('button', { name: 'Edit' })).not.toHaveAttribute(
 		'aria-disabled',
 		'true'
@@ -392,7 +623,7 @@ test('creates a Pokemon from an empty Slot after explicit apply and preserves ca
 
 	const destination = page.locator('#box-0-slot-2');
 	await destination.click();
-	await destination.click();
+	await page.keyboard.press('Enter');
 	const createCommand = page.getByRole('button', { name: 'Create Pokemon' });
 	await expect(createCommand).not.toHaveAttribute('aria-disabled', 'true');
 	await createCommand.click();
@@ -544,7 +775,8 @@ test('Pokemon Editor exposes Move Set, IV, and EV projection sections', async ({
 	await openEmptySaves(page);
 	await importEmeraldThroughSaves(page);
 	await expect(page.locator('#box-0-slot-0')).toHaveAttribute('aria-selected', 'true');
-	await page.locator('#box-0-slot-0').click();
+	await page.locator('#box-grid').focus();
+	await page.keyboard.press('Enter');
 	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toBeVisible();
 
 	await page.getByRole('button', { name: 'Edit' }).click();
@@ -593,7 +825,8 @@ test('Pokemon Editor previews and applies a Species and Form change', async ({ p
 	await openEmptySaves(page);
 	await importEmeraldThroughSaves(page);
 	await expect(page.locator('#box-0-slot-0')).toHaveAttribute('aria-selected', 'true');
-	await page.locator('#box-0-slot-0').click();
+	await page.locator('#box-grid').focus();
+	await page.keyboard.press('Enter');
 	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toBeVisible();
 	await page.getByRole('button', { name: 'Edit' }).click();
 
@@ -959,44 +1192,40 @@ test('controller shoulder buttons switch boxes and A drives the party toggle and
 	await expect(page.locator('#box-0-slot-0')).toBeFocused();
 });
 
-test('desktop slot actions render fully visible beside the focused slot', async ({ page }) => {
+test('landscape-floor Slot Menu uses the trailing Safe Canvas edge without shell growth', async ({
+	page
+}) => {
 	await openEmptySaves(page);
-	await page.setViewportSize({ width: 1920, height: 1080 });
+	await importEmeraldThroughSaves(page);
+	const viewport = { width: 640, height: 360 };
+	const insets = { top: 12, right: 12, bottom: 12, left: 12 };
+	await page.setViewportSize(viewport);
+	await setSafeArea(page, insets);
 	await page.locator('#box-grid').focus();
-
-	for (let step = 0; step < 5; step += 1) {
-		await page.keyboard.press('ArrowRight');
-	}
-	for (let step = 0; step < 4; step += 1) {
-		await page.keyboard.press('ArrowDown');
-	}
-	await expect(page.locator('#box-0-slot-29')).toHaveAttribute('aria-selected', 'true');
+	const beforeOpen = await shellExtents(page);
 	await page.keyboard.press('Enter');
 
 	const dialog = page.getByRole('dialog', { name: 'Slot actions' });
-	await expect(dialog).toBeVisible();
-	await expect(dialog).toHaveClass(/viewport-anchored/);
+	await expect(dialog).toContainText('Clear Slot');
+	await expectLastSlotCommandVisible(page);
+	await expectSmallSlotCommandControls(page);
+	const menuBounds = await edgeSurfaceBounds(page);
+	expectSafeCanvas(menuBounds, viewport, insets);
+	expect(menuBounds.panel?.right).toBe(menuBounds.layer.right);
+	expect(menuBounds.panel?.top).toBe(menuBounds.layer.top);
+	expect(menuBounds.panel?.bottom).toBe(menuBounds.layer.bottom);
+	expect(menuBounds.panel?.width ?? 0).toBeLessThan(menuBounds.layer.width);
+	expect(await shellExtents(page)).toEqual(beforeOpen);
 
-	const menuState = await dialog.evaluate((element) => {
-		const rect = element.getBoundingClientRect();
-		return {
-			top: rect.top,
-			left: rect.left,
-			bottom: rect.bottom,
-			right: rect.right,
-			viewportWidth: window.innerWidth,
-			viewportHeight: window.innerHeight,
-			menuOwnsCenter: element.contains(
-				document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
-			)
-		};
-	});
-
-	expect(menuState.top).toBeGreaterThanOrEqual(0);
-	expect(menuState.left).toBeGreaterThanOrEqual(0);
-	expect(menuState.right).toBeLessThanOrEqual(menuState.viewportWidth);
-	expect(menuState.bottom).toBeLessThanOrEqual(menuState.viewportHeight);
-	expect(menuState.menuOwnsCenter).toBe(true);
+	await page.getByRole('button', { name: 'Clear Slot' }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(1);
+	await expect(page.getByRole('dialog', { name: 'Clear ARON?' })).toContainText('Box 01 Slot 1');
+	const clearBounds = await edgeSurfaceBounds(page);
+	expectSafeCanvas(clearBounds, viewport, insets);
+	expect(clearBounds.panel?.right).toBe(clearBounds.layer.right);
+	expect(clearBounds.panel?.top).toBe(clearBounds.layer.top);
+	expect(clearBounds.panel?.bottom).toBe(clearBounds.layer.bottom);
+	expect(await shellExtents(page)).toEqual(beforeOpen);
 });
 
 test('small widescreen viewports use the mobile shell', async ({ page }) => {
@@ -1008,54 +1237,139 @@ test('small widescreen viewports use the mobile shell', async ({ page }) => {
 	await expect(page.locator('.box-sidebar')).toBeHidden();
 });
 
-test('mobile slot actions stay inside the viewport without adding page overflow', async ({
+test('portrait-floor Slot Menu uses the bottom Safe Canvas edge without shell growth', async ({
 	page
 }) => {
 	await openEmptySaves(page);
-	await page.setViewportSize({ width: 420, height: 860 });
+	await importEmeraldThroughSaves(page);
+	const viewport = { width: 360, height: 640 };
+	const insets = { top: 24, right: 0, bottom: 72, left: 0 };
+	await page.setViewportSize(viewport);
+	await setSafeArea(page, insets);
 	await page.locator('#box-grid').focus();
-
-	const beforeOpen = await page.evaluate(() => ({
-		bodyScrollHeight: document.body.scrollHeight,
-		htmlScrollHeight: document.documentElement.scrollHeight
-	}));
-
-	for (const key of ['ArrowDown', 'ArrowDown', 'ArrowRight', 'ArrowRight']) {
-		await page.keyboard.press(key);
-	}
+	const beforeOpen = await shellExtents(page);
 	await page.keyboard.press('Enter');
 
-	const afterOpen = await page.evaluate(() => {
-		const dialog = document.querySelector('[role="dialog"][aria-label="Slot actions"]');
-		const selectedSlot = document.querySelector('[aria-selected="true"]');
-		const rect = dialog?.getBoundingClientRect();
-		const slotRect = selectedSlot?.getBoundingClientRect();
+	const dialog = page.getByRole('dialog', { name: 'Slot actions' });
+	await expect(dialog).toContainText('Clear Slot');
+	await expectLastSlotCommandVisible(page);
+	await expectSmallSlotCommandControls(page);
+	const menuBounds = await edgeSurfaceBounds(page);
+	expectSafeCanvas(menuBounds, viewport, insets);
+	expect(menuBounds.panel?.left).toBe(menuBounds.layer.left);
+	expect(menuBounds.panel?.right).toBe(menuBounds.layer.right);
+	expect(menuBounds.panel?.bottom).toBe(menuBounds.layer.bottom);
+	expect(await shellExtents(page)).toEqual(beforeOpen);
 
-		return {
-			bodyScrollHeight: document.body.scrollHeight,
-			htmlScrollHeight: document.documentElement.scrollHeight,
-			dialogBottom: rect?.bottom ?? 0,
-			dialogLeft: rect?.left ?? -1,
-			dialogRight: rect?.right ?? Number.POSITIVE_INFINITY,
-			dialogTop: rect?.top ?? 0,
-			selectedSlotBottom: slotRect?.bottom ?? Number.POSITIVE_INFINITY,
-			tabbarTop:
-				document.querySelector('.mobile-tabbar')?.getBoundingClientRect().top ?? window.innerHeight,
-			viewportHeight: window.innerHeight,
-			viewportWidth: window.innerWidth
-		};
-	});
-
-	expect(afterOpen.bodyScrollHeight).toBeLessThanOrEqual(beforeOpen.bodyScrollHeight);
-	expect(afterOpen.htmlScrollHeight).toBeLessThanOrEqual(beforeOpen.htmlScrollHeight);
-	expect(afterOpen.dialogTop).toBeGreaterThanOrEqual(afterOpen.selectedSlotBottom);
-	expect(afterOpen.dialogBottom).toBeLessThanOrEqual(afterOpen.viewportHeight);
-	expect(afterOpen.dialogBottom).toBeLessThanOrEqual(afterOpen.tabbarTop);
-	expect(afterOpen.dialogLeft).toBeGreaterThanOrEqual(0);
-	expect(afterOpen.dialogRight).toBeLessThanOrEqual(afterOpen.viewportWidth);
+	await page.getByRole('button', { name: 'Clear Slot' }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(1);
+	await expect(page.getByRole('dialog', { name: 'Clear ARON?' })).toContainText('Box 01 Slot 1');
+	const clearBounds = await edgeSurfaceBounds(page);
+	expectSafeCanvas(clearBounds, viewport, insets);
+	expect(clearBounds.panel?.left).toBe(clearBounds.layer.left);
+	expect(clearBounds.panel?.right).toBe(clearBounds.layer.right);
+	expect(clearBounds.panel?.bottom).toBe(clearBounds.layer.bottom);
+	expect(await shellExtents(page)).toEqual(beforeOpen);
 });
 
-test('mouse clicks move controller focus, then selected slots open actions', async ({ page }) => {
+test('large allocated Edge Menu applies the shared density type refinement', async ({ page }) => {
+	await openEmptySaves(page);
+	const viewport = { width: 920, height: 720 };
+	const insets = { top: 10, right: 10, bottom: 10, left: 10 };
+	await page.setViewportSize(viewport);
+	await setSafeArea(page, insets);
+	await page.locator('#box-grid').focus();
+	await page.keyboard.press('Enter');
+
+	const bounds = await edgeSurfaceBounds(page);
+	expectSafeCanvas(bounds, viewport, insets);
+	const type = await page.getByRole('dialog', { name: 'Slot actions' }).evaluate((dialog) => {
+		const style = getComputedStyle(dialog);
+		return {
+			caption: parseFloat(style.getPropertyValue('--pksx-type-caption')),
+			label: parseFloat(style.getPropertyValue('--pksx-type-label'))
+		};
+	});
+	expect(type).toEqual({ caption: 11, label: 13 });
+});
+
+test('square Safe Canvas keeps the bottom Menu edge and preserves a pending Clear on reflow', async ({
+	page
+}) => {
+	await openEmptySaves(page);
+	await importEmeraldThroughSaves(page);
+	const squareViewport = { width: 384, height: 408 };
+	const landscapeViewport = { width: 640, height: 360 };
+	const insets = { top: 12, right: 0, bottom: 12, left: 0 };
+	await page.setViewportSize(squareViewport);
+	await setSafeArea(page, insets);
+	const squareBaseline = await shellExtents(page);
+	await page.setViewportSize(landscapeViewport);
+	const landscapeBaseline = await shellExtents(page);
+	await page.setViewportSize(squareViewport);
+	await page.locator('#box-grid').focus();
+	await page.keyboard.press('Enter');
+
+	const dialog = page.getByRole('dialog', { name: 'Slot actions' });
+	await expect(dialog).toContainText('011020251345.sav, Box 1, slot 1');
+	let edges = await edgeSurfaceBounds(page);
+	expectSafeCanvas(edges, squareViewport, insets);
+	expect(edges.layer.width).toBe(edges.layer.height);
+	expect(edges.panel?.left).toBe(edges.layer.left);
+	expect(edges.panel?.right).toBe(edges.layer.right);
+	expect(edges.panel?.bottom).toBe(edges.layer.bottom);
+	expect(await shellExtents(page)).toEqual(squareBaseline);
+
+	await page.getByRole('button', { name: 'Clear Slot' }).click();
+	const clear = page.getByRole('dialog', { name: 'Clear ARON?' });
+	await expect(clear).toContainText('Clear ARON?');
+	await expect(page.getByRole('dialog')).toHaveCount(1);
+	expect(await shellExtents(page)).toEqual(squareBaseline);
+	await page.setViewportSize(landscapeViewport);
+
+	await expect(clear).toContainText('Box 01 Slot 1');
+	await expect(page.getByRole('dialog')).toHaveCount(1);
+	edges = await edgeSurfaceBounds(page);
+	expectSafeCanvas(edges, landscapeViewport, insets);
+	expect(edges.panel?.right).toBe(edges.layer.right);
+	expect(edges.panel?.top).toBe(edges.layer.top);
+	expect(edges.panel?.bottom).toBe(edges.layer.bottom);
+	expect(await shellExtents(page)).toEqual(landscapeBaseline);
+
+	await page.keyboard.press('Escape');
+	await expect(dialog).toBeVisible();
+	await expect(page.locator('#slot-action-3')).toBeFocused();
+	await page.keyboard.press('Escape');
+	await expect(dialog).toBeHidden();
+	await expect(page.locator('#box-0-slot-0')).toBeFocused();
+	expect(await shellExtents(page)).toEqual(landscapeBaseline);
+});
+
+test('each Clear and Slot Menu backdrop tap dismisses exactly one level without mutation', async ({
+	page
+}) => {
+	await openEmptySaves(page);
+	await importEmeraldThroughSaves(page);
+	const backupsBefore = await backupCount(page);
+	await page.locator('#box-grid').focus();
+	await page.keyboard.press('Enter');
+	await page.getByRole('button', { name: 'Clear Slot' }).click();
+
+	await page.getByRole('button', { name: 'Dismiss Clear ARON?' }).click();
+	await expect(page.getByRole('dialog', { name: 'Clear ARON?' })).toBeHidden();
+	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toBeVisible();
+	await expect(page.locator('#slot-action-3')).toBeFocused();
+	await expect(page.locator('#box-0-slot-0')).toContainText('ARON');
+	expect(await backupCount(page)).toBe(backupsBefore);
+
+	await page.getByRole('button', { name: 'Dismiss Slot actions' }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await expect(page.locator('#box-0-slot-0')).toBeFocused();
+	await expect(page.locator('#box-0-slot-0')).toContainText('ARON');
+	expect(await backupCount(page)).toBe(backupsBefore);
+});
+
+test('pointer Slot clicks only move Controller Focus', async ({ page }) => {
 	await openEmptySaves(page);
 	await importEmeraldThroughSaves(page);
 	await page.locator('#party-slot-4').click();
@@ -1064,6 +1378,10 @@ test('mouse clicks move controller focus, then selected slots open actions', asy
 	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toBeHidden();
 
 	await page.locator('#party-slot-4').click();
+	await page.locator('#party-slot-4').dblclick();
+	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toBeHidden();
+
+	await page.keyboard.press('Enter');
 	const dialog = page.getByRole('dialog', { name: 'Slot actions' });
 	await expect(dialog).toBeVisible();
 	await expect(dialog).toContainText('Party slot 5');
@@ -1304,7 +1622,7 @@ test('Pokemon Editor stages, cancels, and applies an engine-projected Tera Type'
 	await importScarletThroughSaves(page);
 
 	await page.locator('#party-slot-0').click();
-	await page.locator('#party-slot-0').click();
+	await page.keyboard.press('Enter');
 	await page.getByRole('button', { name: 'Edit' }).click();
 
 	const editor = page.getByRole('dialog').filter({ hasText: 'Battle Fields' });
@@ -1462,7 +1780,7 @@ test('can perform another slot mutation after the first move changes workspace b
 
 	await moveFirstEmeraldBoxSlotToThirdSlot(page);
 	await page.locator('#box-0-slot-1').click();
-	await page.locator('#box-0-slot-1').click();
+	await page.keyboard.press('Enter');
 	await page.getByRole('button', { name: 'Copy' }).click();
 	await page.locator('#box-0-slot-3').click();
 
@@ -1479,10 +1797,12 @@ test('copies an occupied box slot into an empty destination slot', async ({ page
 	await page.keyboard.press('ArrowDown');
 	await page.keyboard.press('ArrowDown');
 	await page.keyboard.press('Enter');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await page.keyboard.press('ArrowRight');
 	await page.keyboard.press('ArrowRight');
 	await page.keyboard.press('ArrowRight');
 	await page.keyboard.press('Enter');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
 
 	await expect(page.locator('#box-0-slot-0')).toContainText('ARON');
 	await expect(page.locator('#box-0-slot-3')).toContainText('ARON');
@@ -1500,8 +1820,10 @@ test('copy keeps destination selection active and shows an error toast for occup
 	await page.keyboard.press('ArrowDown');
 	await page.keyboard.press('ArrowDown');
 	await page.keyboard.press('Enter');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await page.keyboard.press('ArrowRight');
 	await page.keyboard.press('Enter');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
 
 	await expect(page.locator('#box-0-slot-1')).toBeFocused();
 	await expect(page.getByRole('alert')).toContainText('Copy needs an empty destination Slot.');
@@ -1514,6 +1836,8 @@ test('clear slot cancellation and confirmation use the in-app confirmation surfa
 }) => {
 	await openEmptySaves(page);
 	await importEmeraldThroughSaves(page);
+	await seedOccupiedPokemonStorageSlot(page);
+	const backupsBefore = await backupCount(page);
 
 	await page.locator('#box-grid').focus();
 	await page.keyboard.press('Enter');
@@ -1522,21 +1846,55 @@ test('clear slot cancellation and confirmation use the in-app confirmation surfa
 	await page.keyboard.press('ArrowDown');
 	await page.keyboard.press('Enter');
 
-	const confirmDialog = page.getByRole('dialog', { name: 'ARON' });
+	const confirmDialog = page.getByRole('dialog', { name: 'Clear ARON?' });
 	await expect(confirmDialog).toBeVisible();
 	await expect(confirmDialog).toContainText('Clear Slot');
 	await expect(confirmDialog).toContainText('Box 01 Slot 1');
 	await page.getByRole('button', { name: 'Cancel' }).click();
 	await expect(confirmDialog).toBeHidden();
 	await expect(page.locator('#box-0-slot-0')).toContainText('ARON');
-	await expect(page.locator('#box-0-slot-0')).toBeFocused();
+	await expect(page.getByRole('dialog', { name: 'Slot actions' })).toBeVisible();
+	await expect(page.locator('#slot-action-3')).toBeFocused();
+	expect(await backupCount(page)).toBe(backupsBefore);
 
-	await page.locator('#box-0-slot-0').click();
 	await page.getByRole('button', { name: 'Clear Slot' }).click();
 	await page.getByRole('button', { name: 'Confirm Clear' }).click();
 
+	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await expect(page.locator('#box-0-slot-0')).toContainText('Empty');
 	await expect(page.locator('#box-0-slot-0')).toBeFocused();
+	expect(await backupCount(page)).toBe(backupsBefore + 1);
+
+	await page.goto('/?source=pokemon-storage');
+	await expect(page.locator('#box-0-slot-0')).toContainText('STORAGE ARON');
+});
+
+test('Clear uses its Pokemon Storage owner without mutating the loaded Save File or Backup state', async ({
+	page
+}) => {
+	await openEmptySaves(page);
+	await importEmeraldThroughSaves(page);
+	await seedOccupiedPokemonStorageSlot(page);
+	const backupsBefore = await backupCount(page);
+
+	await page.goto('/?source=pokemon-storage');
+	await expect(page.locator('#box-0-slot-0')).toContainText('STORAGE ARON');
+	await page.locator('#box-grid').focus();
+	await page.keyboard.press('Enter');
+	await page.getByRole('button', { name: 'Clear Slot' }).click();
+	await expect(page.getByRole('dialog', { name: 'Clear STORAGE ARON?' })).toContainText(
+		'This removes the Pokemon from Pokemon Storage.'
+	);
+	await page.getByRole('button', { name: 'Confirm Clear' }).click();
+
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await expect(page.locator('#box-0-slot-0')).toContainText('Empty');
+	await expect(page.locator('#box-0-slot-0')).toBeFocused();
+	expect(await backupCount(page)).toBe(backupsBefore);
+
+	await page.getByRole('button', { name: 'Add source' }).click();
+	await page.getByRole('button', { name: /011020251345.sav/ }).click();
+	await expect(page.locator('#box-0-slot-0')).toContainText('ARON', { timeout: 15000 });
 });
 
 test('keyboard navigation covers the Saves route controls and desktop overflow scrolls', async ({

@@ -68,8 +68,6 @@ function renderSlot(props: {
 	document.body.append(host);
 
 	const onFocusSlot = vi.fn();
-	const onOpenSlot = vi.fn();
-
 	mounted = mount(StorageSlot, {
 		target: host,
 		props: {
@@ -83,16 +81,14 @@ function renderSlot(props: {
 			colIndex: 1,
 			spriteUrl: props.spriteUrl ?? null,
 			onChooseSlot: props.onChooseSlot,
-			onFocusSlot,
-			onOpenSlot
+			onFocusSlot
 		}
 	});
 
 	return {
 		button: host.querySelector('button') as HTMLButtonElement,
 		host,
-		onFocusSlot,
-		onOpenSlot
+		onFocusSlot
 	};
 }
 
@@ -138,8 +134,8 @@ describe('StorageSlot', () => {
 		expect(onFocusSlot).toHaveBeenCalledTimes(1);
 	});
 
-	test('opens the Slot action surface when an already focused Slot is clicked', () => {
-		const { button, onFocusSlot, onOpenSlot } = renderSlot({
+	test('reports pointer activation for an already focused Slot once', () => {
+		const { button, onFocusSlot } = renderSlot({
 			slot: pokemonSlot,
 			focused: true
 		});
@@ -148,11 +144,12 @@ describe('StorageSlot', () => {
 		button.click();
 
 		expect(onFocusSlot).toHaveBeenCalledTimes(1);
-		expect(onOpenSlot).toHaveBeenCalledTimes(1);
+		button.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+		expect(onFocusSlot).toHaveBeenCalledTimes(1);
 	});
 
-	test('focuses an unfocused Slot without opening the action surface', () => {
-		const { button, onFocusSlot, onOpenSlot } = renderSlot({
+	test('reports pointer activation for an unfocused Slot', () => {
+		const { button, onFocusSlot } = renderSlot({
 			slot: pokemonSlot,
 			focused: false
 		});
@@ -161,12 +158,11 @@ describe('StorageSlot', () => {
 		button.click();
 
 		expect(onFocusSlot).toHaveBeenCalledTimes(1);
-		expect(onOpenSlot).not.toHaveBeenCalled();
 	});
 
-	test('chooses a pending destination instead of opening the action surface', () => {
+	test('chooses a pending destination on pointer activation', () => {
 		const onChooseSlot = vi.fn();
-		const { button, onOpenSlot } = renderSlot({
+		const { button } = renderSlot({
 			slot: pokemonSlot,
 			focused: true,
 			onChooseSlot
@@ -176,6 +172,5 @@ describe('StorageSlot', () => {
 		button.click();
 
 		expect(onChooseSlot).toHaveBeenCalledTimes(1);
-		expect(onOpenSlot).not.toHaveBeenCalled();
 	});
 });

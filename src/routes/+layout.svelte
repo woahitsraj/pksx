@@ -339,34 +339,44 @@
 	{@attach controllerFocusSystem}
 	{@attach heightBandLock}
 >
-	<TopBar
-		{sectionPills}
-		{activeSection}
-		saveSummary={appChrome.saveSummary}
-		boxCount={appChrome.boxCount}
-		activeBox={appChrome.activeBox}
-		fileName={appChrome.fileName}
-		busy={appChrome.busy}
-		hasLoadedSave={appChrome.hasLoadedSave}
-		darkMode={theme.dark}
-		focusIndex={chromeFocus?.zone === 'topbar' ? chromeFocus.index : null}
-		onFocusControl={focusTopControl}
-		onOpenBoxes={openBoxes}
-		onOpenSaveFile={openSaveFile}
-		onOpenSaves={openSaves}
-		onImport={handleImport}
-		onExport={handleExport}
-		onToggleTheme={() => theme.toggle()}
-	/>
+	<div class="chrome-inert-owner" inert={appChrome.backgroundInert}>
+		<TopBar
+			{sectionPills}
+			{activeSection}
+			saveSummary={appChrome.saveSummary}
+			boxCount={appChrome.boxCount}
+			activeBox={appChrome.activeBox}
+			fileName={appChrome.fileName}
+			busy={appChrome.busy}
+			hasLoadedSave={appChrome.hasLoadedSave}
+			darkMode={theme.dark}
+			focusIndex={chromeFocus?.zone === 'topbar' ? chromeFocus.index : null}
+			onFocusControl={focusTopControl}
+			onOpenBoxes={openBoxes}
+			onOpenSaveFile={openSaveFile}
+			onOpenSaves={openSaves}
+			onImport={handleImport}
+			onExport={handleExport}
+			onToggleTheme={() => theme.toggle()}
+		/>
+	</div>
 
 	{@render children()}
 
-	<MobileTabbar
-		tabs={mobileTabs}
-		activeKey={activeRoute}
-		focusIndex={chromeFocus?.zone === 'mobileTabs' ? chromeFocus.index : null}
-		onFocusTab={focusMobileTab}
-		onSelectTab={selectMobileTab}
-	/>
+	<div class="chrome-inert-owner" inert={appChrome.backgroundInert}>
+		<MobileTabbar
+			tabs={mobileTabs}
+			activeKey={activeRoute}
+			focusIndex={chromeFocus?.zone === 'mobileTabs' ? chromeFocus.index : null}
+			onFocusTab={focusMobileTab}
+			onSelectTab={selectMobileTab}
+		/>
+	</div>
 </main>
 <AppUpdatePrompt />
+
+<style>
+	.chrome-inert-owner {
+		display: contents;
+	}
+</style>

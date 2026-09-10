@@ -1,30 +1,43 @@
 <script lang="ts">
+	import EdgeMenu from './EdgeMenu.svelte';
+
 	interface Props {
 		location: string;
 		pokemonLabel: string;
+		sourceLabel: string;
 		activeIndex: number;
+		applying?: boolean;
 		onFocusCommand: (index: number) => void;
 		onCancel: () => void;
 		onConfirm: () => void;
 	}
 
-	let { location, pokemonLabel, activeIndex, onFocusCommand, onCancel, onConfirm }: Props =
-		$props();
+	let {
+		location,
+		pokemonLabel,
+		sourceLabel,
+		activeIndex,
+		applying = false,
+		onFocusCommand,
+		onCancel,
+		onConfirm
+	}: Props = $props();
 </script>
 
-<div class="confirm-backdrop" role="presentation">
-	<div class="clear-confirm" role="dialog" aria-modal="true" aria-labelledby="clear-title">
+<EdgeMenu label={`Clear ${pokemonLabel}?`} onDismiss={onCancel}>
+	<div class="clear-confirm">
 		<div>
 			<p>Clear Slot</p>
-			<h2 id="clear-title">{pokemonLabel}</h2>
+			<h2>Clear {pokemonLabel}?</h2>
 			<span>{location}</span>
 		</div>
-		<p class="confirm-copy">This removes the Pokemon from this Save File Slot.</p>
+		<p class="confirm-copy">This removes the Pokemon from {sourceLabel}.</p>
 		<div class="confirm-actions">
 			<button
 				id="clear-confirm-0"
 				type="button"
 				class:controller-focused={activeIndex === 0}
+				disabled={applying}
 				onfocus={() => onFocusCommand(0)}
 				onclick={onCancel}>Cancel</button
 			>
@@ -33,33 +46,21 @@
 				type="button"
 				class="danger"
 				class:controller-focused={activeIndex === 1}
+				disabled={applying}
 				onfocus={() => onFocusCommand(1)}
-				onclick={onConfirm}>Confirm Clear</button
+				onclick={onConfirm}>{applying ? 'Clearing...' : 'Confirm Clear'}</button
 			>
 		</div>
 	</div>
-</div>
+</EdgeMenu>
 
 <style>
-	.confirm-backdrop {
-		position: fixed;
-		z-index: 70;
-		inset: 0;
-		display: grid;
-		place-items: center;
-		padding: 18px;
-		background: color-mix(in srgb, black, transparent 62%);
-	}
-
 	.clear-confirm {
-		width: min(340px, 100%);
+		min-height: 0;
 		display: grid;
-		gap: 12px;
-		padding: 14px;
-		border-radius: var(--pksx-radius-lg);
-		background: var(--paper-hi);
-		box-shadow: var(--shadow-deep);
-		color: var(--ink);
+		gap: var(--pksx-space-3);
+		padding: var(--pksx-space-3);
+		overflow-y: auto;
 	}
 
 	.clear-confirm p,
@@ -68,43 +69,43 @@
 		margin: 0;
 	}
 
-	.clear-confirm div:first-child {
+	.clear-confirm > div:first-child {
 		display: grid;
-		gap: 3px;
+		gap: var(--pksx-space-1);
 	}
 
-	.clear-confirm div:first-child p {
+	.clear-confirm > div:first-child p {
 		color: var(--err);
-		font:
-			750 0.7rem var(--pksx-font-mono),
-			monospace;
+		font-family: var(--pksx-font-mono), monospace;
+		font-size: var(--pksx-type-caption);
+		font-weight: 750;
 		text-transform: uppercase;
 	}
 
 	.clear-confirm h2 {
-		font-size: 1rem;
+		font-size: var(--pksx-type-title);
 		line-height: 1.2;
 	}
 
 	.clear-confirm span,
 	.confirm-copy {
 		color: var(--ink-soft);
-		font-size: 0.76rem;
+		font-size: var(--pksx-type-label);
 		font-weight: 650;
 	}
 
 	.confirm-actions {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		gap: 8px;
+		gap: var(--pksx-space-2);
 	}
 
 	.confirm-actions button {
-		min-height: 34px;
-		border-radius: var(--pksx-radius-sm);
+		min-height: var(--pksx-small-control-height);
+		border-radius: var(--pksx-radius-small);
 		background: var(--paper-deep);
 		color: var(--ink);
-		font-size: 0.78rem;
+		font-size: var(--pksx-type-label);
 		font-weight: 800;
 	}
 

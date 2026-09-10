@@ -15,7 +15,6 @@
 		destinationState?: 'valid' | 'invalid' | 'source' | null;
 		onFocusSlot: () => void;
 		onChooseSlot?: () => void;
-		onOpenSlot: () => void;
 	}
 
 	let {
@@ -31,24 +30,16 @@
 		collapsed = false,
 		destinationState = null,
 		onFocusSlot,
-		onChooseSlot,
-		onOpenSlot
+		onChooseSlot
 	}: Props = $props();
 
 	const zoneClass = $derived(zone === 'party' ? 'party-slot' : 'box-slot');
 	const slotNumber = $derived(zone === 'party' ? `P${slot.slot + 1}` : String(slot.slot + 1));
-	let pointerStartedFocused = false;
-
 	function handleClick() {
 		onFocusSlot();
 
 		if (onChooseSlot) {
 			onChooseSlot();
-			return;
-		}
-
-		if (pointerStartedFocused) {
-			onOpenSlot();
 		}
 	}
 </script>
@@ -73,9 +64,7 @@
 	aria-hidden={collapsed ? 'true' : undefined}
 	data-destination-state={destinationState ?? undefined}
 	onfocus={onFocusSlot}
-	onpointerdown={() => (pointerStartedFocused = focused)}
 	onclick={handleClick}
-	ondblclick={onOpenSlot}
 >
 	<span class="slot-number">{slotNumber}</span>
 	<span class="sprite-stage" aria-hidden="true">

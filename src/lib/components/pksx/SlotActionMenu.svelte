@@ -1,213 +1,88 @@
 <script lang="ts">
 	import type { SlotView } from './types';
-
-	type CommandAvailability = 'available' | 'unsupported' | 'empty-slot' | 'occupied-slot';
-	type SlotActionCommandKey =
-		| 'pokemon-action'
-		| 'pokemon-actions'
-		| 'create-pokemon'
-		| 'move'
-		| 'copy'
-		| 'clear'
-		| 'export'
-		| 'legality-check';
-
-	type SlotActionCommand = {
-		key: SlotActionCommandKey;
-		label: string;
-		availability: CommandAvailability;
-	};
+	import type { SlotMenuCommand, SlotMenuCommandKey } from '$lib/pksx/slot-menu';
+	import EdgeMenu from './EdgeMenu.svelte';
 
 	interface Props {
 		location: string;
 		slot: SlotView;
-		mobileTop?: number | null;
-		viewportTop?: number | null;
-		viewportLeft?: number | null;
+		commands: SlotMenuCommand[];
 		activeIndex: number;
-		suspended?: boolean;
-		createPokemonAvailable?: boolean;
 		onFocusCommand: (index: number) => void;
-		onSelectCommand: (command: SlotActionCommandKey) => void;
+		onSelectCommand: (command: SlotMenuCommandKey) => void;
 		onClose: () => void;
 	}
 
-	let {
-		location,
-		slot,
-		mobileTop = null,
-		viewportTop = null,
-		viewportLeft = null,
-		activeIndex,
-		suspended = false,
-		createPokemonAvailable = false,
-		onFocusCommand,
-		onSelectCommand,
-		onClose
-	}: Props = $props();
+	let { location, slot, commands, activeIndex, onFocusCommand, onSelectCommand, onClose }: Props =
+		$props();
 
-	const commands = $derived(createCommands(slot, createPokemonAvailable));
 	const occupied = $derived(slot.kind === 'pokemon');
-
-	function createCommands(slot: SlotView, canCreatePokemon: boolean): SlotActionCommand[] {
-		if (slot.kind === 'empty') {
-			return [
-				{
-					key: 'create-pokemon',
-					label: 'Create Pokemon',
-					availability: canCreatePokemon ? 'available' : 'unsupported'
-				},
-				{
-					key: 'move',
-					label: 'Move',
-					availability: 'empty-slot'
-				},
-				{
-					key: 'copy',
-					label: 'Copy',
-					availability: 'empty-slot'
-				},
-				{
-					key: 'export',
-					label: 'Export',
-					availability: 'empty-slot'
-				},
-				{
-					key: 'legality-check',
-					label: 'Legality Check',
-					availability: 'empty-slot'
-				}
-			];
-		}
-
-		return [
-			{
-				key: 'pokemon-action',
-				label: 'Edit',
-				availability: 'available'
-			},
-			{
-				key: 'move',
-				label: 'Move',
-				availability: 'available'
-			},
-			{
-				key: 'copy',
-				label: 'Copy',
-				availability: 'available'
-			},
-			{
-				key: 'clear',
-				label: 'Clear Slot',
-				availability: 'available'
-			},
-			{
-				key: 'export',
-				label: 'Export',
-				availability: 'unsupported'
-			},
-			{
-				key: 'legality-check',
-				label: 'Legality Check',
-				availability: 'available'
-			},
-			{
-				key: 'pokemon-actions',
-				label: 'Pokemon Actions',
-				availability: 'available'
-			},
-			{
-				key: 'create-pokemon',
-				label: 'Create Pokemon',
-				availability: 'occupied-slot'
-			}
-		];
-	}
 </script>
 
-<div
-	class={['slot-context', viewportTop !== null && viewportLeft !== null && 'viewport-anchored']}
-	class:suspended
-	role="dialog"
-	aria-label="Slot actions"
-	tabindex="0"
-	inert={suspended}
-	aria-hidden={suspended ? 'true' : undefined}
-	style:--mobile-surface-top={mobileTop === null ? undefined : `${mobileTop}px`}
-	style:--viewport-surface-top={viewportTop === null ? undefined : `${viewportTop}px`}
-	style:--viewport-surface-left={viewportLeft === null ? undefined : `${viewportLeft}px`}
->
-	<div class="slot-context-header">
-		<p class="slot-context-kicker">{occupied ? 'Edit' : 'Slot Action'}</p>
-		<p class="slot-context-location">{location}</p>
-	</div>
+<EdgeMenu label="Slot actions" onDismiss={onClose}>
+	<div class="slot-context">
+		<div class="slot-context-header">
+			<p class="slot-context-kicker">{occupied ? 'Edit' : 'Slot Menu'}</p>
+			<p class="slot-context-location">{location}</p>
+		</div>
 
-	<div class="slot-command-stack" role="list" aria-label="Slot Action commands">
-		{#each commands as command, index (command.label)}
-			<div class="slot-command-row" role="listitem">
-				<button
-					id={`slot-action-${index}`}
-					type="button"
-					class:controller-focused={activeIndex === index}
-					aria-disabled={command.availability === 'available' ? undefined : 'true'}
-					data-availability={command.availability}
-					onfocus={() => onFocusCommand(index)}
-					onclick={(event) => {
-						event.preventDefault();
-						onFocusCommand(index);
-						if (command.availability === 'available') {
-							onSelectCommand(command.key);
-						}
-					}}
-				>
-					<span>{command.label}</span>
-				</button>
-			</div>
-		{/each}
-	</div>
+		<div class="slot-command-stack" role="list" aria-label="Slot Menu commands">
+			{#each commands as command, index (command.label)}
+				<div class="slot-command-row" role="listitem">
+					<button
+						id={`slot-action-${index}`}
+						type="button"
+						class:controller-focused={activeIndex === index}
+						aria-disabled={command.reason ? 'true' : undefined}
+						aria-describedby={command.reason ? `slot-action-${index}-reason` : undefined}
+						data-availability={command.availability}
+						onfocus={(event) => {
+							onFocusCommand(index);
+							event.currentTarget.parentElement?.scrollIntoView({ block: 'nearest' });
+						}}
+						onclick={(event) => {
+							event.preventDefault();
+							onFocusCommand(index);
+							if (!command.reason) {
+								onSelectCommand(command.key);
+							}
+						}}
+					>
+						<strong>{command.label}</strong>
+					</button>
+					{#if command.reason}
+						<span id={`slot-action-${index}-reason`} class="slot-command-reason"
+							>{command.reason}</span
+						>
+					{/if}
+				</div>
+			{/each}
+		</div>
 
-	<button
-		id={`slot-action-${commands.length}`}
-		type="button"
-		class="close-command"
-		class:controller-focused={activeIndex === commands.length}
-		onfocus={() => onFocusCommand(commands.length)}
-		onclick={onClose}>Close</button
-	>
-</div>
+		<button
+			id={`slot-action-${commands.length}`}
+			type="button"
+			class="close-command"
+			class:controller-focused={activeIndex === commands.length}
+			onfocus={() => onFocusCommand(commands.length)}
+			onclick={onClose}>Close</button
+		>
+	</div>
+</EdgeMenu>
 
 <style>
 	.slot-context {
-		position: fixed;
-		z-index: 500;
-		top: var(--viewport-surface-top, 0);
-		left: var(--viewport-surface-left, 0);
-		width: min(218px, calc(100vw - 24px));
+		min-height: 0;
 		display: grid;
-		gap: 4px;
-		padding: 6px;
-		border-radius: var(--pksx-radius-md);
-		background: var(--paper-hi);
-		box-shadow: var(--shadow-deep);
-		/* Invisible (but focusable) until the anchor pass places it, so it never flashes unpositioned. */
-		opacity: 0;
-		pointer-events: none;
-	}
-
-	.slot-context.viewport-anchored {
-		opacity: 1;
-		pointer-events: auto;
-	}
-
-	.slot-context.suspended {
-		z-index: 60;
-		pointer-events: none;
+		gap: var(--pksx-space-1);
+		padding: var(--pksx-space-2);
+		overflow-y: auto;
 	}
 
 	.slot-context-header {
 		display: grid;
-		gap: 2px;
-		padding-bottom: 3px;
+		gap: var(--pksx-space-1);
+		padding-bottom: var(--pksx-space-1);
 		border-bottom: 1px solid var(--rule);
 	}
 
@@ -215,9 +90,9 @@
 	.slot-context-location {
 		margin: 0;
 		color: var(--ink-mute);
-		font:
-			650 0.62rem var(--pksx-font-mono),
-			monospace;
+		font-family: var(--pksx-font-mono), monospace;
+		font-size: var(--pksx-type-caption);
+		font-weight: 650;
 		line-height: 1.25;
 	}
 
@@ -228,20 +103,22 @@
 
 	.slot-command-stack {
 		display: grid;
-		gap: 3px;
+		gap: var(--pksx-space-1);
 	}
 
 	.slot-command-row {
 		min-width: 0;
+		display: grid;
+		gap: 1px;
 	}
 
 	.slot-command-row button,
 	.close-command {
 		width: 100%;
-		min-height: 27px;
-		padding: 4px 8px;
+		min-height: var(--pksx-small-control-height);
+		padding: var(--pksx-space-1) var(--pksx-space-2);
 		border: 0;
-		border-radius: var(--pksx-radius-sm);
+		border-radius: var(--pksx-radius-small);
 		background: var(--paper-hi);
 		box-shadow: none;
 		color: var(--ink);
@@ -250,9 +127,10 @@
 	}
 
 	.slot-command-row button {
+		height: var(--pksx-small-control-height);
 		display: flex;
 		align-items: center;
-		justify-content: flex-start;
+		justify-content: center;
 		cursor: not-allowed;
 		opacity: 0.68;
 	}
@@ -276,16 +154,23 @@
 		opacity: 1;
 	}
 
-	.slot-command-row span,
+	.slot-command-row strong,
 	.close-command {
-		font-size: 0.78rem;
+		font-size: var(--pksx-type-label);
 		font-weight: 750;
 		line-height: 1.15;
 	}
 
-	.slot-command-row button[data-availability='empty-slot'],
-	.slot-command-row button[data-availability='occupied-slot'] {
+	.slot-command-row button:not([data-availability='available']) {
 		background: var(--paper-deep);
+	}
+
+	.slot-command-reason {
+		color: var(--ink-soft);
+		font-size: var(--pksx-type-caption);
+		font-weight: 600;
+		line-height: 1.2;
+		text-align: center;
 	}
 
 	.close-command {
@@ -299,30 +184,5 @@
 	.close-command:focus-visible {
 		background: var(--rust-ring);
 		outline: none;
-	}
-
-	@media (max-width: 1024px) {
-		.slot-context {
-			top: var(--mobile-surface-top, auto);
-			right: 12px;
-			bottom: auto;
-			left: 12px;
-			width: auto;
-			max-height: max(
-				80px,
-				calc(
-					100dvh - var(--mobile-surface-top, 76px) - 88px -
-						var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))
-				)
-			);
-			overflow-y: auto;
-			opacity: 1;
-			pointer-events: auto;
-		}
-
-		.close-command {
-			position: sticky;
-			bottom: 0;
-		}
 	}
 </style>
