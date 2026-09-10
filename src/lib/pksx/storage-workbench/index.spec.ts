@@ -10,6 +10,7 @@ import {
 	createSourcePickerCards,
 	destinationStateForEvaluation,
 	evaluateDestination,
+	focusSurvivingPaneAfterClose,
 	movePaneFocus,
 	refreshSaveFilePaneWorkspaces,
 	stateTagForPane,
@@ -125,9 +126,17 @@ describe('storage workbench panes', () => {
 		expect(movePaneFocus(panes, 'pane-save', 'next')).toBe('pane-storage');
 		expect(movePaneFocus(panes, 'pane-save', 'previous')).toBe('pane-storage');
 
-		const switched = switchPaneSource(panes, 'pane-storage', saveSource, 14);
+		const focusedPanes = [
+			panes[0],
+			{ ...panes[1], activeBox: 6, focus: { zone: 'box' as const, slot: 23 } }
+		];
+		const switched = switchPaneSource(focusedPanes, 'pane-storage', saveSource, 4);
 		expect(switched[1].source.type).toBe('save-file');
-		expect(switched[1].boxCount).toBe(14);
+		expect(switched[1]).toMatchObject({
+			boxCount: 4,
+			activeBox: 3,
+			focus: { zone: 'box', slot: 23 }
+		});
 
 		const added = addBoxPane(switched, storageSource, { id: 'pane-storage-2' });
 		expect(added).toHaveLength(3);
@@ -141,6 +150,27 @@ describe('storage workbench panes', () => {
 		const panes = [createBoxPane('pane-save', saveSource)];
 
 		expect(closeBoxPane(panes, 'pane-save')).toHaveLength(1);
+	});
+
+	it('moves a closed pane coordinate to the survivor current Location and clamps it', () => {
+		const closing = createBoxPane('pane-storage', storageSource, {
+			focus: { zone: 'box', slot: 29 }
+		});
+		const partySurvivor = createBoxPane('pane-save', saveSource, {
+			focus: { zone: 'party', slot: 2 }
+		});
+
+		expect(focusSurvivingPaneAfterClose(closing, partySurvivor)).toEqual({
+			zone: 'party',
+			slot: 5
+		});
+		expect(focusSurvivingPaneAfterClose(closing, partySurvivor, { partyCollapsed: true })).toEqual({
+			zone: 'box',
+			slot: 29
+		});
+		expect(focusSurvivingPaneAfterClose(closing, partySurvivor, { partyAvailable: false })).toEqual(
+			{ zone: 'box', slot: 29 }
+		);
 	});
 
 	it('derives visible pane state tags from source ownership', () => {
@@ -389,7 +419,7 @@ describe('source picker cards', () => {
 		expect(cards[0]).toMatchObject({
 			id: 'pokemon-storage',
 			label: 'Pokemon Storage',
-			metadata: 'APP-OWNED · auto-saved',
+			metadata: 'Automatically saved by PKSX',
 			treatment: 'app-owned'
 		});
 		expect(cards[1]).toMatchObject({

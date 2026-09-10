@@ -13,16 +13,16 @@
 	import { heightBandLock } from '$lib/pksx/height-band-lock';
 	import { theme } from '$lib/pksx/theme.svelte';
 	import {
+		createSummonedWorkflowHost,
+		setSummonedWorkflowHost
+	} from '$lib/pksx/summoned-workflow/host.svelte';
+	import {
 		controllerFocusSystem,
 		dispatchControllerKey,
 		isControllerKeyboardEvent,
 		readGamepadKeys,
 		type ControllerKey
 	} from '$lib/pksx/controller-input';
-	import {
-		createSummonedWorkflowHost,
-		setSummonedWorkflowHost
-	} from '$lib/pksx/summoned-workflow/host.svelte';
 
 	let { children } = $props();
 	const summonedWorkflow = setSummonedWorkflowHost(createSummonedWorkflowHost());
@@ -248,6 +248,7 @@
 			'Escape',
 			'PageUp',
 			'PageDown',
+			'x',
 			'y'
 		].includes(key);
 	}

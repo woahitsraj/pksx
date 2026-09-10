@@ -94,6 +94,8 @@ public class MainActivity extends BridgeActivity {
                 return "Enter";
             case KeyEvent.KEYCODE_BUTTON_B:
                 return "Escape";
+            case KeyEvent.KEYCODE_BUTTON_X:
+                return "x";
             case KeyEvent.KEYCODE_BUTTON_Y:
                 return "y";
             case KeyEvent.KEYCODE_BUTTON_L1:

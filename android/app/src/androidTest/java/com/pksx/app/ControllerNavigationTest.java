@@ -86,15 +86,38 @@ public class ControllerNavigationTest {
         moveJoystick(1f, 0f, "document.activeElement?.id === 'box-0-slot-1'");
 
         pressGamepadKey(
-            KeyEvent.KEYCODE_BUTTON_Y,
-            "document.querySelector('[role=\"dialog\"][aria-label=\"Add Box Source\"]') !== null"
-                + " && document.activeElement?.classList.contains('source-card')"
+            KeyEvent.KEYCODE_BUTTON_X,
+            "document.querySelector('[role=\"dialog\"][aria-label=\"Box Menu\"]') !== null"
+                + " && document.activeElement?.id === 'box-menu-command-0'"
                 + " && getComputedStyle(document.activeElement).outlineStyle === 'solid'"
         );
 
         pressGamepadKey(
+            KeyEvent.KEYCODE_DPAD_DOWN,
+            "document.activeElement?.id === 'box-menu-command-1'"
+        );
+        pressGamepadKey(
+            KeyEvent.KEYCODE_DPAD_DOWN,
+            "document.activeElement?.id === 'box-menu-command-2'"
+        );
+        pressGamepadKey(
+            KeyEvent.KEYCODE_DPAD_DOWN,
+            "document.activeElement?.id === 'box-menu-command-3'"
+        );
+        pressGamepadKey(
+            KeyEvent.KEYCODE_BUTTON_A,
+            "document.querySelector('[role=\"dialog\"][aria-label=\"Open another collection\"]') !== null"
+                + " && document.activeElement?.classList.contains('source-card')"
+        );
+        pressGamepadKey(
             KeyEvent.KEYCODE_BUTTON_B,
-            "document.querySelector('[role=\"dialog\"][aria-label=\"Add Box Source\"]') === null"
+            "document.querySelector('[role=\"dialog\"][aria-label=\"Open another collection\"]') === null"
+                + " && document.activeElement?.id === 'box-menu-command-3'"
+        );
+        pressGamepadKey(
+            KeyEvent.KEYCODE_BUTTON_B,
+            "document.querySelector('[role=\"dialog\"][aria-label=\"Box Menu\"]') === null"
+                + " && document.activeElement?.id === 'box-0-slot-1'"
         );
 
         pressGamepadKey(
@@ -750,6 +773,7 @@ public class ControllerNavigationTest {
     private void awaitControllerSurface() throws Exception {
         awaitJavaScript(
             "document.readyState === 'complete'"
+                + " && document.querySelector('.boxes-route')?.dataset.initialState === 'ready'"
                 + " && document.querySelector('#box-grid')?.getClientRects().length > 0"
         );
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();

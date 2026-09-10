@@ -1,4 +1,4 @@
-import { BOX_SLOT_COUNT, type SlotFocus } from '$lib/pksx/box-navigation';
+import { BOX_SLOT_COUNT, PARTY_SLOT_COUNT, type SlotFocus } from '$lib/pksx/box-navigation';
 import type {
 	SaveFileId,
 	StoredPokemonStorage,
@@ -155,6 +155,21 @@ export function closeBoxPane(panes: BoxPaneState[], paneId: string): BoxPaneStat
 	return panes.filter((pane) => pane.id !== paneId);
 }
 
+export function focusSurvivingPaneAfterClose(
+	closingPane: BoxPaneState,
+	survivingPane: BoxPaneState,
+	options: { partyAvailable?: boolean; partyCollapsed?: boolean } = {}
+): SlotFocus {
+	const zone =
+		survivingPane.focus.zone === 'party' &&
+		(options.partyAvailable ?? true) &&
+		!(options.partyCollapsed ?? false)
+			? 'party'
+			: 'box';
+	const maxSlot = zone === 'party' ? PARTY_SLOT_COUNT - 1 : BOX_SLOT_COUNT - 1;
+	return { zone, slot: Math.min(closingPane.focus.slot, maxSlot) };
+}
+
 export function switchPaneSource(
 	panes: BoxPaneState[],
 	paneId: string,
@@ -164,8 +179,9 @@ export function switchPaneSource(
 	return panes.map((pane) =>
 		pane.id === paneId
 			? createBoxPane(pane.id, source, {
+					activeBox: pane.activeBox,
 					boxCount,
-					focus: pane.focus.zone === 'box' ? pane.focus : { zone: 'box', slot: 0 }
+					focus: pane.focus.zone === 'box' ? pane.focus : { zone: 'box', slot: pane.focus.slot }
 				})
 			: pane
 	);
@@ -488,7 +504,7 @@ export function createSourcePickerCards(input: {
 					id: 'pokemon-storage',
 					type: 'pokemon-storage',
 					label: 'Pokemon Storage',
-					metadata: 'APP-OWNED · auto-saved',
+					metadata: 'Automatically saved by PKSX',
 					active: false,
 					treatment: 'app-owned'
 				},

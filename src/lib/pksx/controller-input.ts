@@ -7,6 +7,7 @@ export type ControllerKey =
 	| 'Escape'
 	| 'PageUp'
 	| 'PageDown'
+	| 'x'
 	| 'y';
 
 const controllerEvents = new WeakSet<KeyboardEvent>();
@@ -217,6 +218,7 @@ export function readGamepadKeys(gamepad: Gamepad): ControllerKey[] {
 
 	if (pressed(gamepad, 0)) keys.push('Enter');
 	if (pressed(gamepad, 1)) keys.push('Escape');
+	if (pressed(gamepad, 2)) keys.push('x');
 	if (pressed(gamepad, 3)) keys.push('y');
 	if (pressed(gamepad, 4)) keys.push('PageUp');
 	if (pressed(gamepad, 5)) keys.push('PageDown');

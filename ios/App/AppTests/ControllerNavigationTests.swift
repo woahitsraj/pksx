@@ -49,21 +49,53 @@ final class ControllerNavigationTests: XCTestCase {
 
     func testJoystickAndShortcutButtonsFollowKeyboardNavigation() async throws {
         let webView = try await controllerSurface()
+        _ = try await webView.evaluateJavaScript("document.querySelector('#box-0-slot-0').focus()")
+        try await waitForJavaScript("document.activeElement?.id === 'box-0-slot-0'", in: webView)
 
         controller.extendedGamepad?.leftThumbstick.setValueForXAxis(1, yAxis: 0)
-        try await waitForJavaScript("document.activeElement?.id === 'box-0-slot-1'", in: webView)
-        controller.extendedGamepad?.leftThumbstick.setValueForXAxis(0, yAxis: 0)
-
-        controller.extendedGamepad?.buttonY.setValue(1)
         try await waitForJavaScript(
-            "document.querySelector('[role=\"dialog\"][aria-label=\"Add Box Source\"]') !== null && document.activeElement?.classList.contains('source-card') && getComputedStyle(document.activeElement).outlineStyle === 'solid'",
+            "window.__pksxControllerEvents?.includes('ArrowRight:true') && document.activeElement?.id === 'box-0-slot-1'",
             in: webView
         )
-        controller.extendedGamepad?.buttonY.setValue(0)
+        controller.extendedGamepad?.leftThumbstick.setValueForXAxis(0, yAxis: 0)
+
+        controller.extendedGamepad?.buttonX.setValue(1)
+        try await waitForJavaScript(
+            "document.querySelector('[role=\"dialog\"][aria-label=\"Box Menu\"]') !== null && document.activeElement?.id === 'box-menu-command-0' && getComputedStyle(document.activeElement).outlineStyle === 'solid'",
+            in: webView
+        )
+        controller.extendedGamepad?.buttonX.setValue(0)
+
+        for index in 1...3 {
+            controller.extendedGamepad?.dpad.setValueForXAxis(0, yAxis: -1)
+            try await waitForJavaScript(
+                "document.activeElement?.id === 'box-menu-command-\(index)'",
+                in: webView
+            )
+            controller.extendedGamepad?.dpad.setValueForXAxis(0, yAxis: 0)
+            try await waitForJavaScript(
+                "window.__pksxControllerEvents?.includes('ArrowDown:false')",
+                in: webView
+            )
+        }
+
+        controller.extendedGamepad?.buttonA.setValue(1)
+        try await waitForJavaScript(
+            "document.querySelector('[role=\"dialog\"][aria-label=\"Open another collection\"]') !== null && document.activeElement?.classList.contains('source-card')",
+            in: webView
+        )
+        controller.extendedGamepad?.buttonA.setValue(0)
 
         controller.extendedGamepad?.buttonB.setValue(1)
         try await waitForJavaScript(
-            "document.querySelector('[role=\"dialog\"][aria-label=\"Add Box Source\"]') === null",
+            "document.querySelector('[role=\"dialog\"][aria-label=\"Open another collection\"]') === null && document.activeElement?.id === 'box-menu-command-3'",
+            in: webView
+        )
+        controller.extendedGamepad?.buttonB.setValue(0)
+
+        controller.extendedGamepad?.buttonB.setValue(1)
+        try await waitForJavaScript(
+            "document.querySelector('[role=\"dialog\"][aria-label=\"Box Menu\"]') === null && document.activeElement?.id === 'box-0-slot-1'",
             in: webView
         )
         controller.extendedGamepad?.buttonB.setValue(0)
@@ -170,6 +202,9 @@ final class ControllerNavigationTests: XCTestCase {
             }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        XCTFail("Timed out waiting for JavaScript: \(script)")
+        let state = try? await webView.evaluateJavaScript(
+            "JSON.stringify({activeId: document.activeElement?.id, dialogs: [...document.querySelectorAll('[role=dialog]')].map(dialog => dialog.getAttribute('aria-label')), controllerEvents: window.__pksxControllerEvents})"
+        )
+        XCTFail("Timed out waiting for JavaScript: \(script), state: \(state ?? "unavailable")")
     }
 }

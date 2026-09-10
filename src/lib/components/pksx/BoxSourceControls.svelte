@@ -10,7 +10,7 @@
 	let { source, onPreviousBox, onNextBox }: Props = $props();
 </script>
 
-<div class="box-source-controls" aria-label="Box source controls">
+<div class="box-source-controls" aria-label="Collection controls">
 	<button type="button" class="box-arrow" aria-label="Previous box" onclick={onPreviousBox}
 		>‹</button
 	>

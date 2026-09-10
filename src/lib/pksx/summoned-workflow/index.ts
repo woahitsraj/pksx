@@ -7,6 +7,7 @@ import {
 
 export type SummonedWorkflowKind =
 	| 'slot-menu'
+	| 'box-menu'
 	| 'source-picker'
 	| 'clear-slot-confirmation'
 	| 'pokemon-creation'
@@ -106,6 +107,7 @@ export function dispatchSlotMenuAction(
 		case 'previousBox':
 		case 'nextBox':
 		case 'sourceAction':
+		case 'carryMode':
 			return { focus: focusActionCommand(index, count), effect: 'none' };
 	}
 }

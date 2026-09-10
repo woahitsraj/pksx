@@ -33,6 +33,7 @@
 	} from '$lib/pksx/box-navigation';
 	import {
 		createCleanWorkspaceState,
+		createManualBackup,
 		markAutomaticBackupCreated,
 		shouldCreateAutomaticBackup,
 		type WorkspaceState
@@ -52,10 +53,12 @@
 		destinationStateForEvaluation,
 		evaluateDestination,
 		refreshSaveFilePaneWorkspaces,
+		focusSurvivingPaneAfterClose,
 		getStoragePokemon,
 		putStoragePokemon,
 		removeStoragePokemon,
 		setPaneActiveBox,
+		setPaneFocus,
 		stateTagForPane,
 		switchPaneSource,
 		toggleCarryMode,
@@ -85,6 +88,7 @@
 		setCachedActiveWorkspace
 	} from '$lib/pksx/saves-cache';
 	import BoxSidebar from '$lib/components/pksx/BoxSidebar.svelte';
+	import BoxMenu from '$lib/components/pksx/BoxMenu.svelte';
 	import BoxSourceControls from '$lib/components/pksx/BoxSourceControls.svelte';
 	import ClearSlotConfirm from '$lib/components/pksx/ClearSlotConfirm.svelte';
 	import DetailRail from '$lib/components/pksx/DetailRail.svelte';
@@ -140,6 +144,7 @@
 		pokemonEditSuccessMessage,
 		stagePokemonEditorDraftEdits
 	} from '$lib/pksx/box-shell';
+	import { isControllerKeyboardEvent } from '$lib/pksx/controller-input';
 	import {
 		dispatchSlotMenuAction,
 		getLaunchingSlot,
@@ -148,6 +153,7 @@
 		type SummonedWorkflowLauncher
 	} from '$lib/pksx/summoned-workflow';
 	import { getSummonedWorkflowHost } from '$lib/pksx/summoned-workflow/host.svelte';
+	import { createBoxMenuCommands, type BoxMenuCommandKey } from '$lib/pksx/box-menu';
 	import { createSlotMenuCommands, type SlotMenuCommandKey } from '$lib/pksx/slot-menu';
 
 	type ToastView = {
@@ -172,6 +178,11 @@
 	type SavePaneWorkspace = {
 		state: WorkspaceState;
 		loadedBox: number;
+	};
+
+	type BoxMenuTarget = {
+		paneId: string;
+		source: BoxSourceRef;
 	};
 
 	type PokemonActionContext = {
@@ -456,6 +467,7 @@
 	let carryState = $state<CarryState | null>(null);
 	let clearSlotConfirmation = $state<ClearSlotConfirmation | null>(null);
 	let clearSlotConfirmFocusIndex = $state(0);
+	let boxMenuTarget = $state<BoxMenuTarget | null>(null);
 	let toasts = $state<ToastView[]>([]);
 	let workbenchPanes = $state<BoxPaneState[]>([
 		createBoxPane('pane-pokemon-storage', pokemonStorageSource(), { boxCount: placeholderBoxCount })
@@ -470,16 +482,31 @@
 	let engine: EngineApi | null = null;
 	let workspaceLoadRequest = 0;
 	let workspacePublicationRequest = 0;
+	let paneSwitchRequest = 0;
+	let destroyed = false;
 
 	const controllerConnected = $derived(appChrome.controllerStatus !== null);
 	const activeSummonedWorkflow = $derived(summonedWorkflow.active);
 	const sourcePickerOpen = $derived(activeSummonedWorkflow?.kind === 'source-picker');
 	const slotMenuOpen = $derived(activeSummonedWorkflow?.kind === 'slot-menu');
+	const boxMenuOpen = $derived(activeSummonedWorkflow?.kind === 'box-menu');
 	const destinationInputSuspended = $derived(isDestinationInputSuspended(summonedWorkflow));
 	const summonedSlotLauncher = $derived(getLaunchingSlot(summonedWorkflow));
 	const mobileTabsAvailable = $derived(viewportWidth <= 1024);
 	const activePane = $derived(
 		workbenchPanes.find((pane) => pane.id === activePaneId) ?? workbenchPanes[0]
+	);
+	const boxMenuPane = $derived.by(() => {
+		const target = boxMenuTarget;
+		return target ? workbenchPanes.find((pane) => matchesBoxMenuTarget(pane, target)) : undefined;
+	});
+	const boxMenuCommands = $derived(
+		createBoxMenuCommands({
+			source: boxMenuTarget?.source ?? pokemonStorageSource(),
+			workspaceReady: saveWorkspaceForPane(boxMenuPane) !== null,
+			activeSavePane: boxMenuPane?.id === activeSavePaneId,
+			paneCount: workbenchPanes.length
+		})
 	);
 	const activePaneBox = $derived(activePane?.activeBox ?? navigation.activeBox);
 	const summonedSlotPane = $derived(
@@ -581,7 +608,7 @@
 	const toolbarStatus = $derived.by(() => {
 		if (busy) return 'Working';
 		if (carryState) return carryStatusLabel(carryState);
-		if (sourcePickerOpen) return 'Choose source';
+		if (sourcePickerOpen) return 'Choose collection';
 		if (importError) return 'Import failed';
 		if (loadedSave?.dirty) return 'Unsaved edits';
 		if (loadedSave?.restoredFromBackup) return 'Backup restored';
@@ -655,11 +682,22 @@
 	function dispatchToActiveSurface(action: NavigationAction): boolean {
 		if (activeSummonedWorkflow?.kind === 'backup-browser') return true;
 		if (action === 'sourceAction') {
+			if (boxMenuOpen) {
+				closeBoxMenu();
+				return true;
+			}
 			handleSourceAction();
+			return true;
+		}
+		if (action === 'carryMode') {
+			if (pendingSlotOperation) togglePendingSlotOperationMode();
 			return true;
 		}
 
 		switch (activeSummonedWorkflow?.kind) {
+			case 'box-menu':
+				dispatchBoxMenu(action);
+				return true;
 			case 'slot-menu':
 				dispatchSlotMenu(action);
 				return true;
@@ -721,6 +759,9 @@
 		if (pane && navigation.activeBox !== previousBox) {
 			workbenchPanes = setPaneActiveBox(workbenchPanes, pane.id, navigation.activeBox);
 		}
+		if (pane && isSlotFocus(navigation.focus)) {
+			workbenchPanes = setPaneFocus(workbenchPanes, pane.id, navigation.focus);
+		}
 
 		if (
 			pane &&
@@ -752,6 +793,33 @@
 		}
 	}
 
+	function dispatchBoxMenu(action: NavigationAction) {
+		const index = navigation.focus.zone === 'actions' ? navigation.focus.index : 0;
+		switch (action) {
+			case 'left':
+			case 'up':
+				focusBoxMenuCommand(index - 1);
+				break;
+			case 'right':
+			case 'down':
+				focusBoxMenuCommand(index + 1);
+				break;
+			case 'confirm': {
+				const command = boxMenuCommands[index];
+				if (command && !command.reason) selectBoxMenuCommand(command.key);
+				break;
+			}
+			case 'back':
+				closeBoxMenu();
+				break;
+			case 'previousBox':
+			case 'nextBox':
+			case 'sourceAction':
+			case 'carryMode':
+				break;
+		}
+	}
+
 	function dispatchSourcePicker(action: NavigationAction) {
 		const controls = sourcePickerControls();
 
@@ -778,16 +846,19 @@
 	}
 
 	function handleSourceAction() {
-		if (pendingSlotOperation) {
-			togglePendingSlotOperationMode();
+		if (pendingSlotOperation || activeSummonedWorkflow || !activePane) {
 			return;
 		}
 
-		if (activeSummonedWorkflow) {
+		if (navigation.focus.zone === 'party') {
+			const savePane = workbenchPanes.find(({ id }) => id === activeSavePaneId);
+			if (savePane) openBoxMenu(savePane);
 			return;
 		}
 
-		openSourcePicker();
+		if (navigation.focus.zone === 'box' || navigation.focus.zone === 'paneControls') {
+			openBoxMenu(activePane);
+		}
 	}
 
 	function sourcePickerControls() {
@@ -836,12 +907,18 @@
 			boxCount: Math.max(1, nextPane.boxCount),
 			focus: focusPaneBoundarySlot(navigation.focus.slot, action)
 		};
+		workbenchPanes = setPaneFocus(workbenchPanes, nextPane.id, navigation.focus as SlotFocus);
 		return true;
 	}
 
 	async function focusActiveControl() {
 		await tick();
-		document.getElementById(getFocusId(navigation.focus, activePaneBox))?.focus();
+		document.getElementById(focusIdForNavigation(navigation.focus))?.focus();
+	}
+
+	function focusIdForNavigation(focus: ControllerFocus) {
+		if (focus.zone !== 'paneControls') return getFocusId(focus, activePaneBox);
+		return focus.index === 0 ? collectionControlId(activePaneId) : `close-pane-${activePaneId}`;
 	}
 
 	function dispatchPokemonEditor(action: NavigationAction) {
@@ -1168,7 +1245,11 @@
 			return;
 		}
 
-		if ((pokemonEditor || pokemonCreation) && isNativeEditorActivation(event, action)) {
+		if (
+			(pokemonEditor || pokemonCreation) &&
+			!isControllerKeyboardEvent(event) &&
+			isNativeEditorActivation(event, action)
+		) {
 			return;
 		}
 
@@ -1202,11 +1283,11 @@
 			return;
 		}
 
-		const paneControlMatch = activeElement.id.match(/^pane-control-(\d+)$/);
-		if (paneControlMatch) {
+		const paneControlIndex = activeElement.dataset.paneControlIndex;
+		if (paneControlIndex !== undefined) {
 			navigation = {
 				...navigation,
-				focus: focusPaneControl(Number(paneControlMatch[1]), activePaneControlCount)
+				focus: focusPaneControl(Number(paneControlIndex), activePaneControlCount)
 			};
 			return;
 		}
@@ -1240,11 +1321,13 @@
 
 	function focusParty(slot: number) {
 		navigation = { ...navigation, focus: focusPartySlot(slot) };
+		workbenchPanes = setPaneFocus(workbenchPanes, activePaneId, navigation.focus as SlotFocus);
 		queueMicrotask(focusActiveControl);
 	}
 
 	function focusBox(slot: number) {
 		navigation = { ...navigation, focus: focusBoxSlot(slot) };
+		workbenchPanes = setPaneFocus(workbenchPanes, activePaneId, navigation.focus as SlotFocus);
 		queueMicrotask(focusActiveControl);
 	}
 
@@ -1277,6 +1360,7 @@
 			...selectActiveBox({ ...navigation, boxCount: Math.max(1, pane.boxCount) }, nextBox),
 			focus: firstRowFocusForBoxChange()
 		};
+		workbenchPanes = setPaneFocus(workbenchPanes, pane.id, navigation.focus as SlotFocus);
 
 		if (
 			loadedSave &&
@@ -1302,6 +1386,7 @@
 				...selectActiveBox({ ...navigation, boxCount: Math.max(1, pane.boxCount) }, nextBox),
 				focus: firstRowFocusForBoxChange()
 			};
+			workbenchPanes = setPaneFocus(workbenchPanes, pane.id, navigation.focus as SlotFocus);
 			if (loadedSave && pane.source.type === 'save-file' && pane.source.id === loadedSave.file.id) {
 				void loadWorkspaceForSave(loadedSave, nextBox);
 			}
@@ -1314,15 +1399,18 @@
 		queueMicrotask(focusActiveControl);
 	}
 
-	function slotLauncher(focus: SlotFocus): SummonedWorkflowLauncher {
+	function slotLauncher(
+		focus: SlotFocus,
+		pane: BoxPaneState | undefined = activePane
+	): SummonedWorkflowLauncher {
 		return {
 			type: 'slot',
 			id:
 				focus.zone === 'party'
 					? `party-slot-${focus.slot}`
-					: `box-${activePaneBox}-slot-${focus.slot}`,
-			paneId: activePaneId,
-			box: focus.zone === 'box' ? activePaneBox : null,
+					: `box-${pane?.activeBox ?? activePaneBox}-slot-${focus.slot}`,
+			paneId: pane?.id ?? activePaneId,
+			box: focus.zone === 'box' ? (pane?.activeBox ?? activePaneBox) : null,
 			focus
 		};
 	}
@@ -1332,9 +1420,7 @@
 	}
 
 	function launcherForFocus(focus: ControllerFocus): SummonedWorkflowLauncher {
-		return isSlotFocus(focus)
-			? slotLauncher(focus)
-			: controlLauncher(getFocusId(focus, activePaneBox));
+		return isSlotFocus(focus) ? slotLauncher(focus) : controlLauncher(focusIdForNavigation(focus));
 	}
 
 	function openSlotMenu(focus: SlotFocus) {
@@ -1372,6 +1458,130 @@
 
 	function closeSlotMenu() {
 		dismissActiveWorkflow();
+	}
+
+	function collectionControlId(paneId: string) {
+		return `collection-control-${paneId}`;
+	}
+
+	function matchesBoxMenuTarget(pane: BoxPaneState, target: BoxMenuTarget) {
+		return (
+			pane.id === target.paneId &&
+			pane.source.type === target.source.type &&
+			pane.source.id === target.source.id
+		);
+	}
+
+	function openBoxMenu(pane: BoxPaneState) {
+		if (pendingSlotOperation || activeSummonedWorkflow) return;
+
+		const launcher = isSlotFocus(navigation.focus)
+			? slotLauncher(navigation.focus, pane)
+			: launcherForFocus(navigation.focus);
+		if (!summonedWorkflow.open('box-menu', launcher)) return;
+		boxMenuTarget = { paneId: pane.id, source: { ...pane.source } };
+		navigation = { ...navigation, focus: { zone: 'actions', index: 0 } };
+		queueMicrotask(() => focusBoxMenuCommand(0));
+	}
+
+	function closeBoxMenu() {
+		boxMenuTarget = null;
+		dismissActiveWorkflow();
+	}
+
+	function focusBoxMenuCommand(index: number) {
+		const clamped = Math.max(0, Math.min(index, boxMenuCommands.length - 1));
+		navigation = { ...navigation, focus: { zone: 'actions', index: clamped } };
+		queueMicrotask(() => document.getElementById(`box-menu-command-${clamped}`)?.focus());
+	}
+
+	function selectBoxMenuCommand(command: BoxMenuCommandKey) {
+		if (busy || !boxMenuCommands.some(({ key, reason }) => key === command && !reason)) return;
+
+		switch (command) {
+			case 'export':
+				void exportBoxMenuSave();
+				break;
+			case 'save-backup':
+				void saveBoxMenuBackup();
+				break;
+			case 'switch':
+				openRelatedSourcePicker(boxMenuTarget?.paneId ?? null);
+				break;
+			case 'open-another':
+				openRelatedSourcePicker(null);
+				break;
+			case 'close':
+				closeBoxMenuPane();
+				break;
+		}
+	}
+
+	function resolveBoxMenuSaveTarget(target: BoxMenuTarget | null = boxMenuTarget) {
+		if (!target || target.source.type !== 'save-file' || !target.source.id) return null;
+		const pane = workbenchPanes.find((candidate) => matchesBoxMenuTarget(candidate, target));
+		const workspace = saveWorkspaceForPane(pane);
+		return pane && workspace ? { pane, workspace } : null;
+	}
+
+	async function exportBoxMenuSave() {
+		const target = boxMenuTarget;
+		const resolved = resolveBoxMenuSaveTarget(target);
+		if (!target || !resolved) return;
+
+		busy = true;
+		importError = null;
+		statusMessage = `Serializing ${resolved.workspace.state.file.originalFileName ?? 'Save File'}...`;
+		try {
+			const bytes = await workspaceService.exportBytes(resolved.workspace.state);
+			if (!resolveBoxMenuSaveTarget(target)) return;
+			downloadBytes(bytes, createExportFileName(resolved.workspace.state.file.originalFileName));
+			statusMessage = `Export ready for ${resolved.workspace.state.file.originalFileName ?? 'Save File'}.`;
+			closeBoxMenu();
+		} catch (error) {
+			importError = getErrorMessage(error);
+			statusMessage = 'Export failed.';
+			showToast('error', importError);
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function saveBoxMenuBackup() {
+		const target = boxMenuTarget;
+		const resolved = resolveBoxMenuSaveTarget(target);
+		if (!target || !resolved) return;
+
+		busy = true;
+		statusMessage = `Creating a Backup for ${resolved.workspace.state.file.originalFileName ?? 'Save File'}...`;
+		try {
+			await createManualBackup({
+				storage,
+				owner: resolved.workspace.state.file,
+				workspaceBytes: resolved.workspace.state.bytes
+			});
+			if (!resolveBoxMenuSaveTarget(target)) return;
+			invalidateSavesCache();
+			statusMessage = `Backup saved for ${resolved.workspace.state.file.originalFileName ?? 'Save File'}.`;
+			showToast('success', statusMessage);
+			closeBoxMenu();
+		} catch (error) {
+			statusMessage = getErrorMessage(error);
+			showToast('error', statusMessage);
+		} finally {
+			busy = false;
+		}
+	}
+
+	function closeBoxMenuPane() {
+		const target = boxMenuTarget;
+		const pane = target
+			? workbenchPanes.find((candidate) => matchesBoxMenuTarget(candidate, target))
+			: undefined;
+		if (!pane || pane.id === activeSavePaneId || workbenchPanes.length <= 1) return;
+		boxMenuTarget = null;
+		summonedWorkflow.closeAll();
+		closePane(pane.id);
 	}
 
 	function slotRefForFocus(
@@ -2103,7 +2313,7 @@
 		}
 
 		if (focus.zone === 'paneControls') {
-			document.getElementById(`pane-control-${focus.index}`)?.click();
+			document.getElementById(focusIdForNavigation(focus))?.click();
 		}
 
 		if (focus.zone === 'mobileTabs') {
@@ -2132,23 +2342,7 @@
 	}
 
 	function paneControlCountFor(pane: BoxPaneState): number {
-		if (pane.id === activeSavePaneId) {
-			return 0;
-		}
-
-		return workbenchPanes.length > 1 ? 2 : 1;
-	}
-
-	function sourceHasParty(): boolean {
-		return loadedSave !== null;
-	}
-
-	function focusForSource(): typeof navigation.focus {
-		if (sourceHasParty() || navigation.focus.zone !== 'party') {
-			return navigation.focus;
-		}
-
-		return focusBoxSlot(Math.min(navigation.focus.slot, BOX_COLUMNS - 1));
+		return pane.id !== activeSavePaneId && workbenchPanes.length > 1 ? 2 : 1;
 	}
 
 	function installActiveSavePane(save: WorkspaceState, activeBox = 0) {
@@ -2179,7 +2373,7 @@
 	}
 
 	function openSourcePicker(targetPaneId: string | null = null) {
-		if (targetPaneId === activeSavePaneId || activeSummonedWorkflow) {
+		if (pendingSlotOperation || targetPaneId === activeSavePaneId || activeSummonedWorkflow) {
 			return;
 		}
 
@@ -2187,6 +2381,18 @@
 		sourcePickerTargetPaneId = targetPaneId;
 		sourcePickerFocusIndex = 0;
 		summonedWorkflow.open('source-picker', launcherForFocus(launcherFocus));
+		queueMicrotask(() => focusSourcePickerControl(0));
+	}
+
+	function openRelatedSourcePicker(targetPaneId: string | null) {
+		if (!boxMenuOpen) return;
+		const commandIndex = navigation.focus.zone === 'actions' ? navigation.focus.index : 0;
+		sourcePickerTargetPaneId = targetPaneId;
+		sourcePickerFocusIndex = 0;
+		summonedWorkflow.openRelated(
+			'source-picker',
+			controlLauncher(`box-menu-command-${commandIndex}`)
+		);
 		queueMicrotask(() => focusSourcePickerControl(0));
 	}
 
@@ -2202,9 +2408,16 @@
 		}
 	}
 
+	function openImportFromSourcePicker() {
+		const returnsToBoxMenu = activeSummonedWorkflow?.returnTo?.kind === 'box-menu';
+		closeSourcePicker();
+		if (returnsToBoxMenu) closeBoxMenu();
+		document.getElementById('quick-save-import')?.click();
+	}
+
 	function openSourceAsPane(type: BoxSourceType, saveFileId: string | null = null) {
 		if (sourcePickerTargetPaneId) {
-			switchPaneToSource(sourcePickerTargetPaneId, type, saveFileId);
+			void switchPaneToSource(sourcePickerTargetPaneId, type, saveFileId);
 			return;
 		}
 
@@ -2214,22 +2427,25 @@
 			id,
 			boxCount: type === 'pokemon-storage' ? pokemonStorageBoxCount : boxCount
 		});
+		const openedPane = workbenchPanes.find((pane) => pane.id === id);
 		activePaneId = id;
 		navigation = {
 			...navigation,
 			boxCount: Math.max(1, type === 'pokemon-storage' ? pokemonStorageBoxCount : boxCount),
-			activeBox: 0,
-			focus: focusForSource()
+			activeBox: openedPane?.activeBox ?? 0,
+			focus: openedPane?.focus ?? focusBoxSlot(0)
 		};
 		sourcePickerTargetPaneId = null;
+		boxMenuTarget = null;
 		summonedWorkflow.closeAll();
 		if (source.type === 'save-file') {
 			void refreshPaneWorkspace(id, 0);
 		}
-		statusMessage = `${source.label} opened as a Box Source pane.`;
+		statusMessage = `${source.label} opened in another pane.`;
+		queueMicrotask(focusActiveControl);
 	}
 
-	function switchPaneToSource(
+	async function switchPaneToSource(
 		paneId: string,
 		type: BoxSourceType,
 		saveFileId: string | null = null
@@ -2239,29 +2455,67 @@
 		}
 
 		const source = boxSourceForSelection(type, saveFileId);
-		workbenchPanes = switchPaneSource(
-			workbenchPanes,
-			paneId,
-			source,
-			type === 'pokemon-storage' ? pokemonStorageBoxCount : boxCount
-		);
+		const pane = workbenchPanes.find((candidate) => candidate.id === paneId);
+		if (!pane) return;
+		const request = ++paneSwitchRequest;
+		const pickerOwner = activeSummonedWorkflow;
+		const paneSource = { ...pane.source };
+		const selectionIsCurrent = () =>
+			request === paneSwitchRequest &&
+			activeSummonedWorkflow === pickerOwner &&
+			sourcePickerOpen &&
+			sourcePickerTargetPaneId === paneId &&
+			workbenchPanes.some(
+				(candidate) =>
+					candidate.id === paneId &&
+					candidate.source.type === paneSource.type &&
+					candidate.source.id === paneSource.id
+			);
+
+		let targetBoxCount = pokemonStorageBoxCount;
+		let targetWorkspace: SavePaneWorkspace | null = null;
+		if (source.type === 'save-file' && source.id) {
+			try {
+				const firstBoxState = await loadWorkspaceStateForSaveFile(source.id, 0);
+				if (!firstBoxState || !selectionIsCurrent()) return;
+				targetBoxCount = firstBoxState.workspace.summary.boxCount;
+				const targetBox = Math.min(pane.activeBox, Math.max(0, targetBoxCount - 1));
+				const state =
+					targetBox === 0
+						? firstBoxState
+						: await loadWorkspaceStateForSaveFile(source.id, targetBox);
+				if (!state) return;
+				targetWorkspace = { state, loadedBox: targetBox };
+			} catch (error) {
+				if (!selectionIsCurrent()) return;
+				showToast('error', getErrorMessage(error));
+				statusMessage = 'Could not load that Save File pane.';
+				return;
+			}
+		}
+		if (!selectionIsCurrent()) return;
+
+		workbenchPanes = switchPaneSource(workbenchPanes, paneId, source, targetBoxCount);
+		const switchedPane = workbenchPanes.find((candidate) => candidate.id === paneId);
 		activePaneId = paneId;
 		navigation = {
 			...navigation,
-			boxCount: Math.max(1, type === 'pokemon-storage' ? pokemonStorageBoxCount : boxCount),
-			activeBox: 0,
-			focus: focusForSource()
+			boxCount: Math.max(1, switchedPane?.boxCount ?? targetBoxCount),
+			activeBox: switchedPane?.activeBox ?? 0,
+			focus: switchedPane?.focus ?? focusBoxSlot(0)
 		};
 		sourcePickerTargetPaneId = null;
+		boxMenuTarget = null;
 		summonedWorkflow.closeAll();
-		if (source.type === 'save-file') {
-			void refreshPaneWorkspace(paneId, 0);
+		if (targetWorkspace) {
+			savePaneWorkspaces = { ...savePaneWorkspaces, [paneId]: targetWorkspace };
 		} else {
 			const remaining = { ...savePaneWorkspaces };
 			delete remaining[paneId];
 			savePaneWorkspaces = remaining;
 		}
 		statusMessage = `Pane switched to ${source.label}.`;
+		queueMicrotask(focusActiveControl);
 	}
 
 	function boxSourceForSelection(type: BoxSourceType, saveFileId: string | null): BoxSourceRef {
@@ -2284,19 +2538,31 @@
 			return;
 		}
 
+		const closingPane = workbenchPanes.find((pane) => pane.id === paneId);
+		if (!closingPane) return;
 		const closingActivePane = paneId === activePaneId;
 		workbenchPanes = closeBoxPane(workbenchPanes, paneId);
 		if (closingActivePane || !workbenchPanes.some((pane) => pane.id === activePaneId)) {
 			const nextPane = workbenchPanes[0];
+			const nextFocus: SlotFocus = nextPane
+				? focusSurvivingPaneAfterClose(closingPane, nextPane, {
+						partyAvailable,
+						partyCollapsed
+					})
+				: { zone: 'box', slot: 0 };
 			activePaneId = nextPane?.id ?? 'pane-pokemon-storage';
 			navigation = {
 				...navigation,
 				activeBox: nextPane?.activeBox ?? 0,
 				boxCount: Math.max(1, nextPane?.boxCount ?? placeholderBoxCount),
-				focus: focusBoxSlot(0)
+				focus: nextFocus
 			};
+			if (nextPane) workbenchPanes = setPaneFocus(workbenchPanes, nextPane.id, nextFocus);
 			queueMicrotask(focusActiveControl);
 		}
+		const remaining = { ...savePaneWorkspaces };
+		delete remaining[paneId];
+		savePaneWorkspaces = remaining;
 	}
 
 	function activatePane(pane: BoxPaneState) {
@@ -2305,7 +2571,7 @@
 			{
 				...navigation,
 				boxCount: Math.max(1, pane.boxCount),
-				focus: focusForSource()
+				focus: pane.focus
 			},
 			Math.min(pane.activeBox, Math.max(1, pane.boxCount) - 1)
 		);
@@ -3284,6 +3550,7 @@
 	});
 
 	onDestroy(() => {
+		destroyed = true;
 		if (summonedWorkflow.active?.kind !== 'backup-browser') summonedWorkflow.closeAll();
 	});
 
@@ -3540,6 +3807,18 @@
 				seedSavesSnapshotFromActiveWorkspace(saveFiles);
 				installActiveSavePane(loadedSave, 0);
 				statusMessage = `${file.name} imported and made active.`;
+				queueMicrotask(() => {
+					if (
+						!destroyed &&
+						request === workspaceLoadRequest &&
+						loadedSave?.file.id === saveFile.id &&
+						activePaneId === activeSavePaneId &&
+						navigation.focus.zone === 'box' &&
+						navigation.focus.slot === 0
+					) {
+						void focusActiveControl();
+					}
+				});
 			}
 		} catch (error) {
 			if (request === workspaceLoadRequest) {
@@ -3690,11 +3969,11 @@
 		/>
 
 		<div class="workspace-column">
-			<div class="workbench-toolbar" aria-label="Box Source panes">
+			<div class="workbench-toolbar" aria-label="Collection panes">
 				<div class="single-source-label">
 					<strong
 						>{multiPaneWorkbench
-							? 'Box Sources'
+							? 'Collections'
 							: (activePane?.source.label ?? 'Save File')}</strong
 					>
 				</div>
@@ -3708,7 +3987,7 @@
 						navigation.focus.index === 5}
 					type="button"
 					onfocus={() => (navigation = { ...navigation, focus: { zone: 'topbar', index: 5 } })}
-					onclick={handleSourceAction}>Add source</button
+					onclick={() => openSourcePicker()}>Add collection</button
 				>
 			</div>
 
@@ -3795,47 +4074,51 @@
 						aria-rowcount="5"
 						aria-colcount={BOX_COLUMNS}
 						onfocus={() => activatePane(pane)}
-						onfocusin={() => activatePane(pane)}
+						onfocusin={() => {
+							if (!pendingSlotOperation && pane.id !== activePaneId) activatePane(pane);
+						}}
 					>
 						{#if paneControlCount > 0 || workbenchPanes.length > 1}
 							<div class="pane-source-row">
-								{#if paneFixed}
-									<div
-										class="source-chip locked-source"
-										aria-label={`Active Save ${pane.source.label}`}
-									>
-										<span>SAVE</span>
-										<strong>{pane.source.label}</strong>
-									</div>
-								{:else}
-									<button
-										id={paneActive ? 'pane-control-0' : `${pane.id}-pane-control-0`}
-										type="button"
-										class="source-chip"
-										aria-label={`Switch ${pane.source.label} source`}
-										onfocus={() => {
-											activatePane(pane);
-											navigation = {
-												...navigation,
-												focus: focusPaneControl(0, paneControlCount)
-											};
-										}}
-										onclick={() => {
-											activePaneId = pane.id;
-											openSourcePicker(pane.id);
-										}}
-									>
-										<span>{pane.source.type === 'pokemon-storage' ? 'APP' : 'SAVE'}</span>
-										<strong>{pane.source.label}</strong>
-										<em>▾</em>
-									</button>
-								{/if}
+								<button
+									id={collectionControlId(pane.id)}
+									data-pane-control-index="0"
+									type="button"
+									class="source-chip"
+									aria-label={`Open Box Menu for ${pane.source.label}`}
+									aria-disabled={pendingSlotOperation ? 'true' : undefined}
+									tabindex={pendingSlotOperation ? -1 : undefined}
+									onpointerdown={(event) => {
+										if (pendingSlotOperation) event.preventDefault();
+									}}
+									onfocus={() => {
+										if (pendingSlotOperation) {
+											queueMicrotask(focusActiveControl);
+											return;
+										}
+										activatePane(pane);
+										navigation = {
+											...navigation,
+											focus: focusPaneControl(0, paneControlCount)
+										};
+									}}
+									onclick={() => {
+										if (pendingSlotOperation) return;
+										activePaneId = pane.id;
+										openBoxMenu(pane);
+									}}
+								>
+									<span>{pane.source.type === 'pokemon-storage' ? 'APP' : 'SAVE'}</span>
+									<strong>{pane.source.label}</strong>
+									<em>▾</em>
+								</button>
 								{#if stateTagForPane(pane)}
 									<span class="pane-state-tag">{stateTagForPane(pane)}</span>
 								{/if}
 								{#if !paneFixed && workbenchPanes.length > 1}
 									<button
-										id={paneActive ? 'pane-control-1' : `${pane.id}-pane-control-1`}
+										id={`close-pane-${pane.id}`}
+										data-pane-control-index="1"
 										type="button"
 										class="pane-close"
 										aria-label={`Close ${pane.source.label} pane`}
@@ -3915,7 +4198,7 @@
 						<div class="box-footer">
 							{#if controllerConnected || pendingSlotOperation}
 								<span><kbd>A</kbd> {pendingSlotOperation ? 'Place here' : 'Pick'}</span>
-								<span><kbd>Y</kbd> {pendingSlotOperation ? 'Copy' : 'Add source'}</span>
+								{#if pendingSlotOperation}<span><kbd>Y</kbd> Move / Copy</span>{/if}
 								<span><kbd>B</kbd> {pendingSlotOperation ? 'Cancel' : 'Back'}</span>
 							{/if}
 							<strong>
@@ -3948,12 +4231,23 @@
 	</section>
 </section>
 
+{#if boxMenuOpen && boxMenuTarget}
+	<BoxMenu
+		collection={boxMenuTarget.source.label}
+		commands={boxMenuCommands}
+		activeIndex={navigation.focus.zone === 'actions' ? navigation.focus.index : 0}
+		onFocusCommand={focusBoxMenuCommand}
+		onSelectCommand={selectBoxMenuCommand}
+		onClose={closeBoxMenu}
+	/>
+{/if}
+
 {#if slotMenuOpen && summonedSlotLauncher}
 	<SlotActionMenu
 		slot={focusedSlot}
 		location={summonedSlotLauncher.focus.zone === 'party'
 			? `Party slot ${summonedSlotLauncher.focus.slot + 1}`
-			: `${summonedSlotPane?.source.label ?? 'Box Source'}, Box ${(summonedSlotBox ?? 0) + 1}, slot ${summonedSlotLauncher.focus.slot + 1}`}
+			: `${summonedSlotPane?.source.label ?? 'Collection'}, Box ${(summonedSlotBox ?? 0) + 1}, slot ${summonedSlotLauncher.focus.slot + 1}`}
 		commands={slotMenuCommands}
 		activeIndex={navigation.focus.zone === 'actions' ? navigation.focus.index : 0}
 		onFocusCommand={focusActionCommand}
@@ -3969,12 +4263,12 @@
 			role="dialog"
 			tabindex="-1"
 			aria-modal="true"
-			aria-label="Add Box Source"
+			aria-label={sourcePickerTargetPaneId ? 'Switch collection' : 'Open another collection'}
 		>
 			<header>
 				<div>
-					<h2>Add source</h2>
-					<p>Open a Save File or Pokemon Storage beside the current pane.</p>
+					<h2>{sourcePickerTargetPaneId ? 'Switch collection' : 'Open another collection'}</h2>
+					<p>Choose a Save File or Pokemon Storage for this pane.</p>
 				</div>
 				<button
 					type="button"
@@ -4005,10 +4299,7 @@
 					type="button"
 					class="source-card import-row"
 					onfocus={() => (sourcePickerFocusIndex = sourcePickerCards.length)}
-					onclick={() => {
-						closeSourcePicker();
-						document.getElementById('quick-save-import')?.click();
-					}}
+					onclick={openImportFromSourcePicker}
 				>
 					<span>IMPORT</span>
 					<strong>Import Save File</strong>
@@ -4311,10 +4602,6 @@
 		box-shadow: inset 0 0 0 1px var(--rule);
 		color: var(--ink);
 		text-align: left;
-	}
-
-	.locked-source {
-		cursor: default;
 	}
 
 	.source-chip span,

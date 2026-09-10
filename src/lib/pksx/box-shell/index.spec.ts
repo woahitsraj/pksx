@@ -87,10 +87,11 @@ const occupiedSlot: BoxSlotSummary = {
 
 describe('box shell helpers', () => {
 	it('normalizes keyboard input into Navigation Actions', () => {
-		expect.assertions(2);
+		expect.assertions(3);
 
 		expect(keyboardAction({ key: 'PageDown' })).toBe('nextBox');
-		expect(keyboardAction({ key: 'Y' })).toBe('sourceAction');
+		expect(keyboardAction({ key: 'X' })).toBe('sourceAction');
+		expect(keyboardAction({ key: 'Y' })).toBe('carryMode');
 	});
 
 	it('creates occupied, empty, and padded party Slot views', () => {

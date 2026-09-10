@@ -17,7 +17,7 @@ const toolbarStatusRules: [string[], string][] = [
 	[['serializing'], 'Exporting'],
 	[['export ready'], 'Export ready'],
 	[['imported'], 'Imported'],
-	[['opened as', 'pane switched'], 'Source updated'],
+	[['opened in', 'pane switched'], 'Collection updated'],
 	[['loaded', 'restored'], 'Ready'],
 	[['moved'], 'Moved'],
 	[['copied'], 'Copied'],
@@ -26,7 +26,8 @@ const toolbarStatusRules: [string[], string][] = [
 ];
 
 export function keyboardAction(event: Pick<KeyboardEvent, 'key'>): NavigationAction | null {
-	if (event.key === 'y' || event.key === 'Y') return 'sourceAction';
+	if (event.key === 'x' || event.key === 'X') return 'sourceAction';
+	if (event.key === 'y' || event.key === 'Y') return 'carryMode';
 
 	return (
 		(
@@ -62,6 +63,7 @@ export function isNativeEditorActivation(
 			action === 'confirm' &&
 			event.target.closest('.pokemon-editor button, .pokemon-creation button') !== null
 		);
+	if (event.key.length === 1) return true;
 	if (input instanceof HTMLInputElement && input.dataset.controllerEditing === 'false')
 		return false;
 	if (event.key === 'Escape') return false;
