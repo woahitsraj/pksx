@@ -17,7 +17,6 @@
 		getCachedActiveWorkspaceBox,
 		getPkhexEngine,
 		getSaveFileEditCoordinator,
-		getSavesStorage,
 		loadActiveWorkspaceFromSaves
 	} from '$lib/pksx/saves-cache';
 	import { getRouteBackRegistrar } from '$lib/pksx/route-back-context.svelte';
@@ -30,11 +29,7 @@
 
 	let { destination }: Props = $props();
 	const workspaceService = getActiveWorkspaceService();
-	const workspaceReader = workspaceService as typeof workspaceService & {
-		load: (saveFileId: string, activeBox?: number) => Promise<WorkspaceState | null>;
-	};
 	const toast = getToastHost();
-	const storage = getSavesStorage();
 	const getDestinationFocusIdentity = getDestinationFocusIdentityGetter();
 	const registerRouteBack = getRouteBackRegistrar();
 	let coordinator: SaveFileEditCoordinator | null = null;
@@ -44,7 +39,6 @@
 	let session = $state.raw<ReturnType<typeof createSaveFileTrainerMoneyController> | null>(null);
 	let bag = $state.raw<ReturnType<typeof createSaveFileBagController> | null>(null);
 	let unsubscribeWorkspace: () => void = () => undefined;
-	let unsubscribeSessionOrigin: () => void = () => undefined;
 	let loadRequest = 0;
 	let mounted = false;
 
@@ -151,26 +145,9 @@
 			activeBox,
 			coordinator,
 			toast,
-			reloadWorkspace: () => reloadSessionWorkspace(installedSession, workspace, activeBox)
+			isCurrent: () => mounted && session === installedSession
 		});
 		session = installedSession;
-		let initialOrigin = true;
-		unsubscribeSessionOrigin = installedSession.subscribeOrigin(() => {
-			if (initialOrigin) {
-				initialOrigin = false;
-				return;
-			}
-			const accepted = installedSession.workspace;
-			const current = workspaceService.current;
-			if (
-				mounted &&
-				session === installedSession &&
-				current?.file.id === accepted.file.id &&
-				current.file.importedAt === accepted.file.importedAt
-			) {
-				workspaceService.set(accepted, activeBox);
-			}
-		});
 		if (destination === 'bag') {
 			bag = createSaveFileBagController({
 				getWorkspace: () => installedSession.workspace,
@@ -188,32 +165,9 @@
 		updateAppChrome({ hasLoadedSave: true });
 	}
 
-	async function reloadSessionWorkspace(
-		installedSession: ReturnType<typeof createSaveFileTrainerMoneyController>,
-		expected: WorkspaceState,
-		activeBox: number
-	) {
-		const reloaded = await workspaceReader.load(expected.file.id, activeBox);
-		const activeSaveFileId = await storage.getActiveSaveFileId();
-		const current = workspaceService.current;
-		if (
-			!mounted ||
-			session !== installedSession ||
-			activeSaveFileId !== expected.file.id ||
-			current?.file.id !== expected.file.id ||
-			current.file.importedAt !== expected.file.importedAt ||
-			reloaded?.file.importedAt !== expected.file.importedAt
-		) {
-			return null;
-		}
-		return reloaded;
-	}
-
 	function disposeSession() {
 		bag?.dispose();
 		bag = null;
-		unsubscribeSessionOrigin();
-		unsubscribeSessionOrigin = () => undefined;
 		session?.dispose();
 		session = null;
 	}

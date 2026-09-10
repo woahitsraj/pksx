@@ -164,6 +164,19 @@ async function releaseWorkspaceResponses(page: Page) {
 	});
 }
 
+async function restoreEditingBackup(page: Page) {
+	await chooseMainMenu(page, 'Backup Browser');
+	const browser = page.getByRole('dialog', { name: 'Backup Browser' });
+	await expect(browser).toBeVisible();
+	await browser
+		.locator('article')
+		.filter({ hasText: 'Save File editing' })
+		.getByRole('button', { name: 'Restore', exact: true })
+		.click();
+	await browser.getByRole('button', { name: 'Restore', exact: true }).last().click();
+	await expect(browser).toBeHidden({ timeout: 15000 });
+}
+
 test.afterEach(async ({ page }) => {
 	if (!page.isClosed()) await releaseWorkspaceResponses(page);
 });
@@ -3842,6 +3855,46 @@ test('a remounted Trainer reconstructs pending Money and adopts its published re
 	await expect(money).toHaveValue('23456', { timeout: 15000 });
 	await expect(money).not.toHaveAttribute('readonly', '');
 	await expect(money).not.toHaveAttribute('aria-disabled', 'true');
+});
+
+test('Trainer Retry publishes its recovered Workspace for navigation and remount', async ({
+	page
+}) => {
+	await installWorkspaceResponseHold(page);
+	await importEmeraldThroughSaves(page);
+	await chooseMainMenu(page, 'Trainer');
+	const money = page.getByRole('spinbutton', { name: 'Money' });
+	const originalMoney = await money.inputValue();
+	await money.fill('12345');
+	await money.press('Enter');
+	await expect(money).toHaveAttribute('aria-disabled', 'true');
+	await expect(money).not.toHaveAttribute('aria-disabled', 'true', { timeout: 15000 });
+	await expect.poll(() => backupCount(page)).toBe(1);
+
+	const trainerName = page.getByLabel('Trainer name');
+	await holdWorkspaceResponses(page, 1, 'applySaveFileEditOperation');
+	await trainerName.fill('RAJ');
+	await trainerName.press('Enter');
+	await waitForHeldWorkspaceResponses(page);
+	await restoreEditingBackup(page);
+	await releaseWorkspaceResponses(page);
+
+	const retry = page.getByRole('button', { name: 'Retry', exact: true });
+	await expect(retry).toBeVisible({ timeout: 15000 });
+	await expect(trainerName).toHaveValue('DIXIE');
+	await expect(money).toHaveValue(originalMoney);
+	await retry.click();
+	await expect(retry).toHaveCount(0, { timeout: 15000 });
+	await expect(trainerName).not.toHaveAttribute('aria-disabled', 'true');
+	await expect(money).toHaveValue(originalMoney);
+
+	await page.getByRole('button', { name: 'Decrease Money' }).focus();
+	await pressController(page, 'Escape');
+	await expect(page).toHaveURL(/\/$/);
+	await chooseMainMenu(page, 'Trainer');
+	await expect(page.getByLabel('Trainer name')).toHaveValue('DIXIE');
+	await expect(page.getByRole('spinbutton', { name: 'Money' })).toHaveValue(originalMoney);
+	await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
 });
 
 test('Trainer and Bag stay inside the Safe Canvas and keep focused targets visible on rotation', async ({
