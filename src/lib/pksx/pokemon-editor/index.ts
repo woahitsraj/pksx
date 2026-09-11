@@ -858,8 +858,7 @@ function validateHeldItemEdit(
 		return {
 			ok: false,
 			message:
-				constraints?.unsupportedReason ??
-				'Held Item Editing is not supported for this Pokemon Entity format.'
+				constraints?.unsupportedReason ?? 'Held Item Editing is not supported for this Pokemon.'
 		};
 	}
 
@@ -871,7 +870,7 @@ function validateHeldItemEdit(
 	if (!option) {
 		return {
 			ok: false,
-			message: `Item ${payload.heldItemId} is not available for this Save File and Pokemon Entity format.`
+			message: `Item ${payload.heldItemId} is not available for this Pokemon in the current Save File.`
 		};
 	}
 
@@ -1106,8 +1105,7 @@ function validateMetDataEdit(
 		return {
 			ok: false,
 			message:
-				constraints?.unsupportedReason ??
-				'Met Data Editing is not supported for this Pokemon Entity format.'
+				constraints?.unsupportedReason ?? 'Met Data Editing is not supported for this Pokemon.'
 		};
 	}
 
@@ -1127,7 +1125,7 @@ function validateMetDataEdit(
 		(!constraints.supportsOriginGame ||
 			!constraints.originGames.some((option) => option.id === payload.originGameId))
 	) {
-		return { ok: false, message: 'Origin game choice is not supported by this Pokemon Entity.' };
+		return { ok: false, message: 'Origin game choice is not supported by this Pokemon.' };
 	}
 
 	const locationGroup = constraints.locationGroups.find(
@@ -1147,14 +1145,14 @@ function validateMetDataEdit(
 		payload.ballId !== undefined &&
 		(!constraints.supportsBall || !constraints.balls.some((option) => option.id === payload.ballId))
 	) {
-		return { ok: false, message: 'Ball choice is not supported by this Pokemon Entity.' };
+		return { ok: false, message: 'Ball choice is not supported by this Pokemon.' };
 	}
 
 	if (payload.metDate !== undefined) {
 		if (!constraints.supportsMetDate) {
 			return {
 				ok: false,
-				message: 'Met date editing is not supported by this Pokemon Entity format.'
+				message: 'Met date editing is not supported for this Pokemon.'
 			};
 		}
 		if (payload.metDate !== null && !isValidMetDate(payload.metDate)) {
@@ -1214,7 +1212,7 @@ function validateOriginalTrainerEdit(
 			ok: false,
 			message:
 				constraints?.unsupportedReason ??
-				'Original Trainer Data Editing is not supported for this Pokemon Entity format.'
+				'Original Trainer Data Editing is not supported for this Pokemon.'
 		};
 	}
 
@@ -1248,7 +1246,7 @@ function validateOriginalTrainerEdit(
 			ok: false,
 			message: constraints.supportsSecretId
 				? `Secret ID must be between ${constraints.minTrainerId} and ${constraints.maxTrainerId}.`
-				: 'Secret ID editing is not supported by this Pokemon Entity format.'
+				: 'Secret ID editing is not supported for this Pokemon.'
 		};
 	}
 	if (
@@ -1260,7 +1258,7 @@ function validateOriginalTrainerEdit(
 			ok: false,
 			message: constraints.supportsGender
 				? 'Original Trainer gender choice is invalid.'
-				: 'Original Trainer gender editing is not supported by this Pokemon Entity format.'
+				: 'Original Trainer gender editing is not supported for this Pokemon.'
 		};
 	}
 	if (
@@ -1272,7 +1270,7 @@ function validateOriginalTrainerEdit(
 			ok: false,
 			message: constraints.supportsLanguage
 				? 'Pokemon language choice is invalid.'
-				: 'Pokemon language editing is not supported by this Pokemon Entity format.'
+				: 'Pokemon language editing is not supported for this Pokemon.'
 		};
 	}
 
@@ -1505,7 +1503,7 @@ export function cancelPokemonEditor(state: PokemonEditorState): PokemonEditorSta
 
 export function markUnsupportedPokemonEditorApply(
 	state: PokemonEditorState,
-	reason = 'Engine-backed Pokemon editing is not available yet.'
+	reason = 'Pokemon editing is not available yet.'
 ): PokemonEditorState {
 	return withApplyOutcome(state, {
 		status: 'unsupported',
@@ -1561,7 +1559,7 @@ export async function applyPokemonEditorEdits(
 			: {
 					ok: false as const,
 					status: 'unsupported' as const,
-					message: 'Save File Pokemon editing is not available yet.',
+					message: 'Pokemon editing is not available yet.',
 					reason: 'engine-unavailable'
 				};
 

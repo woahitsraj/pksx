@@ -1,14 +1,14 @@
 <script lang="ts">
-	import type { SlotView } from './types';
 	import type { SlotMenuCommand, SlotMenuCommandKey } from '$lib/pksx/slot-menu';
+	import DelayedSpinner from './DelayedSpinner.svelte';
 	import EdgeMenu from './EdgeMenu.svelte';
 
 	interface Props {
 		location: string;
-		slot: SlotView;
 		commands: SlotMenuCommand[];
 		activeIndex: number;
 		availabilityPending?: boolean;
+		pendingLabel?: string | null;
 		onFocusCommand: (index: number) => void;
 		onSelectCommand: (command: SlotMenuCommandKey) => void;
 		onClose: () => void;
@@ -16,23 +16,23 @@
 
 	let {
 		location,
-		slot,
 		commands,
 		activeIndex,
 		availabilityPending = false,
+		pendingLabel = null,
 		onFocusCommand,
 		onSelectCommand,
 		onClose
 	}: Props = $props();
 
-	const occupied = $derived(slot.kind === 'pokemon');
+	const pending = $derived(availabilityPending || pendingLabel !== null);
 </script>
 
 <EdgeMenu label="Slot actions" onDismiss={onClose}>
-	<div class="slot-context" aria-busy={availabilityPending ? 'true' : undefined}>
+	<div class="slot-context" aria-busy={pending ? 'true' : undefined}>
 		<div class="slot-context-header">
-			<p class="slot-context-kicker">{occupied ? 'Edit' : 'Slot Menu'}</p>
 			<p class="slot-context-location">{location}</p>
+			<DelayedSpinner active={pending} label={pendingLabel ?? 'Loading Slot actions'} />
 		</div>
 
 		<div class="slot-command-stack" role="list" aria-label="Slot Menu commands">
@@ -95,7 +95,6 @@
 		border-bottom: 1px solid var(--rule);
 	}
 
-	.slot-context-kicker,
 	.slot-context-location {
 		margin: 0;
 		color: var(--ink-mute);
@@ -103,11 +102,6 @@
 		font-size: var(--pksx-type-caption);
 		font-weight: 650;
 		line-height: 1.25;
-	}
-
-	.slot-context-kicker {
-		color: var(--rust);
-		text-transform: uppercase;
 	}
 
 	.slot-command-stack {

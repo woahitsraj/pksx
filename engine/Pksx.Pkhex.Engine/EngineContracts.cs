@@ -1035,7 +1035,7 @@ internal static class SlotDetailProjection
             locationGroups,
             originGames,
             balls,
-            supported ? null : "Met Data Editing is not supported for this Pokemon Entity format.");
+            supported ? null : "Met Data Editing is not supported for this Pokemon.");
     }
 
     public static PokemonAbilityEditConstraints AbilityEditConstraints(PKM pokemon)
@@ -1069,7 +1069,7 @@ internal static class SlotDetailProjection
             options.Count > 0,
             CurrentAbilityIndex(pokemon),
             options,
-            options.Count > 0 ? null : "PKHeX found no Ability choices for this Pokemon.");
+            options.Count > 0 ? null : "No Ability choices are available for this Pokemon.");
     }
 
     public static PokemonHeldItemEditConstraints HeldItemEditConstraints(PKM pokemon, SaveFile save)
@@ -1086,7 +1086,7 @@ internal static class SlotDetailProjection
                 false,
                 pokemon.HeldItem,
                 [],
-                "Held Item Editing is not supported for this Pokemon Entity format.");
+                "Held Item Editing is not supported for this Pokemon.");
 
         if (pokemon.IsEgg)
             return new PokemonHeldItemEditConstraints(
@@ -1159,7 +1159,7 @@ internal static class SlotDetailProjection
             (int)pokemon.StatNature,
             usesStatNature,
             options,
-            options.Count == 25 ? null : "PKHeX did not provide every Nature choice.");
+            options.Count == 25 ? null : "Not every Nature choice is available.");
     }
 
     public static PokemonMoveSetEditConstraints MoveSetEditConstraints(PKM pokemon, StorageSlotType storageSlotType)
@@ -1285,7 +1285,7 @@ internal static class SlotDetailProjection
     private static string? HeldItemUnavailableReason(PKM pokemon, ushort item, string name) =>
         ItemRestrictions.IsHeldItemAllowed(item, pokemon.Context)
             ? null
-            : $"{name} is not supported by this Pokemon Entity format.";
+            : $"{name} is not supported for this Pokemon.";
 
     private static string NatureEffect(int nature)
     {

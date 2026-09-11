@@ -469,7 +469,7 @@ describe('createPkhexWorkerEngine', () => {
 			ok: false,
 			error: {
 				code: 'engine-unavailable',
-				message: 'The PKHeX Engine worker received an unreadable message.'
+				message: 'Pokemon data could not be read.'
 			}
 		});
 	});

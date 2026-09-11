@@ -1196,7 +1196,7 @@ describe('PKHeX Engine browser runtime smoke', () => {
 			speciesName: 'Lairon',
 			form: 0,
 			spriteIdentity: { speciesId: 305, form: 0 },
-			legalitySummary: expect.stringContaining('PKHeX')
+			legalitySummary: 'This Pokemon has legality issues.'
 		});
 		expect(preview.value.preview.consequences).toEqual(
 			expect.arrayContaining([

@@ -18,7 +18,6 @@
 <EdgeMenu label="Box Menu" onDismiss={onClose}>
 	<div class="box-menu">
 		<header>
-			<p>Box Menu</p>
 			<h2>{collection}</h2>
 		</header>
 
@@ -69,18 +68,11 @@
 		border-bottom: 1px solid var(--rule);
 	}
 
-	header p,
 	header h2 {
 		margin: 0;
 		font-family: var(--pksx-font-mono), monospace;
 		font-size: var(--pksx-type-caption);
 		line-height: 1.25;
-	}
-
-	header p {
-		color: var(--rust);
-		font-weight: 650;
-		text-transform: uppercase;
 	}
 
 	header h2 {

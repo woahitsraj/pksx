@@ -5,6 +5,7 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import DelayedSpinner from '$lib/components/pksx/DelayedSpinner.svelte';
 	import { appPlatformLabel, getAppMetadata } from '$lib/pksx/app-metadata';
 	import { appChrome } from '$lib/pksx/app-chrome.svelte';
 	import { isControllerKeyboardEvent } from '$lib/pksx/controller-input';
@@ -74,9 +75,12 @@
 
 	let route: HTMLElement;
 	const summonedWorkflow = getSummonedWorkflowHost();
-	let appVersion = $state('Loading…');
-	let platform = $state('Loading…');
-	let pkhexCoreVersion = $state('Loading…');
+	let appVersion = $state<string | null>(null);
+	let platform = $state<string | null>(null);
+	let pkhexCoreVersion = $state<string | null>(null);
+	const aboutLoading = $derived(
+		appVersion === null || platform === null || pkhexCoreVersion === null
+	);
 
 	onMount(() => {
 		void loadMetadata();
@@ -268,6 +272,7 @@
 			<section
 				class="settings-card about"
 				aria-labelledby="pksx-settings-about"
+				aria-busy={aboutLoading}
 				data-settings-row="about"
 			>
 				<div class="section-heading">
@@ -280,23 +285,23 @@
 							data-settings-stop
 							data-destination-focus="about"
 						>
-							About
+							About <DelayedSpinner active={aboutLoading} label="Loading version details" />
 						</h2>
-						<p>Versions reported by this build and its PKHeX Engine.</p>
+						<p>Version and platform details.</p>
 					</div>
 				</div>
 				<dl>
 					<div>
 						<dt>PKSX</dt>
-						<dd data-testid="app-version">{appVersion}</dd>
+						<dd data-testid="app-version">{appVersion ?? ''}</dd>
 					</div>
 					<div>
 						<dt>PKHeX.Core</dt>
-						<dd data-testid="pkhex-core-version">{pkhexCoreVersion}</dd>
+						<dd data-testid="pkhex-core-version">{pkhexCoreVersion ?? ''}</dd>
 					</div>
 					<div>
 						<dt>Platform</dt>
-						<dd data-testid="app-platform">{platform}</dd>
+						<dd data-testid="app-platform">{platform ?? ''}</dd>
 					</div>
 				</dl>
 			</section>
@@ -392,6 +397,9 @@
 	}
 
 	.section-heading h2 {
+		display: flex;
+		align-items: center;
+		gap: var(--pksx-space-1);
 		font-size: var(--pksx-type-title);
 		line-height: 1.05;
 	}

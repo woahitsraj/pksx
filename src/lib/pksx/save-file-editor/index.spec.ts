@@ -379,7 +379,7 @@ describe('Save File editor state', () => {
 			mutateSaveFile: vi.fn(async () => ({
 				ok: false as const,
 				status: 'unsupported' as const,
-				message: 'Save File field editing is not available in this PKHeX Engine build.',
+				message: 'Save File editing is not available in this version.',
 				reason: 'unsupported-save-file-edit'
 			}))
 		});
@@ -388,11 +388,11 @@ describe('Save File editor state', () => {
 
 		expect(result.outcome).toEqual({
 			status: 'unsupported',
-			message: 'Save File field editing is not available in this PKHeX Engine build.',
+			message: 'Save File editing is not available in this version.',
 			reason: 'unsupported-save-file-edit'
 		});
 		expect(result.state.unsupportedReason).toBe(
-			'Save File field editing is not available in this PKHeX Engine build.'
+			'Save File editing is not available in this version.'
 		);
 		expect(result.state.stagedEdits).toEqual([stagedEdit]);
 	});

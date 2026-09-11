@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import Combobox, { type ComboboxOption } from '$lib/components/pksx/Combobox.svelte';
+	import DelayedSpinner from '$lib/components/pksx/DelayedSpinner.svelte';
 	import {
 		type EngineApi,
 		type InventoryItemOption,
@@ -85,6 +86,7 @@
 		activePocketProjection ? (itemCatalogue?.[activePocketProjection.key] ?? []) : []
 	);
 	const stagedCount = $derived(editor?.stagedEdits.length ?? 0);
+	const moneyStaged = $derived(editor?.stagedEdits.some((edit) => edit.id === 'money') ?? false);
 	const displayedGender = $derived.by(() => {
 		const payload = editor?.stagedEdits.find((edit) => edit.id === 'trainer-gender')?.payload;
 		return typeof payload === 'object' && payload && 'gender' in payload
@@ -451,7 +453,7 @@
 		aria-live="polite"
 		inert={summonedWorkflow.active !== null}
 	>
-		Loading Save File editor…
+		<DelayedSpinner active label="Loading Save File editor" />
 	</section>
 {:else if !workspace || !editor || !projection}
 	<section
@@ -503,7 +505,6 @@
 			class="field-sidebar"
 			aria-label={destination === 'trainer' ? 'Trainer fields' : 'Bag fields'}
 		>
-			<p>{destination === 'trainer' ? 'Trainer Fields' : 'Bag'}</p>
 			<nav>
 				{#each sections as section (section.key)}
 					<button
@@ -529,11 +530,6 @@
 			>
 				<span>♢</span>
 				<strong>Browse Backups</strong>
-				<small
-					>{workspace.automaticBackupCreated
-						? 'automatic Backup created'
-						: 'manual and automatic'}</small
-				>
 			</button>
 		</aside>
 
@@ -561,9 +557,8 @@
 			{#if activeSection === 'trainer'}
 				<section class="mock-section" aria-label="Trainer profile">
 					<div class="section-copy">
-						<p>Save File · Trainer Profile</p>
 						<h2>Trainer profile</h2>
-						<span>Changes stay staged until Apply writes them through the PKHeX Engine.</span>
+						<span>Changes stay staged until Apply.</span>
 					</div>
 
 					<div class="trainer-card">
@@ -631,19 +626,12 @@
 			{:else if activeSection === 'money'}
 				<section class="mock-section" aria-label="Money">
 					<div class="section-copy">
-						<p>Save File · Wallet</p>
 						<h2>Money</h2>
-						<span
-							>The PKHeX Engine supplies the supported range for this exact Save File format.</span
-						>
 					</div>
 
 					{#if projection.money.supported}
 						<div class="wallet-grid">
-							<div
-								class:staged={editor.stagedEdits.some((edit) => edit.id === 'money')}
-								class="currency-card"
-							>
+							<div class:staged={moneyStaged} class="currency-card">
 								<header>
 									<span>Money</span>
 									<small>max {projection.money.max.toLocaleString()}</small>
@@ -680,7 +668,9 @@
 										onclick={() => setMoney(projection.money.max)}>MAX</button
 									>
 								</div>
-								<p>Current balance: ¤{projection.money.value?.toLocaleString()}</p>
+								{#if moneyStaged}
+									<p>Current balance: ¤{projection.money.value?.toLocaleString()}</p>
+								{/if}
 							</div>
 						</div>
 					{:else}
@@ -696,9 +686,7 @@
 			{:else}
 				<section class="mock-section" aria-label="Bag inventory">
 					<div class="section-copy">
-						<p>Save File · Bag</p>
 						<h2>Inventory</h2>
-						<span>Item choices, pocket rules, and quantity limits come from the PKHeX Engine.</span>
 					</div>
 
 					{#if projection.inventory.supported}
@@ -741,12 +729,15 @@
 										busy}
 									onSelect={(value) => (selectedItemId = value)}
 								/>
-								<small
-									>{catalogueError ??
-										(catalogueLoading
-											? 'Loading items…'
-											: availableToAdd.length + ' available')}</small
-								>
+								<small>
+									{#if catalogueError}
+										{catalogueError}
+									{:else if catalogueLoading}
+										<DelayedSpinner active label="Loading items" />
+									{:else}
+										{availableToAdd.length} available
+									{/if}
+								</small>
 								<button
 									type="button"
 									data-destination-focus={`inventory-${activePocketProjection.key}-add`}
@@ -898,16 +889,11 @@
 		</main>
 
 		<footer class="apply-bar">
-			<div class="stage-badge">{stagedCount}</div>
 			<div class="apply-copy">
 				<strong>{stagedCount} staged {stagedCount === 1 ? 'edit' : 'edits'}</strong>
-				<span
-					>{stagedCount
-						? 'Save File bytes remain untouched until Apply.'
-						: workspace.dirty
-							? 'Workspace has unapplied export changes.'
-							: 'No staged changes.'}</span
-				>
+				{#if !stagedCount && workspace.dirty}
+					<span>Changes ready to export.</span>
+				{/if}
 			</div>
 			<button
 				type="button"
@@ -923,8 +909,9 @@
 				onclick={applyEdits}
 			>
 				<span class="apply-icon" aria-hidden="true">✓</span>
-				{busy ? 'Applying…' : 'Apply edits'}
+				Apply edits
 			</button>
+			<DelayedSpinner active={busy} label="Applying Save File edits" />
 		</footer>
 	</section>
 {/if}
@@ -967,8 +954,6 @@
 		padding: 18px;
 	}
 
-	.field-sidebar > p,
-	.section-copy p,
 	.mock-field > span,
 	.currency-card header,
 	.apply-copy > span {
@@ -1084,10 +1069,6 @@
 
 	.backup-ready span {
 		grid-row: span 2;
-	}
-
-	.backup-ready small {
-		font-family: var(--pksx-font-mono);
 	}
 
 	.editor-panel {
@@ -1504,7 +1485,7 @@
 	.apply-bar {
 		grid-column: 1 / -1;
 		display: grid;
-		grid-template-columns: auto minmax(0, 1fr) auto auto;
+		grid-template-columns: minmax(0, 1fr) auto auto auto;
 		align-items: center;
 		gap: 12px;
 		padding: 12px 16px;
@@ -1515,17 +1496,6 @@
 		min-width: 0;
 		display: grid;
 		gap: 2px;
-	}
-
-	.stage-badge {
-		width: 40px;
-		height: 40px;
-		display: grid;
-		place-items: center;
-		border-radius: 12px;
-		background: var(--mock-gold);
-		color: white;
-		font-weight: 900;
 	}
 
 	.apply-bar button {
@@ -1712,7 +1682,7 @@
 			right: 0;
 			bottom: 0;
 			left: 0;
-			grid-template-columns: auto minmax(0, 1fr) auto;
+			grid-template-columns: minmax(0, 1fr) auto auto;
 			border-right: 0;
 			border-bottom: 0;
 			border-left: 0;

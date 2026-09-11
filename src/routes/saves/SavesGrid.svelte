@@ -6,6 +6,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { onMount, tick } from 'svelte';
+	import DelayedSpinner from '$lib/components/pksx/DelayedSpinner.svelte';
 	import SaveFileMenu from '$lib/components/pksx/SaveFileMenu.svelte';
 	import ToastRegion from '$lib/components/pksx/ToastRegion.svelte';
 	import type { EngineError } from '$lib/engine';
@@ -743,7 +744,11 @@
 										{:else}
 											<span class="file-name">{displayName(saveFile)}</span>
 											<span class="detail-state">
-												{details.status === 'loading' ? 'Reading save...' : 'Details unavailable'}
+												{#if details.status === 'loading'}
+													<DelayedSpinner active label={`Reading ${displayName(saveFile)}`} />
+												{:else}
+													Details unavailable
+												{/if}
 											</span>
 										{/if}
 									</button>
@@ -756,7 +761,10 @@
 									>
 										•••
 									</button>
-									{#if busyTarget === saveFile.id}<span class="busy-label">Opening...</span>{/if}
+									<DelayedSpinner
+										active={busyTarget === saveFile.id}
+										label={`Opening ${displayName(saveFile)}`}
+									/>
 								</div>
 							{:else if entry.kind === 'pokemon-storage'}
 								{@const selected = target.kind === 'pokemon-storage'}
@@ -799,11 +807,8 @@
 										onclick={openImportPicker}
 									>
 										<span>+</span>
-										<strong
-											>{busyTarget === 'import'
-												? 'Importing Save File...'
-												: 'Import a Save File'}</strong
-										>
+										<strong>Import a Save File</strong>
+										<DelayedSpinner active={busyTarget === 'import'} label="Importing Save File" />
 										<small>Choose a compatible file from this device.</small>
 									</button>
 								</div>
@@ -1092,16 +1097,6 @@
 	.save-menu-control:focus-visible {
 		background: var(--rust-wash);
 		color: var(--rust);
-	}
-
-	.busy-label {
-		position: absolute;
-		inset: auto var(--pksx-space-2) var(--pksx-space-2) auto;
-		padding: 2px 4px;
-		border-radius: var(--pksx-radius-small);
-		background: var(--paper-hi);
-		color: var(--rust);
-		font: 750 var(--pksx-type-caption) / 1 var(--pksx-font-mono);
 	}
 
 	.import-cell {

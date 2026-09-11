@@ -23,7 +23,7 @@ export function base64ToBytes(base64: string, expectedLength?: number): Uint8Arr
 	}
 
 	if (expectedLength !== undefined && bytes.byteLength !== expectedLength) {
-		throw new Error('Serialized save byte length did not match the engine response.');
+		throw new Error('Serialized Save File byte length did not match the response.');
 	}
 
 	return bytes;

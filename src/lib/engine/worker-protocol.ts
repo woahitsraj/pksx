@@ -1381,10 +1381,10 @@ function formatZodError(messageName: string, error: z.ZodError): string {
 	const issue = error.issues[0];
 
 	if (issue === undefined) {
-		return `Invalid PKHeX Engine worker ${messageName}.`;
+		return `Invalid background ${messageName}.`;
 	}
 
 	const path = issue.path.length > 0 ? ` at ${issue.path.join('.')}` : '';
 
-	return `Invalid PKHeX Engine worker ${messageName}${path}: ${issue.message}`;
+	return `Invalid background ${messageName}${path}: ${issue.message}`;
 }

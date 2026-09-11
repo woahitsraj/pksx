@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mount, tick, unmount } from 'svelte';
+import { flushSync, mount, tick, unmount } from 'svelte';
 import type { EngineApi } from '$lib/engine';
 import SavesGrid from './SavesGrid.svelte';
 import { createSummonedWorkflowHost } from '$lib/pksx/summoned-workflow/host.svelte';
@@ -45,6 +45,7 @@ afterEach(async () => {
 	fakes.detailsRequest = null;
 	await deleteIndexedDbSaves(fakes.databaseName);
 	invalidateSavesCache();
+	vi.useRealTimers();
 });
 
 it.each(['save-file-menu', 'save-file-delete', 'main-menu'] as const)(
@@ -126,15 +127,22 @@ it('marks a Save File card busy only while its details are loading', async () =>
 		bytes: new Uint8Array([1]),
 		originalFileName: 'loading.sav'
 	});
+	await getSavesSnapshot({ force: true });
+	vi.useFakeTimers();
 	container = document.createElement('div');
 	document.body.append(container);
 	component = mount(SavesGrid, { target: container });
+	flushSync();
 
-	await expect
-		.poll(() => container.querySelector<HTMLElement>('.save-card')?.getAttribute('aria-busy'))
-		.toBe('true');
 	const card = container.querySelector<HTMLElement>('.save-card')!;
-	expect(card.textContent).toContain('Reading save...');
+	expect(card.getAttribute('aria-busy')).toBe('true');
+	const progress = card.querySelector<HTMLElement>('[role="status"]')!;
+	vi.advanceTimersByTime(499);
+	flushSync();
+	expect(progress.textContent).toBe('');
+	vi.advanceTimersByTime(1);
+	flushSync();
+	expect(progress.textContent?.trim()).toBe('Reading loading.sav');
 
 	resolveDetails({
 		ok: true,
@@ -152,6 +160,6 @@ it('marks a Save File card busy only while its details are loading', async () =>
 	} as unknown as LoadSaveResult);
 
 	await expect.poll(() => card.getAttribute('aria-busy')).toBe('false');
-	expect(card.textContent).not.toContain('Reading save...');
+	expect(card.querySelector('[role="status"]')).toBeNull();
 	expect(card.textContent).toContain('CASS');
 });

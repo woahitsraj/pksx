@@ -1,5 +1,6 @@
 <script lang="ts">
 	import EdgeMenu from './EdgeMenu.svelte';
+	import DelayedSpinner from './DelayedSpinner.svelte';
 
 	interface Props {
 		location: string;
@@ -25,9 +26,8 @@
 </script>
 
 <EdgeMenu label={`Clear ${pokemonLabel}?`} onDismiss={onCancel}>
-	<div class="clear-confirm">
+	<div class="clear-confirm" aria-busy={applying}>
 		<div>
-			<p>Clear Slot</p>
 			<h2>Clear {pokemonLabel}?</h2>
 			<span>{location}</span>
 		</div>
@@ -41,15 +41,20 @@
 				onfocus={() => onFocusCommand(0)}
 				onclick={onCancel}>Cancel</button
 			>
-			<button
-				id="clear-confirm-1"
-				type="button"
-				class="danger"
-				class:controller-focused={activeIndex === 1}
-				disabled={applying}
-				onfocus={() => onFocusCommand(1)}
-				onclick={onConfirm}>{applying ? 'Clearing...' : 'Confirm Clear'}</button
-			>
+			<div class="confirm-submit">
+				<button
+					id="clear-confirm-1"
+					type="button"
+					class="danger"
+					class:controller-focused={activeIndex === 1}
+					disabled={applying}
+					onfocus={() => onFocusCommand(1)}
+					onclick={onConfirm}>Confirm Clear</button
+				>
+				<span class="confirm-progress">
+					<DelayedSpinner active={applying} label="Clearing Slot" />
+				</span>
+			</div>
 		</div>
 	</div>
 </EdgeMenu>
@@ -72,14 +77,6 @@
 	.clear-confirm > div:first-child {
 		display: grid;
 		gap: var(--pksx-space-1);
-	}
-
-	.clear-confirm > div:first-child p {
-		color: var(--err);
-		font-family: var(--pksx-font-mono), monospace;
-		font-size: var(--pksx-type-caption);
-		font-weight: 750;
-		text-transform: uppercase;
 	}
 
 	.clear-confirm h2 {
@@ -107,6 +104,23 @@
 		color: var(--ink);
 		font-size: var(--pksx-type-label);
 		font-weight: 800;
+	}
+
+	.confirm-submit {
+		position: relative;
+	}
+
+	.confirm-submit button {
+		width: 100%;
+	}
+
+	.confirm-progress {
+		position: absolute;
+		top: 50%;
+		right: var(--pksx-space-2);
+		display: grid;
+		place-items: center;
+		transform: translateY(-50%);
 	}
 
 	.confirm-actions button.danger {

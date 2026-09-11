@@ -188,7 +188,7 @@ export async function createPkhexEngine(basePath = '/pkhex-engine'): Promise<Eng
 			if (!engine.GetPokemonCreationCatalogueJson) {
 				return engineFailure(
 					'unsupported-pokemon-creation',
-					'Pokemon species names are not available in this PKHeX Engine build.'
+					'Pokemon species names are not available in this version.'
 				);
 			}
 
@@ -208,7 +208,7 @@ export async function createPkhexEngine(basePath = '/pkhex-engine'): Promise<Eng
 			if (!engine.ApplySaveFileEditOperationJson) {
 				return engineFailure(
 					'unsupported-save-file-edit',
-					'Save File field editing is not available in this PKHeX Engine build.'
+					'Save File editing is not available in this version.'
 				);
 			}
 
@@ -229,7 +229,7 @@ export async function createPkhexEngine(basePath = '/pkhex-engine'): Promise<Eng
 			if (!engine.GetSaveFileInventoryCatalogueJson) {
 				return engineFailure(
 					'unsupported-save-file-edit',
-					'Save File field editing is not available in this PKHeX Engine build.'
+					'Save File editing is not available in this version.'
 				);
 			}
 
@@ -332,21 +332,18 @@ export function parseEngineResult<T>(json: string): EngineResult<T> {
 	try {
 		return normalizeEngineResult(JSON.parse(json));
 	} catch {
-		return engineFailure('invalid-engine-response', 'The PKHeX Engine returned invalid JSON.');
+		return engineFailure('invalid-engine-response', 'Pokemon data could not be read.');
 	}
 }
 
 function normalizeEngineResult<T>(value: unknown): EngineResult<T> {
 	if (!isRecord(value) || typeof value.ok !== 'boolean') {
-		return engineFailure('invalid-engine-response', 'The PKHeX Engine returned an invalid result.');
+		return engineFailure('invalid-engine-response', 'Pokemon data could not be processed.');
 	}
 
 	if (value.ok) {
 		if (!('value' in value)) {
-			return engineFailure(
-				'invalid-engine-response',
-				'The PKHeX Engine returned a success without a value.'
-			);
+			return engineFailure('invalid-engine-response', 'Pokemon data could not be processed.');
 		}
 
 		return { ok: true, value: value.value as T, error: null };
@@ -361,14 +358,14 @@ function normalizeEngineError(error: unknown): EngineError {
 	if (!isRecord(error)) {
 		return {
 			code: 'invalid-engine-response',
-			message: 'The PKHeX Engine returned a failure without an error.'
+			message: 'Pokemon data could not be processed.'
 		};
 	}
 
 	const message =
 		typeof error.message === 'string' && error.message.length > 0
 			? error.message
-			: 'The PKHeX Engine failed without an error message.';
+			: 'Pokemon data could not be processed.';
 
 	if (typeof error.code !== 'string') {
 		return { code: 'invalid-engine-response', message };

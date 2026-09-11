@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick, type Snippet } from 'svelte';
 	import { fade, scale } from 'svelte/transition';
+	import DelayedSpinner from './DelayedSpinner.svelte';
 
 	type Tone = 'danger' | 'default';
 
@@ -113,12 +114,12 @@
 			aria-modal="true"
 			aria-labelledby={`${uid}-title`}
 			aria-describedby={description ? `${uid}-description` : undefined}
+			aria-busy={busy}
 			tabindex="-1"
 			transition:scale={{ duration: 150, start: 0.98 }}
 		>
 			<div class="dialog-mark" aria-hidden="true">!</div>
 			<div class="dialog-copy">
-				<p>Confirm action</p>
 				<h2 id={`${uid}-title`}>{title}</h2>
 				{#if description}
 					<span id={`${uid}-description`}>{description}</span>
@@ -142,8 +143,9 @@
 					disabled={busy}
 					onclick={onConfirm}
 				>
-					{busy ? 'Working...' : confirmLabel}
+					{confirmLabel}
 				</button>
+				<DelayedSpinner active={busy} label="Action in progress" />
 			</div>
 		</div>
 	</div>
@@ -215,18 +217,9 @@
 		gap: 8px;
 	}
 
-	.dialog-copy p,
 	.dialog-copy span {
 		margin: 0;
 		color: var(--pksx-color-text-muted);
-	}
-
-	.dialog-copy p {
-		font:
-			800 0.72rem var(--pksx-font-mono),
-			monospace;
-		text-transform: uppercase;
-		letter-spacing: 0.14em;
 	}
 
 	.dialog-copy h2 {

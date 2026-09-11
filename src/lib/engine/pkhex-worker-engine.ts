@@ -96,14 +96,14 @@ export function createPkhexWorkerEngine(
 	const onError = (event: ErrorEvent) => {
 		failWorker({
 			code: 'engine-unavailable',
-			message: event.message || 'The PKHeX Engine worker failed to start.'
+			message: event.message || 'Pokemon data could not be loaded.'
 		});
 	};
 
 	const onMessageError = () => {
 		failWorker({
 			code: 'engine-unavailable',
-			message: 'The PKHeX Engine worker received an unreadable message.'
+			message: 'Pokemon data could not be read.'
 		});
 	};
 
@@ -491,7 +491,7 @@ export function createPkhexWorkerEngine(
 			request.resolve(
 				engineFailure({
 					code: 'invalid-worker-message',
-					message: 'The PKHeX Engine worker returned a response for the wrong method.'
+					message: 'Pokemon data could not be processed.'
 				})
 			);
 			return;

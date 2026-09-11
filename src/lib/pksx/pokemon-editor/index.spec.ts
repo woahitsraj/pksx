@@ -138,7 +138,7 @@ const editablePokemonSlot: SlotView = {
 				id: 999,
 				name: 'Future Item',
 				available: false,
-				unavailableReason: 'Future Item is not supported by this Pokemon Entity format.'
+				unavailableReason: 'Future Item is not supported for this Pokemon.'
 			}
 		]
 	},
@@ -622,7 +622,7 @@ describe('Pokemon editor state', () => {
 		});
 	});
 
-	it('rejects a Held Item unavailable for the Pokemon Entity format', () => {
+	it('rejects a Held Item unavailable for the Pokemon', () => {
 		const rejected = stageHeldItemEdit(openEditableEditor(), { heldItemId: 999 });
 
 		expect(rejected).toMatchObject({
@@ -630,7 +630,7 @@ describe('Pokemon editor state', () => {
 			staged: false,
 			applyOutcome: {
 				status: 'rejected',
-				message: 'Future Item is not supported by this Pokemon Entity format.',
+				message: 'Future Item is not supported for this Pokemon.',
 				reason: 'invalid-pokemon-edit'
 			}
 		});
@@ -1293,7 +1293,7 @@ describe('Pokemon editor state', () => {
 			validate: vi.fn(async () => ({
 				ok: false as const,
 				status: 'unsupported' as const,
-				message: 'Engine-backed Pokemon editing is not available yet.',
+				message: 'Pokemon editing is not available yet.',
 				reason: 'engine-unavailable'
 			}))
 		});
@@ -1302,12 +1302,10 @@ describe('Pokemon editor state', () => {
 
 		expect(result.outcome).toEqual({
 			status: 'unsupported',
-			message: 'Engine-backed Pokemon editing is not available yet.',
+			message: 'Pokemon editing is not available yet.',
 			reason: 'engine-unavailable'
 		});
-		expect(result.state.unsupportedReason).toBe(
-			'Engine-backed Pokemon editing is not available yet.'
-		);
+		expect(result.state.unsupportedReason).toBe('Pokemon editing is not available yet.');
 		expect(result.state.stagedEdits).toEqual([stagedEdit]);
 	});
 
