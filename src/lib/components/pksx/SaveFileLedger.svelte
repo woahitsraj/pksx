@@ -890,6 +890,7 @@
 													<span>Trainer name</span>
 													<input
 														type="text"
+														enterkeyhint="done"
 														value={nameField.value}
 														maxlength={view.projection.trainerProfile.trainerNameMaxLength}
 														size={Math.max(1, view.projection.trainerProfile.trainerNameMaxLength)}
@@ -1044,6 +1045,7 @@
 												>
 												<input
 													type="number"
+													enterkeyhint="done"
 													aria-label="Money"
 													value={moneyField.value}
 													min={view.projection.money.min}

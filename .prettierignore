@@ -11,3 +11,6 @@ bun.lockb
 /android/
 /resources/
 /drizzle/
+
+# Preserve third-party license text verbatim.
+/test-fixtures/save-files/pkmds-blazor/LICENSE.md

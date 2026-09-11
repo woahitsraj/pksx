@@ -7,6 +7,7 @@ import sunMoonDemoFixtureUrl from '../../../test-fixtures/save-files/bl1ndbehold
 import ultraMoonFixtureUrl from '../../../test-fixtures/save-files/bl1ndbeholder-pokemon-saves/ultra-moon/011020252224.sav?url';
 import ultraSunFixtureUrl from '../../../test-fixtures/save-files/bl1ndbeholder-pokemon-saves/ultra-sun/011020252224.sav?url';
 import xFixtureUrl from '../../../test-fixtures/save-files/bl1ndbeholder-pokemon-saves/x/011020252224.sav?url';
+import publicShieldFixtureUrl from '../../../test-fixtures/save-files/pkmds-blazor/test-save-shield.sav?url';
 import pocketMonstersWhite2JpFixtureUrl from '../../../test-fixtures/save-files/raj-pokemon-save-backups/nds/pocket-monsters-white-2-jp.sav?url';
 import heartGoldFixtureUrl from '../../../test-fixtures/save-files/raj-pokemon-save-backups/nds/pokemon-heartgold.sav?url';
 import platinumEuFixtureUrl from '../../../test-fixtures/save-files/raj-pokemon-save-backups/nds/pokemon-platinum-eu.sav?url';
@@ -30,7 +31,13 @@ const supportedFixtureCases = [
 		byteLength: 441856
 	},
 	{ name: 'Ultra Sun', fileName: '011020252224', url: ultraSunFixtureUrl, byteLength: 445440 },
-	{ name: 'Ultra Moon', fileName: '011020252224', url: ultraMoonFixtureUrl, byteLength: 445440 }
+	{ name: 'Ultra Moon', fileName: '011020252224', url: ultraMoonFixtureUrl, byteLength: 445440 },
+	{
+		name: 'Shield (public)',
+		fileName: 'test-save-shield.sav',
+		url: publicShieldFixtureUrl,
+		byteLength: 1603249
+	}
 ] as const;
 
 const rajSaveFixtureCases = [
@@ -109,6 +116,7 @@ const expectedEditorGenerations: Record<(typeof editorCapabilityFixtures)[number
 		'Sun/Moon demo': 7,
 		'Ultra Sun': 7,
 		'Ultra Moon': 7,
+		'Shield (public)': 8,
 		HeartGold: 4,
 		'Platinum EU': 4,
 		White: 5,
@@ -127,6 +135,17 @@ const expectedEditorPockets: Record<(typeof editorCapabilityFixtures)[number]['n
 	'Sun/Moon demo': ['Items', 'Medicine', 'TMHMs', 'Berries', 'KeyItems', 'ZCrystals'],
 	'Ultra Sun': ['Items', 'Medicine', 'TMHMs', 'Berries', 'KeyItems', 'ZCrystals', 'BattleItems'],
 	'Ultra Moon': ['Items', 'Medicine', 'TMHMs', 'Berries', 'KeyItems', 'ZCrystals', 'BattleItems'],
+	'Shield (public)': [
+		'Medicine',
+		'Balls',
+		'BattleItems',
+		'Berries',
+		'Items',
+		'TMHMs',
+		'Treasure',
+		'Candy',
+		'KeyItems'
+	],
 	HeartGold: [
 		'Items',
 		'KeyItems',
