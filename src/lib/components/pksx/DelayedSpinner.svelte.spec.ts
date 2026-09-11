@@ -78,8 +78,9 @@ describe('DelayedSpinner', () => {
 		owner.append(content);
 		frame.append(owner);
 		document.body.append(frame);
-		renderSpinner(row);
 		const rootHeight = document.documentElement.scrollHeight;
+		expect(owner.scrollHeight).toBeGreaterThan(owner.clientHeight);
+		renderSpinner(row);
 
 		vi.advanceTimersByTime(499);
 		flushSync();
@@ -89,6 +90,5 @@ describe('DelayedSpinner', () => {
 		flushSync();
 		expect(row.querySelector('[role="status"]')?.textContent?.trim()).toBe('Loading');
 		expect(document.documentElement.scrollHeight).toBe(rootHeight);
-		expect(owner.scrollHeight).toBeGreaterThan(owner.clientHeight);
 	});
 });
