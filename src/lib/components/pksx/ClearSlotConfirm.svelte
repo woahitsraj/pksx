@@ -36,6 +36,7 @@
 			<button
 				id="clear-confirm-0"
 				type="button"
+				data-pksx-control-category="small"
 				class:controller-focused={activeIndex === 0}
 				disabled={applying}
 				onfocus={() => onFocusCommand(0)}
@@ -45,6 +46,7 @@
 				<button
 					id="clear-confirm-1"
 					type="button"
+					data-pksx-control-category="small"
 					class="danger"
 					class:controller-focused={activeIndex === 1}
 					disabled={applying}

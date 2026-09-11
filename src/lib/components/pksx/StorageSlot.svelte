@@ -57,6 +57,7 @@
 
 <button
 	{id}
+	data-pksx-control-category="slot"
 	class={[
 		'slot',
 		zoneClass,
@@ -227,7 +228,7 @@
 		z-index: 3;
 		color: color-mix(in srgb, var(--ink), transparent 30%);
 		font:
-			700 0.48rem var(--pksx-font-mono),
+			700 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		letter-spacing: 0.04em;
 	}
@@ -304,7 +305,7 @@
 		place-items: center;
 		color: color-mix(in srgb, var(--ink), transparent 35%);
 		font:
-			800 1rem var(--pksx-font-mono),
+			800 var(--pksx-type-title) var(--pksx-font-mono),
 			monospace;
 	}
 
@@ -333,7 +334,7 @@
 		border-radius: var(--pksx-radius-xs);
 		background: color-mix(in srgb, var(--paper-hi), transparent 26%);
 		color: color-mix(in srgb, var(--ink), transparent 18%);
-		font-size: 0.51rem;
+		font-size: var(--pksx-type-caption);
 		font-weight: 750;
 		text-align: center;
 		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink), transparent 92%);
@@ -357,7 +358,7 @@
 		margin: 0;
 		color: color-mix(in srgb, var(--ink), transparent 45%);
 		font:
-			700 0.47rem var(--pksx-font-mono),
+			700 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		font-style: normal;
 		letter-spacing: 0;

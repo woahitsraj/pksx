@@ -104,10 +104,6 @@
 	$effect(() => {
 		appChrome.hasLoadedSave = activeSaveFileId !== null;
 		appChrome.carryActive = false;
-		appChrome.controllerInputActive = true;
-		return () => {
-			appChrome.controllerInputActive = false;
-		};
 	});
 
 	onMount(() => {
@@ -653,6 +649,7 @@
 			</div>
 			<input
 				id="save-file-input"
+				data-pksx-control-category="composition"
 				type="file"
 				aria-label="Import Save File"
 				disabled={busyTarget !== null}
@@ -702,6 +699,7 @@
 									<button
 										type="button"
 										class="card-main"
+										data-pksx-control-category="card"
 										tabindex="-1"
 										aria-label={'Open ' + displayName(saveFile) + ' in Boxes'}
 										onclick={() => {
@@ -738,6 +736,7 @@
 									<button
 										type="button"
 										class="save-menu-control"
+										data-pksx-control-category="small"
 										aria-label={'Open Save File Menu for ' + displayName(saveFile)}
 										onpointerdown={(event) => event.preventDefault()}
 										onclick={() => openSaveFileMenu(saveFile.id)}
@@ -760,6 +759,7 @@
 									<button
 										type="button"
 										class="card-main storage-main"
+										data-pksx-control-category="card"
 										tabindex="-1"
 										aria-label="Open Pokemon Storage in Boxes"
 										onclick={() => void openPokemonStorage()}
@@ -785,6 +785,7 @@
 								>
 									<button
 										type="button"
+										data-pksx-control-category="card"
 										tabindex="-1"
 										aria-label="Import a Save File"
 										onclick={openImportPicker}

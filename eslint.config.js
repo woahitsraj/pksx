@@ -7,6 +7,7 @@ import { defineConfig } from 'eslint/config';
 import globals from 'globals';
 import ts from 'typescript-eslint';
 import svelteConfig from './svelte.config.js';
+import pksx from './eslint-local-rules/design-contract.js';
 
 const gitignorePath = path.resolve(import.meta.dirname, '.gitignore');
 
@@ -19,11 +20,18 @@ export default defineConfig(
 	svelte.configs.prettier,
 	{
 		languageOptions: { globals: { ...globals.browser, ...globals.node } },
+		plugins: { pksx },
 		rules: {
 			// typescript-eslint strongly recommend that you do not use the no-undef lint rule on TypeScript projects.
 			// see: https://typescript-eslint.io/troubleshooting/faqs/eslint/#i-get-errors-from-the-no-undef-rule-about-global-variables-not-being-defined-even-though-there-are-no-typescript-errors
-			'no-undef': 'off'
+			'no-undef': 'off',
+			'pksx/no-owned-token-writes': 'error',
+			'pksx/no-responsive-classifier': 'error'
 		}
+	},
+	{
+		files: ['**/*.{test,spec,e2e}.{js,ts}', 'tests/**/*.{js,ts}'],
+		rules: { 'pksx/no-responsive-classifier': 'off' }
 	},
 	{
 		files: ['**/*.svelte', '**/*.svelte.ts', '**/*.svelte.js'],

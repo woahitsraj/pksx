@@ -301,7 +301,7 @@
 		place-items: center;
 		color: color-mix(in srgb, var(--ink), transparent 35%);
 		font:
-			800 2rem var(--pksx-font-mono),
+			800 var(--pksx-type-display) var(--pksx-font-mono),
 			monospace;
 	}
 
@@ -311,7 +311,7 @@
 		left: 16px;
 		color: color-mix(in srgb, var(--ink), transparent 38%);
 		font:
-			750 0.68rem var(--pksx-font-mono),
+			750 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
@@ -326,7 +326,7 @@
 		background: color-mix(in srgb, var(--paper-hi), transparent 22%);
 		color: color-mix(in srgb, var(--ink), transparent 38%);
 		font:
-			800 0.72rem var(--pksx-font-mono),
+			800 var(--pksx-type-label) var(--pksx-font-mono),
 			monospace;
 		letter-spacing: 0.05em;
 	}
@@ -347,7 +347,7 @@
 		background: oklch(0.89 var(--type-chroma, 0.09) var(--type-hue, 52));
 		color: oklch(0.31 var(--type-chroma, 0.09) var(--type-hue, 52));
 		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink), transparent 90%);
-		font-size: 0.7rem;
+		font-size: var(--pksx-type-label);
 		font-weight: 850;
 	}
 
@@ -361,7 +361,7 @@
 	.detail-heading h2 {
 		margin: 0;
 		color: var(--ink);
-		font-size: clamp(1.6rem, 2.8vw, 2.3rem);
+		font-size: var(--pksx-type-display);
 		font-weight: 800;
 		line-height: 0.95;
 		letter-spacing: 0;
@@ -373,13 +373,13 @@
 		margin-top: 7px;
 		color: var(--ink-soft);
 		font:
-			750 0.76rem var(--pksx-font-mono),
+			750 var(--pksx-type-label) var(--pksx-font-mono),
 			monospace;
 		letter-spacing: 0.05em;
 	}
 
 	.detail-heading.empty-heading h2 {
-		font-size: 1.45rem;
+		font-size: var(--pksx-type-title);
 	}
 
 	.detail-level {
@@ -393,14 +393,14 @@
 	.detail-level span {
 		color: var(--ink-mute);
 		font:
-			750 0.58rem var(--pksx-font-mono),
+			750 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		letter-spacing: 0.08em;
 	}
 
 	.detail-level strong {
 		color: var(--rust);
-		font-size: 2.3rem;
+		font-size: var(--pksx-type-display);
 		font-weight: 850;
 		line-height: 0.9;
 	}
@@ -411,7 +411,7 @@
 		gap: 6px 10px;
 		color: var(--ink-soft);
 		font:
-			750 0.72rem var(--pksx-font-mono),
+			750 var(--pksx-type-label) var(--pksx-font-mono),
 			monospace;
 		letter-spacing: 0.05em;
 	}
@@ -434,7 +434,7 @@
 		justify-content: space-between;
 		color: var(--ink-mute);
 		font:
-			800 0.68rem var(--pksx-font-mono),
+			800 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		letter-spacing: 0.12em;
 		text-transform: uppercase;
@@ -456,7 +456,7 @@
 	.stat-key {
 		color: var(--ink-soft);
 		font:
-			800 0.68rem var(--pksx-font-mono),
+			800 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 	}
 
@@ -480,7 +480,7 @@
 	.stat-row em {
 		margin: 0;
 		font:
-			800 0.72rem var(--pksx-font-mono),
+			800 var(--pksx-type-label) var(--pksx-font-mono),
 			monospace;
 		text-align: right;
 	}
@@ -526,7 +526,7 @@
 		min-width: 0;
 		padding-left: 10px;
 		color: var(--ink);
-		font-size: 0.72rem;
+		font-size: var(--pksx-type-label);
 		font-weight: 800;
 		line-height: 1.08;
 		overflow-wrap: anywhere;
@@ -536,7 +536,7 @@
 		padding-left: 10px;
 		color: var(--ink-mute);
 		font:
-			700 0.58rem var(--pksx-font-mono),
+			700 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		text-transform: uppercase;
 	}
@@ -547,7 +547,7 @@
 		top: 10px;
 		color: var(--ink-mute);
 		font:
-			800 0.66rem var(--pksx-font-mono),
+			800 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		font-style: normal;
 	}
@@ -568,7 +568,7 @@
 	.empty-copy span {
 		color: var(--ink-mute);
 		font:
-			700 0.58rem var(--pksx-font-mono),
+			700 var(--pksx-type-caption) var(--pksx-font-mono),
 			monospace;
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
@@ -579,19 +579,18 @@
 		min-width: 0;
 		color: var(--ink);
 		font:
-			750 0.72rem var(--pksx-font-mono),
+			750 var(--pksx-type-label) var(--pksx-font-mono),
 			monospace;
 		font-weight: 750;
 		text-align: right;
 		overflow-wrap: anywhere;
 	}
 
-	@media (max-width: 1024px) {
+	@container detail-rail (width < 260px) or (height <= 260px) {
 		.detail-rail {
 			order: 2;
 			position: static;
 			max-height: none;
-			overflow: visible;
 			min-height: 0;
 			border-radius: var(--pksx-radius-lg);
 			padding: 10px;
@@ -613,7 +612,7 @@
 		}
 	}
 
-	@media (max-width: 420px) {
+	@container detail-rail (height <= 260px) {
 		.move-grid {
 			grid-template-columns: 1fr;
 		}

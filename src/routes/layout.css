@@ -2,6 +2,10 @@
 @plugin '@tailwindcss/forms';
 @plugin '@tailwindcss/typography';
 
+@theme {
+	--breakpoint-*: initial;
+}
+
 @property --pksx-type-caption {
 	syntax: '<length>';
 	inherits: true;
@@ -235,18 +239,13 @@
 html,
 body {
 	margin: 0;
+	height: 100%;
+	container: app-shell-size / inline-size;
+	overflow: hidden;
 	background: var(--pksx-color-surface-canvas);
 	color: var(--pksx-color-text-primary);
 	font-family: var(--pksx-font-sans);
 	font-weight: 500;
-}
-
-@media (min-width: 1025px) {
-	html,
-	body {
-		height: 100%;
-		overflow: hidden;
-	}
 }
 
 strong {
@@ -281,13 +280,16 @@ html[data-input-modality='controller'] body :focus {
 	--shadow: var(--pksx-shadow-raised);
 	--shadow-sm: var(--pksx-shadow-subtle);
 	--shadow-deep: var(--pksx-shadow-panel);
+	--pksx-shell-space: clamp(10px, calc(3.125cqw - 22px), 18px);
 	height: 100dvh;
 	min-height: 100dvh;
-	padding: max(18px, var(--pksx-safe-area-top)) max(18px, var(--pksx-safe-area-right))
-		max(18px, var(--pksx-safe-area-bottom)) max(18px, var(--pksx-safe-area-left));
+	padding: max(var(--pksx-shell-space), var(--pksx-safe-area-top))
+		max(var(--pksx-shell-space), var(--pksx-safe-area-right))
+		max(var(--pksx-shell-space), var(--pksx-safe-area-bottom))
+		max(var(--pksx-shell-space), var(--pksx-safe-area-left));
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: 10px;
 	overflow: hidden;
 	background:
 		radial-gradient(circle at 20% 10%, rgba(255, 255, 255, 0.5), transparent 40%),
@@ -301,17 +303,6 @@ html[data-input-modality='controller'] body :focus {
 	background:
 		radial-gradient(circle at 20% 10%, rgba(255, 138, 92, 0.04), transparent 50%),
 		radial-gradient(circle at 80% 90%, rgba(120, 140, 180, 0.04), transparent 55%), var(--paper);
-}
-
-@media (max-width: 1024px) {
-	.app-shell {
-		height: auto;
-		min-height: 100dvh;
-		padding: max(10px, var(--pksx-safe-area-top)) max(10px, var(--pksx-safe-area-right))
-			max(10px, var(--pksx-safe-area-bottom)) max(10px, var(--pksx-safe-area-left));
-		gap: 10px;
-		overflow: visible;
-	}
 }
 
 .app-shell.takeover-active {

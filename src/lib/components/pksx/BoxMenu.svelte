@@ -27,6 +27,7 @@
 					<button
 						id={`box-menu-command-${index}`}
 						type="button"
+						data-pksx-control-category="small"
 						class:controller-focused={activeIndex === index}
 						aria-disabled={command.reason ? 'true' : undefined}
 						aria-describedby={command.reason ? `box-menu-command-${index}-reason` : undefined}

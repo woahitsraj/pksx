@@ -72,7 +72,7 @@
 		mounted = true;
 		coordinator = getSaveFileEditCoordinator();
 		engine = getPkhexEngine();
-		updateAppChrome({ carryActive: false, controllerInputActive: true });
+		updateAppChrome({ carryActive: false });
 		const unregisterBack = registerRouteBack?.(() => ledger?.handleBack() ?? false);
 		void loadWorkspace(false);
 

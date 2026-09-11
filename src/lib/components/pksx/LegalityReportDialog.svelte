@@ -102,6 +102,7 @@
 											id={`legality-quick-fix-warning-${index}`}
 											data-legality-report-control
 											type="button"
+											data-pksx-control-category="small"
 											class="quick-fix"
 											onclick={() => onQuickFix(line.fixId!, `legality-quick-fix-warning-${index}`)}
 											>Quick Fix</button
@@ -128,6 +129,7 @@
 											id={`legality-quick-fix-message-${index}`}
 											data-legality-report-control
 											type="button"
+											data-pksx-control-category="small"
 											class="quick-fix"
 											onclick={() => onQuickFix(line.fixId!, `legality-quick-fix-message-${index}`)}
 											>Quick Fix</button
@@ -264,6 +266,10 @@
 		background: var(--rust);
 		color: white;
 		font-weight: 720;
+	}
+
+	footer button {
+		min-height: var(--pksx-control-height);
 	}
 
 	.quick-fix {

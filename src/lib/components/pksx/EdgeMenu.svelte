@@ -13,6 +13,7 @@
 <div class="edge-menu-layer">
 	<button
 		class="edge-menu-backdrop"
+		data-pksx-control-category="composition"
 		type="button"
 		tabindex="-1"
 		aria-label={`Dismiss ${label}`}

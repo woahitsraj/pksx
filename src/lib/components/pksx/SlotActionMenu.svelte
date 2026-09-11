@@ -41,6 +41,7 @@
 					<button
 						id={`slot-action-${index}`}
 						type="button"
+						data-pksx-control-category="small"
 						class:controller-focused={activeIndex === index}
 						aria-disabled={command.reason ? 'true' : undefined}
 						aria-describedby={command.reason ? `slot-action-${index}-reason` : undefined}
@@ -71,6 +72,7 @@
 		<button
 			id={`slot-action-${commands.length}`}
 			type="button"
+			data-pksx-control-category="small"
 			class="close-command"
 			class:controller-focused={activeIndex === commands.length}
 			onfocus={() => onFocusCommand(commands.length)}

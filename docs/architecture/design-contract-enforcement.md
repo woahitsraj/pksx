@@ -409,13 +409,30 @@ Geometry, state, accessibility, and policy assertions fail CI. Target-state scre
 
 `pnpm lint` runs the CSS design-contract checker and local JavaScript/Svelte rules.
 
+The executable checker is `node scripts/design-contract/check.ts`. It parses every shipping `.css`, `.html`,
+and `.svelte` file under `src` with `svelte/compiler`, then ESLint checks JavaScript and Svelte
+script ASTs. Diagnostics use the stable forms `[RESP-1] viewport-query`, `[RESP-1]
+height-band-owner`, `[RESP-1] viewport-classifier`, `[RESP-1] viewport-variant`, `[DENSITY-1]
+token-owner`, `[DENSITY-1] type-token`, `[DENSITY-1] editable-floor`, and `[DENSITY-1]
+control-owner`.
+
 - Reject viewport width, aspect, or orientation layout queries in shipping code; Tailwind viewport variants; duplicate Height Band thresholds; unauthorized `--pksx-height-band` assignments; raw type sizes where semantic tokens apply; and standard controls without token ownership.
 - Permit the sole app-level `min-height: 560px` authority, the named `tall:` and container-query refinements, non-layout media features, and explicit custom categories for Slots, cards, icon-only controls, and composition-owned surfaces. Small controls must derive from the 24–33px token in DENSITY-1.
+- The density owner must write the exact registered base values and the exact 900px by 700px
+  container refinement. Descendants, inline styles, and runtime CSSOM calls cannot reassign owned
+  type or control tokens. Standard controls use `--pksx-control-height`. Small controls carry
+  `data-pksx-control-category="small"`; custom controls use `slot`, `card`, `icon-only`, or
+  `composition`.
 - Require editable controls to use the shared DENSITY-1 font-size floor, and reject declarations or token use that can lower it below 16px. Static analysis checks declarations and token ownership. Browser acceptance checks computed sizes. Do not raise labels or non-editable compact text to satisfy this rule.
 - Reject layout-bearing `matchMedia()` calls, viewport dimension bindings, and direct viewport or screen reads used as classifiers. Permit test inspection, element measurement, and one narrowly owned geometry helper that returns coordinates rather than responsive modes.
 - Enable strict enforcement only after fixing every shipping-code violation. Use no baseline snapshot, temporary allowlist, or permanent prototype exception. Remove historical prototype routes when production replaces them and retain their commit-linked evidence.
 
 Diagnostics cite the smallest applicable contract identifier.
+
+The retired Box-first and density prototype routes remain available in Git history at commits
+[`50718d8c`](https://github.com/woahitsraj/pksx/commit/50718d8c7216e7d8ea50d66be01a45ec87d8b522)
+and
+[`f8d1d5e9`](https://github.com/woahitsraj/pksx/commit/f8d1d5e9c2f2f4e468eb193336081c3f8967a943).
 
 ### Domain reducer gate
 
