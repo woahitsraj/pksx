@@ -2461,6 +2461,7 @@ test('Edit opens Pokemon Editor and returns focus to the command stack', async (
 	await expect(page.locator('#pokemon-editor-section-nickname')).toBeFocused();
 
 	await choosePokemonEditorSection(page, 'species-form');
+	await expect(editor.locator('#pokemon-editor-species')).toBeEnabled();
 	await page.keyboard.press('ArrowRight');
 	await expect(editor.locator('#pokemon-editor-species')).toBeFocused();
 	await pressController(page, 'ArrowLeft');

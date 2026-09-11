@@ -94,14 +94,23 @@ jobs:
       - name: Sync published PKHeX Engine assets
         run: pnpm engine:sync -- --skip-publish
 
-      - name: Install Playwright browser
-        run: pnpm exec playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
 
       - name: Fixture-backed PKHeX Engine smoke test
         run: pnpm test:engine-smoke
 
       - name: End-to-end tests
         run: pnpm test:e2e
+
+      - name: Upload responsive target screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: responsive-target-screenshots
+          path: test-results/**/responsive-*.png
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Build web app
         run: pnpm build
