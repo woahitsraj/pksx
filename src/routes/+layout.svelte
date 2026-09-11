@@ -25,6 +25,7 @@
 	} from '$lib/pksx/destination-focus';
 	import { setDestinationFocusIdentityGetter } from '$lib/pksx/destination-focus-context.svelte';
 	import { getSavesStorage } from '$lib/pksx/saves-cache';
+	import { setRouteBackRegistrar } from '$lib/pksx/route-back-context.svelte';
 	import { theme } from '$lib/pksx/theme.svelte';
 	import { createToastHost, setToastHost } from '$lib/pksx/toast/host.svelte';
 	import {
@@ -44,6 +45,13 @@
 	const toastHost = setToastHost(createToastHost());
 	const storage = getSavesStorage();
 	const destinationFocus = new SvelteMap<Destination, DestinationFocus>();
+	let routeBackHandler: (() => boolean) | null = null;
+	setRouteBackRegistrar((handler) => {
+		routeBackHandler = handler;
+		return () => {
+			if (routeBackHandler === handler) routeBackHandler = null;
+		};
+	});
 	setDestinationFocusIdentityGetter(
 		(destination) => destinationFocus.get(destination)?.identity ?? null
 	);
@@ -302,6 +310,7 @@
 			activeRoute !== 'boxes'
 		) {
 			consumeRootEvent(event);
+			if (routeBackHandler?.()) return;
 			void goto(resolve('/'), { keepFocus: true });
 		}
 	}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import SaveFileEditor from '$lib/components/pksx/SaveFileEditor.svelte';
+	import SaveFileDestination from '$lib/components/pksx/SaveFileDestination.svelte';
 </script>
 
-<SaveFileEditor destination="bag" />
+<SaveFileDestination destination="bag" />
