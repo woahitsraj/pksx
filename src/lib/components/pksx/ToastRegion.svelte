@@ -1,18 +1,12 @@
 <script lang="ts">
 	import { cubicOut } from 'svelte/easing';
-
-	type ToastView = {
-		id: string;
-		tone: 'info' | 'success' | 'error';
-		message: string;
-	};
+	import type { ToastView } from '$lib/pksx/toast/host.svelte';
 
 	interface Props {
-		toasts: ToastView[];
-		onDismiss: (id: string) => void;
+		toasts: readonly ToastView[];
 	}
 
-	let { toasts, onDismiss }: Props = $props();
+	let { toasts }: Props = $props();
 
 	function toastSlide(node: Element) {
 		void node;
@@ -28,32 +22,36 @@
 	}
 </script>
 
-<div class="toast-region" aria-live="polite" aria-label="Notifications">
-	{#each toasts as toast (toast.id)}
-		<section
-			class={['toast', `toast-${toast.tone}`]}
-			role={toast.tone === 'error' ? 'alert' : 'status'}
-			transition:toastSlide
-		>
-			<span class="toast-mark" aria-hidden="true"></span>
-			<span>{toast.message}</span>
-			<button type="button" aria-label="Dismiss notification" onclick={() => onDismiss(toast.id)}>
-				×
-			</button>
-		</section>
-	{/each}
+<div class="toast-region" role="region" aria-label="Notifications">
+	<div class="toast-list" role="status" aria-live="polite" aria-relevant="additions text">
+		{#each toasts as toast (toast.id)}
+			<section class={['toast', `toast-${toast.tone}`]} transition:toastSlide>
+				<span class="toast-mark" aria-hidden="true"></span>
+				<span>{toast.message}</span>
+			</section>
+		{/each}
+	</div>
 </div>
 
 <style>
 	.toast-region {
 		position: fixed;
-		z-index: 80;
-		right: 18px;
-		bottom: 18px;
-		width: min(360px, calc(100vw - 24px));
-		display: grid;
-		gap: 8px;
+		z-index: 900;
+		right: calc(var(--pksx-safe-area-right) + var(--pksx-space-2, 8px));
+		bottom: calc(var(--pksx-safe-area-bottom) + var(--pksx-space-2, 8px));
+		width: min(
+			360px,
+			calc(
+				100% - var(--pksx-safe-area-left) - var(--pksx-safe-area-right) - var(--pksx-space-2, 8px) -
+					var(--pksx-space-2, 8px)
+			)
+		);
 		pointer-events: none;
+	}
+
+	.toast-list {
+		display: grid;
+		gap: var(--pksx-space-2, 8px);
 	}
 
 	.toast {
@@ -72,7 +70,6 @@
 		font-size: 0.75rem;
 		font-weight: 700;
 		line-height: 1.25;
-		pointer-events: auto;
 		will-change: opacity, transform;
 	}
 
@@ -103,36 +100,5 @@
 	.toast-success .toast-mark {
 		background: var(--ok);
 		box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok), transparent 84%);
-	}
-
-	.toast button {
-		flex: 0 0 auto;
-		width: 24px;
-		height: 24px;
-		display: grid;
-		place-items: center;
-		padding: 0;
-		border-radius: var(--pksx-radius-sm);
-		background: transparent;
-		color: var(--ink-soft);
-		font-size: 1.05rem;
-		font-weight: 700;
-		line-height: 1;
-	}
-
-	.toast button:hover,
-	.toast button:focus-visible {
-		background: var(--paper-deep);
-		color: var(--ink);
-		outline: none;
-	}
-
-	@media (max-width: 1024px) {
-		.toast-region {
-			right: 10px;
-			bottom: 86px;
-			left: 10px;
-			width: auto;
-		}
 	}
 </style>

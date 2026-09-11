@@ -1037,7 +1037,7 @@ test('Box Menu exports and backs up the captured secondary Save File Workspace',
 	await page.keyboard.press('Enter');
 	await secondarySlotMenu.getByRole('button', { name: 'Move' }).click();
 	await page.locator('#box-0-slot-3').click();
-	await expect(page.getByRole('alert')).toContainText(
+	await expect(page.locator('.toast-error')).toContainText(
 		'Moving Pokemon between Save Files is not available yet.'
 	);
 	await expect(page.locator('#box-0-slot-2')).toContainText('ARON');
@@ -1871,7 +1871,7 @@ test('confirm opens slot actions and back restores the grid focus', async ({ pag
 	]) {
 		await expect(page.getByRole('button', { name: unavailableAction, exact: true })).toHaveCount(0);
 	}
-	await expect(page.getByRole('alert')).toHaveCount(0);
+	await expect(page.locator('.toast-error')).toHaveCount(0);
 
 	await expect(page.locator('#slot-action-0')).toBeFocused();
 	await expect(page.getByRole('button', { name: 'Open Main Menu' })).toHaveCount(0);
@@ -4008,7 +4008,7 @@ test('moves an occupied box slot into an empty destination slot', async ({ page 
 
 	await moveFirstEmeraldBoxSlotToThirdSlot(page);
 	await expect(page.locator('#box-0-slot-2')).toBeFocused();
-	await expect(page.getByRole('alert')).toHaveCount(0);
+	await expect(page.locator('.toast-error')).toHaveCount(0);
 });
 
 test('reload preserves unexported slot changes from the active workspace', async ({ page }) => {
@@ -4042,7 +4042,7 @@ test('can perform another slot mutation after the first move changes workspace b
 	await page.locator('#box-0-slot-3').click();
 
 	await expect(page.locator('#box-0-slot-3')).toContainText('ILLUMISE');
-	await expect(page.getByRole('alert')).toHaveCount(0);
+	await expect(page.locator('.toast-error')).toHaveCount(0);
 });
 
 test('copies an occupied box slot into an empty destination slot', async ({ page }) => {
@@ -4083,7 +4083,7 @@ test('copy keeps destination selection active and shows an error toast for occup
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 
 	await expect(page.locator('#box-0-slot-1')).toBeFocused();
-	await expect(page.getByRole('alert')).toContainText('Copy needs an empty destination Slot.');
+	await expect(page.locator('.toast-error')).toContainText('Copy needs an empty destination Slot.');
 	await expect(page.locator('#box-0-slot-0')).toContainText('ARON');
 	await expect(page.locator('#box-0-slot-1')).toContainText('ILLUMISE');
 });
@@ -4368,19 +4368,21 @@ test('Saves imports distinct cards, opens cards and menus, and preserves failure
 		buffer: fixture
 	});
 
-	await expect(page.getByText('alpha.sav imported and made active.')).toBeVisible({
+	const alphaToast = page.locator('.toast-success').filter({
+		hasText: 'alpha.sav imported and made active.'
+	});
+	await expect(alphaToast).toBeVisible({
 		timeout: 15000
 	});
-	let dismissNotification = page.getByRole('button', { name: 'Dismiss notification' });
-	await dismissNotification.focus();
+	await expect(grid).toBeFocused();
 	const alphaTarget = await grid.getAttribute('aria-activedescendant');
 	await page.keyboard.press('ArrowLeft');
-	await page.keyboard.press('x');
-	await expect(dismissNotification).toBeFocused();
+	await expect(grid).toBeFocused();
 	await expect(grid).toHaveAttribute('aria-activedescendant', alphaTarget!);
-	await expect(page.getByRole('dialog', { name: 'Save File Menu' })).toBeHidden();
-	await page.keyboard.press('Enter');
-	await expect(dismissNotification).toBeHidden();
+	await page.keyboard.press('x');
+	await expect(page.getByRole('dialog', { name: 'Save File Menu' })).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(grid).toBeFocused();
 	await expect(page).toHaveURL(/\/saves$/);
 	const alphaCard = page.locator('.save-card').filter({ hasText: 'alpha.sav' });
 	await expect(alphaCard).toContainText('Pokemon Emerald');
@@ -4389,7 +4391,7 @@ test('Saves imports distinct cards, opens cards and menus, and preserves failure
 	await expect(alphaCard).toContainText('7 Pokemon');
 	await expect(page.locator('.save-card.active').getByText('Active')).toBeVisible();
 
-	await expect(page.locator('body')).toBeFocused();
+	await expect(grid).toBeFocused();
 	await page.keyboard.press('ArrowRight');
 	await expect(grid).toHaveAttribute('aria-activedescendant', 'saves-target-pokemon-storage');
 	await page.keyboard.press('x');
@@ -4414,13 +4416,12 @@ test('Saves imports distinct cards, opens cards and menus, and preserves failure
 		buffer: fixture
 	});
 
-	await expect(page.getByText('beta.sav imported and made active.')).toBeVisible({
+	await expect(
+		page.locator('.toast-success').filter({ hasText: 'beta.sav imported and made active.' })
+	).toBeVisible({
 		timeout: 15000
 	});
-	dismissNotification = page.getByRole('button', { name: 'Dismiss notification' });
-	await dismissNotification.focus();
-	await page.keyboard.press('Space');
-	await expect(dismissNotification).toBeHidden();
+	await expect(grid).toBeFocused();
 	await expect(page).toHaveURL(/\/saves$/);
 	await expect(page.locator('.save-card')).toHaveCount(2);
 	await expect(page.locator('.save-card.active')).toContainText('beta.sav');

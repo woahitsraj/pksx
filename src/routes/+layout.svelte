@@ -13,10 +13,12 @@
 		MAIN_MENU_SEARCH_INSERTION_INDEX,
 		type MainMenuEntry
 	} from '$lib/components/pksx/MainMenu.svelte';
+	import ToastRegion from '$lib/components/pksx/ToastRegion.svelte';
 	import { appChrome } from '$lib/pksx/app-chrome.svelte';
 	import { heightBandLock } from '$lib/pksx/height-band-lock';
 	import { getSavesStorage } from '$lib/pksx/saves-cache';
 	import { theme } from '$lib/pksx/theme.svelte';
+	import { createToastHost, setToastHost } from '$lib/pksx/toast/host.svelte';
 	import {
 		createSummonedWorkflowHost,
 		setSummonedWorkflowHost
@@ -34,6 +36,7 @@
 
 	let { children } = $props();
 	const summonedWorkflow = setSummonedWorkflowHost(createSummonedWorkflowHost());
+	const toastHost = setToastHost(createToastHost());
 	const storage = getSavesStorage();
 	const destinationFocus = new SvelteMap<Destination, DestinationFocus>();
 	let mainMenuIndex = $state(0);
@@ -123,6 +126,7 @@
 		return () => {
 			window.removeEventListener('keydown', handleRootKeydown, true);
 			void backListener?.then((listener) => listener.remove());
+			toastHost.dispose();
 		};
 	});
 
@@ -675,6 +679,8 @@
 	{:else if summonedWorkflow.active?.kind === 'backup-browser'}
 		<BackupBrowser />
 	{/if}
+
+	<ToastRegion toasts={toastHost.toasts} />
 </main>
 <AppUpdatePrompt />
 
