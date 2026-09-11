@@ -5,7 +5,8 @@ import {
 	type BackupId,
 	type BackupReason,
 	type SavesStorage,
-	type StoredSaveFile
+	type StoredSaveFile,
+	WorkspaceRevisionConflictError
 } from '$lib/pksx/saves';
 import type { EngineApi, SaveWorkspace } from '$lib/engine';
 
@@ -95,6 +96,44 @@ export function markAutomaticBackupCreated(state: WorkspaceState): WorkspaceStat
 
 export function shouldCreateAutomaticBackup(state: WorkspaceState): boolean {
 	return !state.automaticBackupCreated;
+}
+
+export type PreparedAutomaticBackup = {
+	state: WorkspaceState;
+	revision: string;
+	established: boolean;
+};
+
+export async function prepareAutomaticBackup(input: {
+	storage: SavesStorage;
+	state: WorkspaceState;
+	reason: BackupReason;
+}): Promise<PreparedAutomaticBackup> {
+	const owner = await requireSaveFileOwner(input.storage, input.state.file);
+	const persisted = await input.storage.getWorkspace(owner.id);
+	const bytes = persisted?.bytes ?? (await input.storage.getSaveBytes(owner.id));
+	if (!bytes) throw new Error('The Save File bytes are no longer available.');
+	if (!bytesEqual(bytes, input.state.bytes) || (persisted?.dirty ?? false) !== input.state.dirty) {
+		throw new WorkspaceRevisionConflictError();
+	}
+
+	const prepared = await input.storage.ensureAutomaticBackup({
+		saveFileId: owner.id,
+		importedAt: owner.importedAt,
+		expectedUpdatedAt: persisted?.updatedAt ?? null,
+		reason: input.reason
+	});
+	if (
+		!bytesEqual(prepared.workspace.bytes, bytes) ||
+		prepared.workspace.dirty !== input.state.dirty
+	) {
+		throw new WorkspaceRevisionConflictError();
+	}
+	return {
+		state: markAutomaticBackupCreated({ ...input.state, file: owner }),
+		revision: prepared.workspace.updatedAt,
+		established: prepared.established
+	};
 }
 
 export function createRestoredSaveFileName(fileName: string | null) {

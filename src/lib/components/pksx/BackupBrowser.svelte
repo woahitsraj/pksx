@@ -14,6 +14,7 @@
 	import {
 		getActiveWorkspaceService,
 		getCachedActiveWorkspaceBox,
+		getSaveFileEditCoordinator,
 		getPkhexEngine,
 		getSavesStorage,
 		invalidateSavesCache,
@@ -38,6 +39,7 @@
 
 	const reasonLabels: Record<BackupMetadata['reason'], string> = {
 		manual: 'Manual',
+		'save-file-editing': 'Save File editing',
 		'pokemon-movement': 'Pokemon movement',
 		'pokemon-editing': 'Pokemon editing',
 		'pokemon-creation': 'Pokemon creation',
@@ -139,7 +141,10 @@
 				owner,
 				backup,
 				box: getCachedActiveWorkspaceBox(),
-				publish: setCachedActiveWorkspace
+				publish: (state, box) => {
+					setCachedActiveWorkspace(state, box);
+					getSaveFileEditCoordinator().replaceWorkspace(state, box);
+				}
 			});
 			invalidateSavesCache();
 			dismissBrowser();

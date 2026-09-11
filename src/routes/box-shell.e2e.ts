@@ -62,24 +62,42 @@ async function pressController(page: Page, key: string) {
 async function installWorkspaceResponseHold(page: Page) {
 	await page.addInitScript(() => {
 		type TestWindow = typeof window & {
-			__pksxWorkspaceResponsesToHold?: number;
+			__pksxWorkspaceRequestsToHold?: number;
 			__pksxHeldWorkspaceResponses?: number;
 			__pksxResponseMethodToHold?: string;
 			__pksxReleaseWorkspaceResponses?: () => void;
 		};
 		const testWindow = window as TestWindow;
 		const NativeWorker = window.Worker;
+		const heldRequestIds = new Set<string>();
 		const releases: Array<() => void> = [];
-		testWindow.__pksxWorkspaceResponsesToHold = 0;
+		testWindow.__pksxWorkspaceRequestsToHold = 0;
 		testWindow.__pksxHeldWorkspaceResponses = 0;
 		testWindow.__pksxResponseMethodToHold = 'loadSaveWorkspace';
 		testWindow.__pksxReleaseWorkspaceResponses = () => {
+			heldRequestIds.clear();
 			for (const release of releases.splice(0)) release();
 		};
 
 		window.Worker = new Proxy(NativeWorker, {
 			construct(Target, args: ConstructorParameters<typeof Worker>) {
 				const worker = new Target(...args);
+				const postMessage = worker.postMessage.bind(worker);
+				worker.postMessage = new Proxy(postMessage, {
+					apply(target, thisArg, args) {
+						const request = args[0] as { id?: string; method?: string } | null;
+						const remaining = testWindow.__pksxWorkspaceRequestsToHold ?? 0;
+						if (
+							request?.id &&
+							request.method === (testWindow.__pksxResponseMethodToHold ?? 'loadSaveWorkspace') &&
+							remaining !== 0
+						) {
+							if (remaining > 0) testWindow.__pksxWorkspaceRequestsToHold = remaining - 1;
+							heldRequestIds.add(request.id);
+						}
+						return Reflect.apply(target, thisArg, args);
+					}
+				}) as typeof worker.postMessage;
 				const addEventListener = worker.addEventListener.bind(worker);
 				worker.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject) => {
 					if (type !== 'message') {
@@ -87,20 +105,15 @@ async function installWorkspaceResponseHold(page: Page) {
 						return;
 					}
 					addEventListener(type, (event: Event) => {
-						const message = (event as MessageEvent).data as { method?: string } | null;
-						const remaining = testWindow.__pksxWorkspaceResponsesToHold ?? 0;
+						const message = (event as MessageEvent).data as { id?: string } | null;
 						const invoke = () => {
 							if (typeof listener === 'function') listener.call(worker, event);
 							else listener.handleEvent(event);
 						};
-						if (
-							message?.method !== (testWindow.__pksxResponseMethodToHold ?? 'loadSaveWorkspace') ||
-							remaining === 0
-						) {
+						if (!message?.id || !heldRequestIds.delete(message.id)) {
 							invoke();
 							return;
 						}
-						if (remaining > 0) testWindow.__pksxWorkspaceResponsesToHold = remaining - 1;
 						testWindow.__pksxHeldWorkspaceResponses =
 							(testWindow.__pksxHeldWorkspaceResponses ?? 0) + 1;
 						releases.push(invoke);
@@ -116,10 +129,10 @@ async function holdWorkspaceResponses(page: Page, count = -1, method = 'loadSave
 	await page.evaluate(
 		({ responses, responseMethod }) => {
 			const testWindow = window as typeof window & {
-				__pksxWorkspaceResponsesToHold?: number;
+				__pksxWorkspaceRequestsToHold?: number;
 				__pksxResponseMethodToHold?: string;
 			};
-			testWindow.__pksxWorkspaceResponsesToHold = responses;
+			testWindow.__pksxWorkspaceRequestsToHold = responses;
 			testWindow.__pksxResponseMethodToHold = responseMethod;
 		},
 		{ responses: count, responseMethod: method }
@@ -141,11 +154,11 @@ async function waitForHeldWorkspaceResponses(page: Page, count = 1) {
 async function releaseWorkspaceResponses(page: Page) {
 	await page.evaluate(() => {
 		const testWindow = window as typeof window & {
-			__pksxWorkspaceResponsesToHold?: number;
+			__pksxWorkspaceRequestsToHold?: number;
 			__pksxResponseMethodToHold?: string;
 			__pksxReleaseWorkspaceResponses?: () => void;
 		};
-		testWindow.__pksxWorkspaceResponsesToHold = 0;
+		testWindow.__pksxWorkspaceRequestsToHold = 0;
 		testWindow.__pksxResponseMethodToHold = 'loadSaveWorkspace';
 		testWindow.__pksxReleaseWorkspaceResponses?.();
 	});
@@ -153,6 +166,77 @@ async function releaseWorkspaceResponses(page: Page) {
 
 test.afterEach(async ({ page }) => {
 	if (!page.isClosed()) await releaseWorkspaceResponses(page);
+});
+
+test('workspace response hold targets requests started after it is armed', async ({ page }) => {
+	await installWorkspaceResponseHold(page);
+	await page.goto('/');
+	await page.evaluate(() => {
+		const worker = new Worker(
+			URL.createObjectURL(
+				new Blob(
+					[
+						`const pending = [];
+						onmessage = ({ data }) => data.type === 'request'
+							? pending.push(data)
+							: pending.splice(0).forEach((response) => postMessage(response));`
+					],
+					{ type: 'text/javascript' }
+				)
+			)
+		);
+		const testWindow = window as typeof window & {
+			__pksxHoldProbe?: { worker: Worker; responses: string[] };
+		};
+		testWindow.__pksxHoldProbe = { worker, responses: [] };
+		worker.addEventListener('message', (event) => {
+			testWindow.__pksxHoldProbe?.responses.push((event.data as { id: string }).id);
+		});
+	});
+	const post = (message: { type: string; id?: string; method?: string }) =>
+		page.evaluate((value) => {
+			(
+				window as typeof window & {
+					__pksxHoldProbe?: { worker: Worker };
+				}
+			).__pksxHoldProbe?.worker.postMessage(value);
+		}, message);
+	const responses = () =>
+		page.evaluate(
+			() =>
+				(
+					window as typeof window & {
+						__pksxHoldProbe?: { responses: string[] };
+					}
+				).__pksxHoldProbe?.responses
+		);
+
+	await post({ type: 'request', id: 'pre-arm', method: 'loadSaveWorkspace' });
+	await holdWorkspaceResponses(page, 1);
+	await post({ type: 'release' });
+	await expect.poll(responses).toEqual(['pre-arm']);
+
+	await post({
+		type: 'request',
+		id: 'post-arm',
+		method: 'loadSaveWorkspace'
+	});
+	await post({ type: 'release' });
+	await waitForHeldWorkspaceResponses(page);
+	await expect.poll(responses).toEqual(['pre-arm']);
+
+	await releaseWorkspaceResponses(page);
+	await expect.poll(responses).toEqual(['pre-arm', 'post-arm']);
+
+	await holdWorkspaceResponses(page, 1);
+	await post({
+		type: 'request',
+		id: 'released-before-response',
+		method: 'loadSaveWorkspace'
+	});
+	await releaseWorkspaceResponses(page);
+	await post({ type: 'release' });
+	await expect.poll(responses).toEqual(['pre-arm', 'post-arm', 'released-before-response']);
 });
 
 async function choosePokemonEditorSection(page: Page, section: string) {
@@ -1061,9 +1145,11 @@ test('Box Menu exports and backs up the captured secondary Save File Workspace',
 
 	await page.keyboard.press('x');
 	await menu.getByRole('button', { name: 'Save a backup' }).click();
-	await expect(page.locator('.toast-success')).toContainText(
-		'Backup saved for emerald-011020251345.sav.'
-	);
+	await expect(
+		page.locator('.toast-success').filter({
+			hasText: 'Backup saved for emerald-011020251345.sav.'
+		})
+	).toBeVisible();
 	const backups = (await backupRecords(page)).filter(({ reason }) => reason === 'manual');
 	expect(backups).toHaveLength(1);
 	expect(backups[0]).toMatchObject({
@@ -3014,6 +3100,21 @@ test('controller input follows the keyboard navigation path', async ({ page }) =
 	await expect(page.locator('#box-0-slot-1')).toBeFocused();
 });
 
+test('exports the displayed Save File through the edit coordinator boundary', async ({ page }) => {
+	await importEmeraldThroughSaves(page);
+	await page.getByRole('button', { name: 'Open Box Menu for emerald-011020251345.sav' }).click();
+	const download = page.waitForEvent('download');
+	await page
+		.getByRole('dialog', { name: 'Box Menu' })
+		.getByRole('button', { name: 'Export', exact: true })
+		.click();
+
+	expect((await download).suggestedFilename()).toBe('emerald-011020251345.pksx.sav');
+	await expect(page.locator('.toast-success')).toContainText(
+		'Export ready for emerald-011020251345.sav.'
+	);
+});
+
 test('controller focus framework covers every interactive surface', async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 800 });
 	await openEmptySaves(page);
@@ -4575,6 +4676,7 @@ test('Saves imports distinct cards, opens cards and menus, and preserves failure
 });
 
 test('Saves menu activates its Save File before opening Trainer or Bag', async ({ page }) => {
+	await page.clock.install({ time: Date.now() });
 	await installWorkspaceResponseHold(page);
 	await openEmptySaves(page);
 	await chooseMainMenu(page, 'Saves');
@@ -4587,6 +4689,8 @@ test('Saves menu activates its Save File before opening Trainer or Bag', async (
 	await expect(page.getByText('alpha.sav imported and made active.')).toBeVisible({
 		timeout: 15_000
 	});
+	await expect(page.locator('.save-card')).toHaveCount(1);
+	await expect(page.locator('.save-card[aria-busy="true"]')).toHaveCount(0);
 
 	await page.getByLabel('Import Save File').setInputFiles({
 		name: 'beta.sav',
@@ -4596,6 +4700,8 @@ test('Saves menu activates its Save File before opening Trainer or Bag', async (
 	await expect(page.getByText('beta.sav imported and made active.')).toBeVisible({
 		timeout: 15_000
 	});
+	await expect(page.locator('.save-card')).toHaveCount(2);
+	await expect(page.locator('.save-card[aria-busy="true"]')).toHaveCount(0);
 
 	const grid = page.getByRole('grid', { name: 'Saves collections' });
 	const alphaCard = page.locator('.save-card').filter({ hasText: 'alpha.sav' });
@@ -4609,10 +4715,8 @@ test('Saves menu activates its Save File before opening Trainer or Bag', async (
 	await pressController(page, 'ArrowDown');
 	await expect(menu.getByRole('button', { name: 'Open Bag' })).toBeFocused();
 	await pressController(page, 'ArrowUp');
-	const now = Date.now();
-	await page.clock.setFixedTime(now);
-	await page.clock.pauseAt(now);
-	await page.clock.setSystemTime(now);
+	const pauseTime = await page.evaluate(() => Date.now());
+	await page.clock.pauseAt(pauseTime + 1_000);
 	await holdWorkspaceResponses(page, 1);
 	await menu.getByRole('button', { name: 'Open Trainer' }).click();
 	await expect(menu.locator('.save-file-menu')).toHaveAttribute('aria-busy', 'true');

@@ -41,8 +41,7 @@
 	import {
 		createCleanWorkspaceState,
 		createManualBackup,
-		markAutomaticBackupCreated,
-		shouldCreateAutomaticBackup,
+		prepareAutomaticBackup,
 		type WorkspaceState
 	} from '$lib/pksx/backup-workflow';
 	import {
@@ -85,6 +84,7 @@
 		getActiveWorkspaceService,
 		consumeActiveSaveAdoption,
 		getCachedActiveWorkspaceBox,
+		getSaveFileEditCoordinator,
 		getSavesStorage,
 		getPkhexEngine,
 		invalidateSavesCache,
@@ -468,6 +468,7 @@
 	let pokemonEditorScratchWorkspace = $state<WorkspaceState | null>(null);
 	let pokemonEditorBaseBytes = $state<Uint8Array | null>(null);
 	let pokemonEditorApplyRequest = 0;
+	let pokemonEditorPreparedRevision: string | null = null;
 	let pokemonSpeciesFormProjection = $state<PokemonSpeciesFormEditProjection | null>(null);
 	let pokemonSpeciesFormError = $state<string | null>(null);
 	let pokemonSpeciesFormLoading = $state(false);
@@ -1617,10 +1618,16 @@
 		busy = true;
 		importError = null;
 		try {
-			const bytes = await workspaceService.exportBytes(resolved.workspace.state);
+			const editCoordinator = getSaveFileEditCoordinator();
+			const origin = editCoordinator.openWorkspace(
+				resolved.workspace.state,
+				resolved.pane.activeBox
+			);
+			const bytes = await editCoordinator.export(origin);
 			if (!resolveBoxMenuSaveTarget(target)) return;
 			downloadBytes(bytes, createExportFileName(resolved.workspace.state.file.originalFileName));
 			statusMessage = `Export ready for ${resolved.workspace.state.file.originalFileName ?? 'Save File'}.`;
+			toastHost.success(statusMessage);
 			closeBoxMenu();
 		} catch (error) {
 			importError = getErrorMessage(error);
@@ -1902,16 +1909,13 @@
 		importError = null;
 
 		try {
-			let workingState = destinationWorkspace;
-			if (shouldCreateAutomaticBackup(workingState)) {
-				await storage.createBackup({
-					saveFileId: workingState.file.id,
-					bytes: workingState.bytes,
-					reason: 'pokemon-movement'
-				});
-				workingState = markAutomaticBackupCreated(workingState);
-				if (loadedSave?.file.id === workingState.file.id) loadedSave = workingState;
-			}
+			const prepared = await prepareAutomaticBackup({
+				storage,
+				state: destinationWorkspace,
+				reason: 'pokemon-movement'
+			});
+			const workingState = prepared.state;
+			if (loadedSave?.file.id === workingState.file.id) loadedSave = workingState;
 
 			const result = await activeEngine.importStoredPokemon(
 				workingState.bytes,
@@ -1935,7 +1939,7 @@
 				restoredFromBackup: null
 			};
 			if (nextState.dirty) {
-				await persistWorkspace(nextState);
+				await persistWorkspace(nextState, prepared.revision);
 			}
 
 			if (pending.kind === 'move') {
@@ -2116,13 +2120,8 @@
 				partyCount: operationState.workspace.summary.partyCount,
 				services: {
 					engine: activeEngine,
-					createAutomaticBackup: async (state) => {
-						await storage.createBackup({
-							saveFileId: state.file.id,
-							bytes: state.bytes,
-							reason: 'pokemon-movement'
-						});
-					},
+					prepareAutomaticBackup: (state) =>
+						prepareAutomaticBackup({ storage, state, reason: 'pokemon-movement' }),
 					persistWorkspace,
 					locationForSlotRef
 				}
@@ -3027,13 +3026,8 @@
 
 		try {
 			const result = await applyPokemonAction(activeEngine, context.target, operation, {
-				createAutomaticBackup: async (state, reason) => {
-					await storage.createBackup({
-						saveFileId: state.file.id,
-						bytes: state.bytes,
-						reason
-					});
-				},
+				prepareAutomaticBackup: (state, reason) =>
+					prepareAutomaticBackup({ storage, state, reason }),
 				persistWorkspace,
 				persistStoredPokemon: (storedResult) => persistStoredPokemonAction(context, storedResult)
 			});
@@ -3957,6 +3951,7 @@
 		busy = true;
 		pokemonEditorFeedback = null;
 		const applyRequest = (pokemonEditorApplyRequest += 1);
+		pokemonEditorPreparedRevision = null;
 
 		try {
 			if (pokemonEditorScratchWorkspace) {
@@ -4036,26 +4031,23 @@
 			toastHost.error(pokemonEditorFeedback);
 			return;
 		}
-		if (shouldCreateAutomaticBackup(liveWorkspace)) {
-			await storage.createBackup({
-				saveFileId: liveWorkspace.file.id,
-				bytes: liveWorkspace.bytes,
-				reason: pokemonCreation ? 'pokemon-creation' : 'pokemon-editing'
-			});
-			liveWorkspace = currentPokemonEditorWorkspace(editor, editorPane);
-			if (!liveWorkspace) {
-				pokemonEditorFeedback = 'Pokemon Editor source changed before Apply.';
-				toastHost.error(pokemonEditorFeedback);
-				return;
-			}
-			const backedUpWorkspace = markAutomaticBackupCreated(liveWorkspace);
-			if (loadedSave?.file.id === backedUpWorkspace.file.id) loadedSave = backedUpWorkspace;
-			savePaneWorkspaces = {
-				...savePaneWorkspaces,
-				[editorPane.id]: { state: backedUpWorkspace, loadedBox: editorPane.activeBox }
-			};
-			liveWorkspace = backedUpWorkspace;
+		const prepared = await prepareAutomaticBackup({
+			storage,
+			state: liveWorkspace,
+			reason: pokemonCreation ? 'pokemon-creation' : 'pokemon-editing'
+		});
+		liveWorkspace = currentPokemonEditorWorkspace(editor, editorPane);
+		if (!liveWorkspace || liveWorkspace.bytes !== prepared.state.bytes) {
+			pokemonEditorFeedback = 'Pokemon Editor source changed before Apply.';
+			toastHost.error(pokemonEditorFeedback);
+			return;
 		}
+		liveWorkspace = prepared.state;
+		if (loadedSave?.file.id === liveWorkspace.file.id) loadedSave = liveWorkspace;
+		savePaneWorkspaces = {
+			...savePaneWorkspaces,
+			[editorPane.id]: { state: liveWorkspace, loadedBox: editorPane.activeBox }
+		};
 
 		const nextState: WorkspaceState = {
 			...liveWorkspace,
@@ -4064,7 +4056,7 @@
 			dirty: true,
 			restoredFromBackup: null
 		};
-		await persistWorkspace(nextState);
+		await persistWorkspace(nextState, prepared.revision);
 		installPokemonEditorWorkspace(nextState);
 		if (applyRequest !== pokemonEditorApplyRequest) return;
 		if (pokemonCreation) {
@@ -4161,14 +4153,13 @@
 		const editorPane = workbenchPanes.find((pane) => pane.id === pokemonEditorPaneId);
 		const editorWorkspace = saveWorkspaceForPane(editorPane)?.state ?? null;
 		if (!editorPane || !editorWorkspace) return saveFileUnavailable();
-		if (!shouldCreateAutomaticBackup(editorWorkspace)) return { ok: true } as const;
-
-		await storage.createBackup({
-			saveFileId: editorWorkspace.file.id,
-			bytes: editorWorkspace.bytes,
+		const prepared = await prepareAutomaticBackup({
+			storage,
+			state: editorWorkspace,
 			reason: 'pokemon-editing'
 		});
-		const backedUpWorkspace = markAutomaticBackupCreated(editorWorkspace);
+		pokemonEditorPreparedRevision = prepared.revision;
+		const backedUpWorkspace = prepared.state;
 		if (loadedSave?.file.id === backedUpWorkspace.file.id) loadedSave = backedUpWorkspace;
 		savePaneWorkspaces = {
 			...savePaneWorkspaces,
@@ -4189,6 +4180,8 @@
 		const workingState = saveWorkspaceForPane(editorPane)?.state ?? null;
 		if (!editorPane || !workingState) return saveFileUnavailable();
 		if (!engine) return engineUnavailable();
+		const preparedRevision = pokemonEditorPreparedRevision;
+		if (!preparedRevision) return saveFileUnavailable();
 
 		const mutation = await engine.applyPokemonEditOperation(
 			workingState.bytes,
@@ -4205,13 +4198,19 @@
 			};
 		}
 
-		return commitPokemonEditorMutation(workingState, operation.operation, mutation.value);
+		return commitPokemonEditorMutation(
+			workingState,
+			operation.operation,
+			mutation.value,
+			preparedRevision
+		);
 	}
 
 	async function commitPokemonEditorMutation(
 		workingState: WorkspaceState,
 		operation: PokemonEditOperation,
-		mutation: PokemonEditOperationResult
+		mutation: PokemonEditOperationResult,
+		expectedUpdatedAt: string
 	): Promise<PokemonEditorMutationResult> {
 		const nextState: WorkspaceState = {
 			...workingState,
@@ -4220,7 +4219,7 @@
 			dirty: workingState.dirty || mutation.mutated,
 			restoredFromBackup: null
 		};
-		if (nextState.dirty) await persistWorkspace(nextState);
+		if (nextState.dirty) await persistWorkspace(nextState, expectedUpdatedAt);
 		installPokemonEditorWorkspace(nextState);
 
 		const updatedSlot = slotViewForRefFromWorkspace(nextState.workspace, operation.source);
@@ -4669,12 +4668,13 @@
 		return result.value;
 	}
 
-	async function persistWorkspace(state: WorkspaceState) {
+	async function persistWorkspace(state: WorkspaceState, expectedUpdatedAt?: string) {
 		await storage.putWorkspace({
 			saveFileId: state.file.id,
 			bytes: state.bytes,
 			dirty: state.dirty,
-			automaticBackupCreated: state.automaticBackupCreated
+			automaticBackupCreated: state.automaticBackupCreated,
+			...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {})
 		});
 	}
 

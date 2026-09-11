@@ -12,11 +12,7 @@ import type {
 	StoredPokemonActionOperation,
 	StoredPokemonActionResult
 } from '$lib/engine';
-import {
-	markAutomaticBackupCreated,
-	shouldCreateAutomaticBackup,
-	type WorkspaceState
-} from '$lib/pksx/backup-workflow';
+import type { PreparedAutomaticBackup, WorkspaceState } from '$lib/pksx/backup-workflow';
 
 export type PokemonActionSelection = {
 	kind: PokemonActionKind;
@@ -57,8 +53,11 @@ export type PokemonActionTarget =
 	  };
 
 export type PokemonActionApplyServices = {
-	createAutomaticBackup(state: WorkspaceState, reason: 'legality-fix' | 'evolution'): Promise<void>;
-	persistWorkspace(state: WorkspaceState): Promise<void>;
+	prepareAutomaticBackup(
+		state: WorkspaceState,
+		reason: 'legality-fix' | 'evolution'
+	): Promise<PreparedAutomaticBackup>;
+	persistWorkspace(state: WorkspaceState, expectedUpdatedAt: string): Promise<void>;
 	persistStoredPokemon(result: StoredPokemonActionResult): Promise<void>;
 };
 
@@ -166,14 +165,11 @@ export async function applyPokemonAction(
 		return { ok: true, owner: 'pokemon-storage', result: result.value };
 	}
 
-	let workspace = target.workspace;
-	if (shouldCreateAutomaticBackup(workspace)) {
-		await services.createAutomaticBackup(
-			workspace,
-			operation.kind === 'legality-fix' ? 'legality-fix' : 'evolution'
-		);
-		workspace = markAutomaticBackupCreated(workspace);
-	}
+	const prepared = await services.prepareAutomaticBackup(
+		target.workspace,
+		operation.kind === 'legality-fix' ? 'legality-fix' : 'evolution'
+	);
+	const workspace = prepared.state;
 
 	const saveOperation: PokemonActionOperation = {
 		...operation,
@@ -194,7 +190,7 @@ export async function applyPokemonAction(
 		dirty: workspace.dirty || result.value.mutated,
 		restoredFromBackup: null
 	};
-	if (nextWorkspace.dirty) await services.persistWorkspace(nextWorkspace);
+	if (nextWorkspace.dirty) await services.persistWorkspace(nextWorkspace, prepared.revision);
 
 	return {
 		ok: true,

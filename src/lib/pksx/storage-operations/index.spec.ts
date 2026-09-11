@@ -69,9 +69,10 @@ describe('storage operations', () => {
 			dirtyChanged: true,
 			mutated: true
 		});
-		expect(services.createAutomaticBackup).toHaveBeenCalledTimes(1);
+		expect(services.prepareAutomaticBackup).toHaveBeenCalledTimes(1);
 		expect(services.persistWorkspace).toHaveBeenCalledWith(
-			expect.objectContaining({ dirty: true })
+			expect.objectContaining({ dirty: true }),
+			'revision-1'
 		);
 	});
 
@@ -149,7 +150,7 @@ describe('storage operations', () => {
 			reason: 'empty-source',
 			message: 'Move, Copy, and Clear Slot need an occupied source Slot.'
 		});
-		expect(services.createAutomaticBackup).not.toHaveBeenCalled();
+		expect(services.prepareAutomaticBackup).not.toHaveBeenCalled();
 		expect(services.engine.applySlotOperation).not.toHaveBeenCalled();
 	});
 
@@ -198,7 +199,7 @@ describe('storage operations', () => {
 			reason: 'occupied-destination',
 			message: 'Copy needs an empty destination Slot.'
 		});
-		expect(services.createAutomaticBackup).not.toHaveBeenCalled();
+		expect(services.prepareAutomaticBackup).not.toHaveBeenCalled();
 		expect(services.engine.applySlotOperation).not.toHaveBeenCalled();
 	});
 
@@ -219,7 +220,7 @@ describe('storage operations', () => {
 			reason: 'invalid-destination',
 			message: 'That Party Slot cannot be used yet.'
 		});
-		expect(services.createAutomaticBackup).not.toHaveBeenCalled();
+		expect(services.prepareAutomaticBackup).not.toHaveBeenCalled();
 		expect(services.engine.applySlotOperation).not.toHaveBeenCalled();
 	});
 
@@ -240,7 +241,7 @@ describe('storage operations', () => {
 			reason: 'noop',
 			message: 'No Slot change made.'
 		});
-		expect(services.createAutomaticBackup).not.toHaveBeenCalled();
+		expect(services.prepareAutomaticBackup).not.toHaveBeenCalled();
 		expect(services.engine.applySlotOperation).not.toHaveBeenCalled();
 	});
 
@@ -268,7 +269,7 @@ describe('storage operations', () => {
 		});
 
 		expect(second).toMatchObject({ ok: true, createdAutomaticBackup: false });
-		expect(services.createAutomaticBackup).toHaveBeenCalledTimes(1);
+		expect(services.prepareAutomaticBackup).toHaveBeenCalledTimes(2);
 		expect(services.persistWorkspace).toHaveBeenCalledTimes(2);
 	});
 
@@ -393,7 +394,11 @@ function createServices(options: { mutated?: boolean } = {}) {
 
 	return {
 		engine: engine as EngineApi & { applySlotOperation: ReturnType<typeof vi.fn> },
-		createAutomaticBackup: vi.fn(async () => undefined),
+		prepareAutomaticBackup: vi.fn(async (state: WorkspaceState) => ({
+			state: { ...state, automaticBackupCreated: true },
+			revision: 'revision-1',
+			established: !state.automaticBackupCreated
+		})),
 		persistWorkspace: vi.fn(async () => undefined),
 		locationForSlotRef
 	};

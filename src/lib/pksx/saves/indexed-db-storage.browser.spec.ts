@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bytesEqual } from './bytes';
 import { deleteIndexedDbSaves, IndexedDbSavesStorage } from './indexed-db-storage';
 import { createEmptyPokemonStorage } from './pokemon-storage';
+import { WorkspaceRevisionConflictError } from './workspace-revision';
 
 describe('IndexedDbSavesStorage', () => {
 	let databaseName: string;
@@ -99,6 +100,145 @@ describe('IndexedDbSavesStorage', () => {
 		});
 		expect(retrievedWorkspace).toStrictEqual(storedWorkspace);
 		expect(bytesEqual(originalAgain ?? new Uint8Array(), originalBytes)).toBe(true);
+	});
+
+	it('reconciles a Backup written again with the same stable identity', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		await storage.createBackup({
+			id: 'stable-edit-backup',
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			reason: 'save-file-editing'
+		});
+		const reconciled = await storage.createBackup({
+			id: 'stable-edit-backup',
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([3]),
+			reason: 'save-file-editing'
+		});
+
+		expect(await storage.listBackups(saveFile.id)).toEqual([reconciled]);
+		expect(await storage.getBackupBytes(reconciled.id)).toEqual(new Uint8Array([3]));
+	});
+
+	it('assigns distinct Workspace revisions when the clock does not advance', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		const first = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+		const second = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+
+		expect(first.updatedAt).toBe('2026-05-16T12:00:00.000Z');
+		expect(second.updatedAt).toBe('2026-05-16T12:00:00.001Z');
+	});
+
+	it('rejects a Workspace write based on an obsolete persisted revision', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		const first = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+		const second = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([3]),
+			dirty: true,
+			automaticBackupCreated: true,
+			expectedUpdatedAt: first.updatedAt
+		});
+
+		await expect(
+			storage.putWorkspace({
+				saveFileId: saveFile.id,
+				bytes: new Uint8Array([4]),
+				dirty: true,
+				automaticBackupCreated: true,
+				expectedUpdatedAt: first.updatedAt
+			})
+		).rejects.toBeInstanceOf(WorkspaceRevisionConflictError);
+		expect(await storage.getWorkspace(saveFile.id)).toEqual(second);
+	});
+
+	it('atomically prepares one automatic Backup and preserves it across a byte-identical Restore', async () => {
+		const bytes = new Uint8Array([1, 2, 3]);
+		const saveFile = await storage.importSave({ bytes, originalFileName: null });
+		const first = await storage.ensureAutomaticBackup({
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			expectedUpdatedAt: null,
+			reason: 'trainer-editing'
+		});
+		const repeated = await storage.ensureAutomaticBackup({
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			expectedUpdatedAt: first.workspace.updatedAt,
+			reason: 'inventory-editing'
+		});
+		expect(first.established).toBe(true);
+		expect(repeated).toEqual({ workspace: first.workspace, established: false });
+		expect(await storage.listBackups(saveFile.id)).toEqual([
+			expect.objectContaining({
+				reason: 'trainer-editing',
+				createdAt: '2026-05-16T12:00:00.000Z'
+			})
+		]);
+
+		const restored = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes,
+			dirty: false,
+			automaticBackupCreated: false,
+			expectedUpdatedAt: first.workspace.updatedAt
+		});
+		await storage.ensureAutomaticBackup({
+			saveFileId: saveFile.id,
+			importedAt: saveFile.importedAt,
+			expectedUpdatedAt: restored.updatedAt,
+			reason: 'inventory-editing'
+		});
+		expect(new Set((await storage.listBackups(saveFile.id)).map(({ id }) => id)).size).toBe(2);
+	});
+
+	it('rejects obsolete automatic Backup preparation without changing Backup or Workspace state', async () => {
+		const saveFile = await storage.importSave({
+			bytes: new Uint8Array([1]),
+			originalFileName: null
+		});
+		const current = await storage.putWorkspace({
+			saveFileId: saveFile.id,
+			bytes: new Uint8Array([2]),
+			dirty: true,
+			automaticBackupCreated: false
+		});
+
+		await expect(
+			storage.ensureAutomaticBackup({
+				saveFileId: saveFile.id,
+				importedAt: saveFile.importedAt,
+				expectedUpdatedAt: null,
+				reason: 'save-file-editing'
+			})
+		).rejects.toBeInstanceOf(WorkspaceRevisionConflictError);
+		expect(await storage.getWorkspace(saveFile.id)).toEqual(current);
+		expect(await storage.listBackups(saveFile.id)).toEqual([]);
 	});
 
 	it('clears persisted workspace bytes for a save artifact', async () => {

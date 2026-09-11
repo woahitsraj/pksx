@@ -7,6 +7,7 @@ import {
 	type SaveSummary
 } from '$lib/engine';
 import type { WorkspaceState } from '$lib/pksx/backup-workflow';
+import { SaveFileEditCoordinator } from '$lib/pksx/save-file-edit-coordinator';
 import { createSavesStorage, type SaveFileId, type StoredSaveFile } from '$lib/pksx/saves';
 import {
 	ActiveWorkspaceService,
@@ -54,6 +55,7 @@ let workspaceService: ActiveWorkspaceService | null = null;
 let workspaceServiceStart: Promise<void> | null = null;
 let activeWorkspaceBox = 0;
 let pendingActiveSaveAdoption: SaveFileId | null = null;
+let saveFileEditCoordinator: SaveFileEditCoordinator | null = null;
 
 export function getSavesStorage() {
 	return storage;
@@ -74,6 +76,16 @@ export function getActiveWorkspaceService() {
 				: new LocalStorageWorkspacePersistence('pksx-active-workspace-v1')
 	});
 	return workspaceService;
+}
+
+export function getSaveFileEditCoordinator() {
+	saveFileEditCoordinator ??= new SaveFileEditCoordinator({
+		storage,
+		engine: getPkhexEngine,
+		publish: setCachedActiveWorkspace,
+		isResultCurrent: ({ saveFileId }) => workspaceService?.current?.file.id === saveFileId
+	});
+	return saveFileEditCoordinator;
 }
 
 async function startActiveWorkspaceService() {
