@@ -32,7 +32,7 @@
 
 	.delayed-spinner.visible {
 		display: inline-grid;
-		position: static;
+		position: relative;
 		place-items: center;
 		width: 1em;
 		height: 1em;
