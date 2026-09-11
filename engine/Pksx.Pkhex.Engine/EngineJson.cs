@@ -12,6 +12,7 @@ internal static class EngineJson
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(EngineResult<object>))]
+[JsonSerializable(typeof(EngineResult<bool>))]
 [JsonSerializable(typeof(EngineResult<EngineVersion>))]
 [JsonSerializable(typeof(EngineResult<SaveSummary>))]
 [JsonSerializable(typeof(EngineResult<SaveWorkspace>))]
@@ -22,6 +23,7 @@ internal static class EngineJson
 [JsonSerializable(typeof(EngineResult<SaveFileEditOperationResult>))]
 [JsonSerializable(typeof(EngineResult<SaveFileInventoryCatalogue>))]
 [JsonSerializable(typeof(EngineResult<PokemonSpeciesFormEditProjection>))]
+[JsonSerializable(typeof(EngineResult<PokemonCreationCatalogue>))]
 [JsonSerializable(typeof(EngineResult<PokemonCreationResult>))]
 [JsonSerializable(typeof(EngineResult<LegalityReport>))]
 [JsonSerializable(typeof(EngineResult<PokemonActionPreview>))]
@@ -30,6 +32,7 @@ internal static class EngineJson
 [JsonSerializable(typeof(SlotOperationRequest))]
 [JsonSerializable(typeof(StoredPokemonImportRequest))]
 [JsonSerializable(typeof(PokemonEditOperationRequest))]
+[JsonSerializable(typeof(PokemonEditPreviewValidationRequest))]
 [JsonSerializable(typeof(SaveFileEditOperationRequest))]
 [JsonSerializable(typeof(PokemonActionRequest))]
 [JsonSerializable(typeof(StoredPokemonActionRequest))]

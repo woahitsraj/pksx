@@ -45,6 +45,14 @@ public class ControllerNavigationTest {
     @Test
     public void gamepadNavigatesAndHighlightsSlotActions() throws Exception {
         awaitControllerSurface();
+        runJavaScript("location.assign('/?source=pokemon-storage')");
+        awaitJavaScript(
+            "location.search === '?source=pokemon-storage'"
+                + " && document.querySelector('.boxes-route')?.dataset.initialState === 'ready'"
+                + " && document.querySelector('#box-grid')?.getAttribute('aria-label')"
+                + ".startsWith('Pokemon Storage Box 01')"
+                + " && document.querySelector('#box-0-slot-1')?.textContent.includes('Empty')"
+        );
         runJavaScript(
             "window.__pksxTestControllerEvents = [];"
                 + " window.addEventListener('pksxcontroller', event =>"
@@ -60,13 +68,20 @@ public class ControllerNavigationTest {
 
         pressGamepadKey(
             KeyEvent.KEYCODE_BUTTON_A,
-            "document.querySelector('[role=\"dialog\"][aria-label=\"Slot actions\"]') !== null"
-                + " && document.activeElement?.id === 'slot-action-0'"
+            "(() => {"
+                + " const dialog = document.querySelector('[role=\"dialog\"][aria-label=\"Slot actions\"]');"
+                + " const buttons = [...(dialog?.querySelectorAll('button') ?? [])];"
+                + " return buttons.length === 1"
+                + " && buttons[0].textContent?.trim() === 'Close'"
+                + " && document.activeElement === buttons[0]"
+                + " && document.activeElement?.id === 'slot-action-0';"
+                + " })()"
         );
 
         pressGamepadKey(
             KeyEvent.KEYCODE_DPAD_DOWN,
-            "document.activeElement?.id === 'slot-action-1'"
+            "document.activeElement?.id === 'slot-action-0'"
+                + " && document.activeElement?.textContent?.trim() === 'Close'"
                 + " && document.activeElement.classList.contains('controller-focused')"
                 + " && getComputedStyle(document.activeElement).outlineStyle === 'solid'"
         );

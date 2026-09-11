@@ -138,6 +138,18 @@ function createEngineExports(): DotnetPkhexEngineExports {
 				},
 				error: null
 			}),
+		PreviewPokemonEditOperationJson: () =>
+			JSON.stringify({
+				ok: true,
+				value: {
+					bytesBase64: 'AQID',
+					byteLength: 3,
+					mutated: true,
+					workspace: { summary: {}, partySlots: [], boxSlots: [] }
+				},
+				error: null
+			}),
+		ValidatePokemonEditPreviewJson: () => JSON.stringify({ ok: true, value: true, error: null }),
 		CreatePokemonJson: () =>
 			JSON.stringify({
 				ok: true,

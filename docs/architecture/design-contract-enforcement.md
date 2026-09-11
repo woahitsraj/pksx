@@ -165,7 +165,7 @@ Source: [#158](https://github.com/woahitsraj/PKSX/issues/158), refined by [#196]
 One owner manages Menus, Takeovers, replacement state, and focus return.
 
 - Menus include Slot Menu, Box Menu, Main Menu, Save File Menu, and standalone two-command confirmations. They attach to the trailing edge when wider than tall and the bottom edge when square or taller than wide, over an inert Backdrop.
-- Takeovers include Pokemon Editor, Pokemon Creation, Legality Report, evolve and Legality Fix previews, and Backup Browser. A Short Takeover fills the Safe Canvas. A Tall Takeover uses all available room until bounded by 760×560.
+- Takeovers include Pokemon Editor, Legality Report, evolution preview, and Backup Browser. Quick Fix previews stay inside the Legality Report. A Short Takeover fills the Safe Canvas. A Tall Takeover uses all available room until bounded by 760×560.
 - Toasts appear bottom-trailing above safe-area insets. They never take Controller Focus or block input.
 
 The Active Slot Detail Rail is persistent Boxes layout, never a summoned surface.
@@ -274,7 +274,6 @@ Opening a Menu or Takeover suspends destination Focus Zones. A Menu owns one lis
 | Bag                     | First stop                                          |
 | Pokemon Editor          | First section                                       |
 | Backup Browser          | Newest Backup                                       |
-| Pokemon Creation        | First stop                                          |
 
 Destinations remember their targets for the session and validate them with FOCUS-3 on return. Trainer and Bag retain independent memories. Takeovers have no memory across closures.
 

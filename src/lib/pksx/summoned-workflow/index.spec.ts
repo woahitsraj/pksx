@@ -14,7 +14,7 @@ import {
 
 describe('summoned workflow ownership', () => {
 	it('owns a related workflow, its launch chain, input suspension, and focus return', () => {
-		expect.assertions(10);
+		expect.assertions(14);
 
 		const slotMenu = openSummonedWorkflow(createSummonedWorkflowOwner(), 'slot-menu', {
 			type: 'slot',
@@ -43,10 +43,23 @@ describe('summoned workflow ownership', () => {
 		expect(isSummonedWorkflowPresented(editor, 'slot-menu')).toBe(true);
 		expect(getLaunchingSlot(editor)?.focus).toEqual(focusBoxSlot(8));
 
-		const dismissed = dismissSummonedWorkflow(editor);
-		expect(dismissed.owner.active?.kind).toBe('slot-menu');
-		expect(dismissed.returnLauncher).toEqual({ type: 'control', id: 'slot-action-0' });
-		expect(isDestinationInputSuspended(dismissed.owner)).toBe(true);
+		const report = openRelatedSummonedWorkflow(editor, 'legality-report', {
+			type: 'control',
+			id: 'pokemon-editor-legality-report'
+		});
+		const dismissedReport = dismissSummonedWorkflow(report);
+		expect(dismissedReport.owner.active?.kind).toBe('pokemon-editor');
+		expect(dismissedReport.owner.active).toBe(editor.active);
+		expect(dismissedReport.returnLauncher).toEqual({
+			type: 'control',
+			id: 'pokemon-editor-legality-report'
+		});
+		expect(isDestinationInputSuspended(dismissedReport.owner)).toBe(true);
+
+		const dismissedEditor = dismissSummonedWorkflow(dismissedReport.owner);
+		expect(dismissedEditor.owner.active?.kind).toBe('slot-menu');
+		expect(dismissedEditor.returnLauncher).toEqual({ type: 'control', id: 'slot-action-0' });
+		expect(isDestinationInputSuspended(dismissedEditor.owner)).toBe(true);
 	});
 
 	it('dispatches Slot Menu navigation without moving destination focus', () => {

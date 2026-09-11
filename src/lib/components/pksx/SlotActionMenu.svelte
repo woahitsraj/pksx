@@ -8,19 +8,28 @@
 		slot: SlotView;
 		commands: SlotMenuCommand[];
 		activeIndex: number;
+		availabilityPending?: boolean;
 		onFocusCommand: (index: number) => void;
 		onSelectCommand: (command: SlotMenuCommandKey) => void;
 		onClose: () => void;
 	}
 
-	let { location, slot, commands, activeIndex, onFocusCommand, onSelectCommand, onClose }: Props =
-		$props();
+	let {
+		location,
+		slot,
+		commands,
+		activeIndex,
+		availabilityPending = false,
+		onFocusCommand,
+		onSelectCommand,
+		onClose
+	}: Props = $props();
 
 	const occupied = $derived(slot.kind === 'pokemon');
 </script>
 
 <EdgeMenu label="Slot actions" onDismiss={onClose}>
-	<div class="slot-context">
+	<div class="slot-context" aria-busy={availabilityPending ? 'true' : undefined}>
 		<div class="slot-context-header">
 			<p class="slot-context-kicker">{occupied ? 'Edit' : 'Slot Menu'}</p>
 			<p class="slot-context-location">{location}</p>
@@ -181,7 +190,7 @@
 	}
 
 	.close-command:hover,
-	.close-command:focus-visible {
+	.close-command:focus-visible:not(.controller-focused) {
 		background: var(--rust-ring);
 		outline: none;
 	}

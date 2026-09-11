@@ -6,6 +6,7 @@ import type {
 	LegalityReport,
 	PokemonActionPreview,
 	PokemonActionResult,
+	PokemonCreationCatalogue,
 	PokemonCreationResult,
 	PokemonEditOperationResult,
 	PokemonSpeciesFormEditProjection,
@@ -25,7 +26,10 @@ import {
 	parseEngineWorkerRequest,
 	type EngineWorkerApplySlotOperationRequest,
 	type EngineWorkerApplyPokemonEditOperationRequest,
+	type EngineWorkerPreviewPokemonEditOperationRequest,
+	type EngineWorkerValidatePokemonEditPreviewRequest,
 	type EngineWorkerCreatePokemonRequest,
+	type EngineWorkerGetPokemonCreationCatalogueRequest,
 	type EngineWorkerPreviewPokemonSpeciesFormEditRequest,
 	type EngineWorkerApplySaveFileEditOperationRequest,
 	type EngineWorkerGetSaveFileInventoryCatalogueRequest,
@@ -60,7 +64,19 @@ export type DotnetPkhexEngineExports = {
 		fileName: string | undefined,
 		operationJson: string
 	): string;
+	PreviewPokemonEditOperationJson(
+		bytes: Uint8Array,
+		fileName: string | undefined,
+		operationJson: string
+	): string;
+	ValidatePokemonEditPreviewJson(
+		baselineBytes: Uint8Array,
+		candidateBytes: Uint8Array,
+		fileName: string | undefined,
+		requestJson: string
+	): string;
 	CreatePokemonJson(bytes: Uint8Array, fileName: string | undefined, operationJson: string): string;
+	GetPokemonCreationCatalogueJson?(bytes: Uint8Array, fileName: string | undefined): string;
 	PreviewPokemonSpeciesFormEditJson(
 		bytes: Uint8Array,
 		fileName: string | undefined,
@@ -228,8 +244,25 @@ export function createPkhexEngineWorkerRuntime({
 					applyPokemonEditOperation(engine, request)
 				);
 				return;
+			case 'previewPokemonEditOperation':
+				postPokemonEditOperationResponse(
+					postMessage,
+					request,
+					previewPokemonEditOperation(engine, request)
+				);
+				return;
+			case 'validatePokemonEditPreview':
+				postMessage(
+					createEngineWorkerResponse(request, validatePokemonEditPreview(engine, request))
+				);
+				return;
 			case 'createPokemon':
 				postPokemonCreationResponse(postMessage, request, createPokemon(engine, request));
+				return;
+			case 'getPokemonCreationCatalogue':
+				postMessage(
+					createEngineWorkerResponse(request, getPokemonCreationCatalogue(engine, request))
+				);
 				return;
 			case 'previewPokemonSpeciesFormEdit':
 				postMessage(
@@ -366,6 +399,36 @@ function applyPokemonEditOperation(
 	);
 }
 
+function previewPokemonEditOperation(
+	engine: DotnetPkhexEngineExports,
+	request: EngineWorkerPreviewPokemonEditOperationRequest
+): EngineResult<RawPokemonEditOperationResult> {
+	return parseEngineResult<RawPokemonEditOperationResult>(
+		engine.PreviewPokemonEditOperationJson(
+			new Uint8Array(request.payload.bytes),
+			request.payload.fileName,
+			JSON.stringify({
+				...request.payload.operation,
+				activeBox: request.payload.activeBox
+			})
+		)
+	);
+}
+
+function validatePokemonEditPreview(
+	engine: DotnetPkhexEngineExports,
+	request: EngineWorkerValidatePokemonEditPreviewRequest
+): EngineResult<boolean> {
+	return parseEngineResult<boolean>(
+		engine.ValidatePokemonEditPreviewJson(
+			new Uint8Array(request.payload.baselineBytes),
+			new Uint8Array(request.payload.candidateBytes),
+			request.payload.fileName,
+			JSON.stringify({ source: request.payload.source, ...request.payload.scope })
+		)
+	);
+}
+
 function createPokemon(
 	engine: DotnetPkhexEngineExports,
 	request: EngineWorkerCreatePokemonRequest
@@ -378,6 +441,29 @@ function createPokemon(
 				...request.payload.operation,
 				activeBox: request.payload.activeBox
 			})
+		)
+	);
+}
+
+function getPokemonCreationCatalogue(
+	engine: DotnetPkhexEngineExports,
+	request: EngineWorkerGetPokemonCreationCatalogueRequest
+): EngineResult<PokemonCreationCatalogue> {
+	if (!engine.GetPokemonCreationCatalogueJson) {
+		return {
+			ok: false,
+			value: null,
+			error: {
+				code: 'unsupported-pokemon-creation',
+				message: 'Pokemon species names are not available in this PKHeX Engine build.'
+			}
+		};
+	}
+
+	return parseEngineResult<PokemonCreationCatalogue>(
+		engine.GetPokemonCreationCatalogueJson(
+			new Uint8Array(request.payload.bytes),
+			request.payload.fileName
 		)
 	);
 }
@@ -554,7 +640,9 @@ function postSlotOperationResponse(
 
 function postPokemonEditOperationResponse(
 	postMessage: PkhexEngineWorkerRuntimeOptions['postMessage'],
-	request: EngineWorkerApplyPokemonEditOperationRequest,
+	request:
+		| EngineWorkerApplyPokemonEditOperationRequest
+		| EngineWorkerPreviewPokemonEditOperationRequest,
 	result: EngineResult<RawPokemonEditOperationResult>
 ) {
 	if (!result.ok) {
@@ -697,9 +785,14 @@ function unavailableResult(request: EngineWorkerRequest) {
 		case 'applySlotOperation':
 			return result satisfies EngineResult<SlotOperationResult>;
 		case 'applyPokemonEditOperation':
+		case 'previewPokemonEditOperation':
 			return result satisfies EngineResult<PokemonEditOperationResult>;
+		case 'validatePokemonEditPreview':
+			return result satisfies EngineResult<boolean>;
 		case 'createPokemon':
 			return result satisfies EngineResult<PokemonCreationResult>;
+		case 'getPokemonCreationCatalogue':
+			return result satisfies EngineResult<PokemonCreationCatalogue>;
 		case 'previewPokemonSpeciesFormEdit':
 			return result satisfies EngineResult<PokemonSpeciesFormEditProjection>;
 		case 'applySaveFileEditOperation':

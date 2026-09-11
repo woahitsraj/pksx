@@ -9,10 +9,12 @@ import type {
 	PokemonActionOperation,
 	PokemonActionPreview,
 	PokemonActionResult,
+	PokemonCreationCatalogue,
 	PokemonCreationOperation,
 	PokemonCreationResult,
 	PokemonEditOperation,
 	PokemonEditOperationResult,
+	PokemonEditPreviewValidationScope,
 	PokemonSpeciesFormEditProjection,
 	SaveFileEditOperation,
 	SaveFileEditOperationResult,
@@ -60,12 +62,24 @@ type DotnetPkhexEngineExports = {
 		fileName: string | undefined,
 		operationJson: string
 	): string;
+	PreviewPokemonEditOperationJson(
+		bytes: Uint8Array,
+		fileName: string | undefined,
+		operationJson: string
+	): string;
+	ValidatePokemonEditPreviewJson(
+		baselineBytes: Uint8Array,
+		candidateBytes: Uint8Array,
+		fileName: string | undefined,
+		requestJson: string
+	): string;
 	PreviewPokemonSpeciesFormEditJson(
 		bytes: Uint8Array,
 		fileName: string | undefined,
 		requestJson: string
 	): string;
 	CreatePokemonJson(bytes: Uint8Array, fileName: string | undefined, operationJson: string): string;
+	GetPokemonCreationCatalogueJson?(bytes: Uint8Array, fileName: string | undefined): string;
 	ApplySaveFileEditOperationJson?(
 		bytes: Uint8Array,
 		fileName: string | undefined,
@@ -107,6 +121,7 @@ const knownEngineErrorCodes = new Set<EngineErrorCode>([
 	'unsupported-pokemon-edit',
 	'invalid-pokemon-action',
 	'unsupported-pokemon-action',
+	'stale-pokemon-action-preview',
 	'invalid-pokemon-creation',
 	'unsupported-pokemon-creation',
 	'invalid-pokemon-import',
@@ -168,6 +183,30 @@ export async function createPkhexEngine(basePath = '/pkhex-engine'): Promise<Eng
 					)
 				)
 			),
+		previewPokemonEditOperation: async (bytes, fileName, operation, activeBox) =>
+			decodeMutationResult(
+				parseEngineResult<RawPokemonEditOperationResult>(
+					engine.PreviewPokemonEditOperationJson(
+						bytes,
+						fileName,
+						JSON.stringify({
+							...operation,
+							activeBox
+						} satisfies RawPokemonEditOperationRequest)
+					)
+				)
+			),
+		validatePokemonEditPreview: async (baselineBytes, candidateBytes, fileName, source, scope) =>
+			parseEngineResult<boolean>(
+				engine.ValidatePokemonEditPreviewJson(
+					baselineBytes,
+					candidateBytes,
+					fileName,
+					JSON.stringify({ source, ...scope } satisfies {
+						source: import('./types').SaveSlotRef;
+					} & PokemonEditPreviewValidationScope)
+				)
+			),
 		createPokemon: async (bytes, fileName, operation, activeBox) =>
 			decodeMutationResult(
 				parseEngineResult<RawPokemonCreationResult>(
@@ -181,6 +220,18 @@ export async function createPkhexEngine(basePath = '/pkhex-engine'): Promise<Eng
 					)
 				)
 			),
+		getPokemonCreationCatalogue: async (bytes, fileName) => {
+			if (!engine.GetPokemonCreationCatalogueJson) {
+				return engineFailure(
+					'unsupported-pokemon-creation',
+					'Pokemon species names are not available in this PKHeX Engine build.'
+				);
+			}
+
+			return parseEngineResult<PokemonCreationCatalogue>(
+				engine.GetPokemonCreationCatalogueJson(bytes, fileName)
+			);
+		},
 		previewPokemonSpeciesFormEdit: async (bytes, fileName, source, speciesId, form) =>
 			parseEngineResult<PokemonSpeciesFormEditProjection>(
 				engine.PreviewPokemonSpeciesFormEditJson(

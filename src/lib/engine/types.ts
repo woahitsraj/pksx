@@ -9,6 +9,7 @@ export type EngineErrorCode =
 	| 'unsupported-pokemon-edit'
 	| 'invalid-pokemon-action'
 	| 'unsupported-pokemon-action'
+	| 'stale-pokemon-action-preview'
 	| 'invalid-pokemon-creation'
 	| 'unsupported-pokemon-creation'
 	| 'invalid-pokemon-import'
@@ -209,6 +210,11 @@ export type PokemonMoveSetEditConstraints = {
 export type PokemonSpeciesOption = {
 	id: number;
 	name: string;
+};
+
+export type PokemonCreationCatalogue = {
+	defaultSpecies: PokemonSpeciesOption | null;
+	availableSpecies: PokemonSpeciesOption[];
 };
 
 export type PokemonFormOption = {
@@ -489,6 +495,12 @@ export type PokemonEditOperationResult = {
 	workspace: SaveWorkspace;
 };
 
+export type PokemonEditPreviewValidationScope = {
+	moves: boolean;
+	metData: boolean;
+	originalTrainer: boolean;
+};
+
 export type PokemonCreationOperation = {
 	destination: SaveSlotRef;
 	speciesId?: number;
@@ -527,6 +539,7 @@ export type LegalityReportLine = {
 	severity: string;
 	identifier: string;
 	message: string;
+	fixId?: string;
 };
 
 export type LegalityReport = {
@@ -556,12 +569,20 @@ export type PokemonEvolutionChoice = {
 	changes: PokemonActionChange[];
 };
 
+export type PokemonLegalityFixChoice = {
+	id: string;
+	token: string;
+	label: string;
+	changes: PokemonActionChange[];
+};
+
 export type PokemonActionAvailability = {
 	kind: PokemonActionKind;
 	available: boolean;
 	unavailableReason?: string | null;
 	changes: PokemonActionChange[];
 	choices: PokemonEvolutionChoice[];
+	fixes: PokemonLegalityFixChoice[];
 };
 
 export type PokemonActionPreview = {
@@ -620,6 +641,19 @@ export type EngineApi = {
 		operation: PokemonEditOperation,
 		activeBox: number
 	): Promise<EngineResult<PokemonEditOperationResult>>;
+	previewPokemonEditOperation(
+		bytes: Uint8Array,
+		fileName: string | undefined,
+		operation: PokemonEditOperation,
+		activeBox: number
+	): Promise<EngineResult<PokemonEditOperationResult>>;
+	validatePokemonEditPreview(
+		baselineBytes: Uint8Array,
+		candidateBytes: Uint8Array,
+		fileName: string | undefined,
+		source: SaveSlotRef,
+		scope: PokemonEditPreviewValidationScope
+	): Promise<EngineResult<boolean>>;
 	previewPokemonSpeciesFormEdit(
 		bytes: Uint8Array,
 		fileName: string | undefined,
@@ -633,6 +667,10 @@ export type EngineApi = {
 		operation: PokemonCreationOperation,
 		activeBox: number
 	): Promise<EngineResult<PokemonCreationResult>>;
+	getPokemonCreationCatalogue(
+		bytes: Uint8Array,
+		fileName: string | undefined
+	): Promise<EngineResult<PokemonCreationCatalogue>>;
 	applySaveFileEditOperation(
 		bytes: Uint8Array,
 		fileName: string | undefined,

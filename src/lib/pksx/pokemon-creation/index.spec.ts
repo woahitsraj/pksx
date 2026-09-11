@@ -51,7 +51,7 @@ describe('Pokemon creation', () => {
 
 		expect(createPokemonCreationOperation(destination, { speciesId: 0, level: 5 })).toEqual({
 			ok: false,
-			reason: 'Species ID must be a positive whole number.'
+			reason: 'Choose a supported species.'
 		});
 		expect(createPokemonCreationOperation(destination, { level: 101 })).toEqual({
 			ok: false,
